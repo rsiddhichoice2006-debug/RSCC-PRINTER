@@ -366,22 +366,29 @@ function generateDeliveryPin(): string {
 
 // Helper to parse JSON body from incoming HTTP request
 async function parseJsonBody<T>(req: IncomingMessage): Promise<T> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
+    if ((req as any).body && typeof (req as any).body === 'object') {
+      return resolve((req as any).body as T);
+    }
     let data = '';
     req.on('data', (chunk) => {
       data += chunk;
       if (data.length > 50 * 1024 * 1024) {
-        reject(new Error('Payload too large'));
+        data = '';
       }
     });
     req.on('end', () => {
       try {
-        resolve(data ? JSON.parse(data) : {});
+        resolve(data ? JSON.parse(data) : ({} as T));
       } catch (err) {
-        reject(err);
+        console.warn('Failed to parse request JSON:', err);
+        resolve({} as T);
       }
     });
-    req.on('error', reject);
+    req.on('error', (err) => {
+      console.warn('Request stream error:', err);
+      resolve({} as T);
+    });
   });
 }
 

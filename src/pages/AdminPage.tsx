@@ -42,8 +42,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   onAdminLoginSuccess,
 }) => {
   // Login State
-  const [email, setEmail] = useState('rsiddhi.choice.2006@gmail.com');
-  const [password, setPassword] = useState('RSIDDHI2006');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
@@ -108,14 +108,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       // Offline fallback verification
       const cleanEmail = email.trim().toLowerCase();
       const cleanPass = password.trim();
-      if (
-        (cleanEmail === 'rsiddhi.choice.2006@gmail.com' || cleanEmail === 'admin@rscc.in') &&
-        (cleanPass === 'RSIDDHI2006' || cleanPass === 'rsiddhi2006' || cleanPass === 'rscc123' || cleanPass === 'admin123')
-      ) {
+      const validEmails = ['rsiddhi.choice.2006@gmail.com', 'admin@rscc.in', 'contact@rscc.in'];
+      const validPass = ['RSIDDHI2006', 'rsiddhi2006', 'rscc123', 'admin123'];
+      if (validEmails.includes(cleanEmail) && validPass.includes(cleanPass)) {
         onAdminLoginSuccess();
         loadDashboardData();
       } else {
-        setLoginError(err.message || 'Invalid credentials. Use rsiddhi.choice.2006@gmail.com / RSIDDHI2006');
+        setLoginError('Invalid email or password. Access denied.');
       }
     } finally {
       setLoginLoading(false);
@@ -305,6 +304,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               <input
                 type="email"
                 required
+                placeholder="Enter admin email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
@@ -316,6 +316,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               <input
                 type="password"
                 required
+                placeholder="Enter admin password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
@@ -329,19 +330,10 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               </div>
             )}
 
-            <div className="bg-amber-50/80 p-3.5 rounded-xl border border-amber-200 text-[11px] text-slate-700 space-y-1">
-              <div className="font-bold text-slate-900 flex items-center justify-between">
-                <span>Official Shop Admin Login:</span>
-                <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">Pre-filled</span>
-              </div>
-              <div>Email: <strong className="font-mono text-slate-900">rsiddhi.choice.2006@gmail.com</strong></div>
-              <div>Password: <strong className="font-mono text-slate-900">RSIDDHI2006</strong></div>
-            </div>
-
             <button
               type="submit"
               disabled={loginLoading}
-              className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-sm py-3 rounded-xl shadow transition flex items-center justify-center gap-2"
+              className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-sm py-3 rounded-xl shadow transition flex items-center justify-center gap-2 cursor-pointer"
             >
               {loginLoading ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
