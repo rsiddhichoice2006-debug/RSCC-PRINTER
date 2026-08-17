@@ -24,6 +24,8 @@ interface ShopSettings {
   maxFileSizeMb: number;
   retentionDays: number;
   pickupTimings: string;
+  isAcceptingOrders?: boolean;
+  pauseOrderReason?: string;
   pricing: ShopPricing;
 }
 
@@ -110,6 +112,8 @@ const defaultSettings: ShopSettings = {
   maxFileSizeMb: 50,
   retentionDays: 30,
   pickupTimings: '9:00 AM - 9:00 PM (Monday - Saturday)',
+  isAcceptingOrders: true,
+  pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
   pricing: {
     bwSingle: 5,
     bwBoth: 4,
@@ -541,6 +545,14 @@ Return your judgment strictly in JSON format:
 
     // 3. POST /api/orders - Create new order (with backend price recalculation)
     if (pathname === '/api/orders' && method === 'POST') {
+      if (settings.isAcceptingOrders === false) {
+        sendJson(res, 400, {
+          success: false,
+          error: settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand. Please check back shortly.',
+        });
+        return true;
+      }
+
       const body = await parseJsonBody<{
         customer: { name: string; mobile: string; email?: string };
         mode: 'DOCUMENT' | 'PHOTO';

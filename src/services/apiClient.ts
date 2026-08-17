@@ -13,6 +13,8 @@ const DEFAULT_SETTINGS: ShopSettings = {
   maxFileSizeMb: 50,
   retentionDays: 30,
   pickupTimings: '9:00 AM - 9:00 PM (Monday - Saturday)',
+  isAcceptingOrders: true,
+  pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
   pricing: {
     bwSingle: 5,
     bwBoth: 4,
@@ -313,8 +315,13 @@ export const apiClient = {
 
   // Create Order (Authoritative server-side price check with fallback)
   async createOrder(payload: any): Promise<OrderRecord> {
+    const currentSettings = Storage.getSettings();
+    if (currentSettings.isAcceptingOrders === false) {
+      throw new Error(currentSettings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand');
+    }
+
     // 1. Try server creation
-    const backendRes = await safeFetchJson<{ success: boolean; order: OrderRecord; error?: string }>(
+    const backendRes = await safeFetchJson<{ success: boolean; order?: OrderRecord; error?: string }>(
       '/api/orders',
       {
         method: 'POST',
@@ -323,20 +330,24 @@ export const apiClient = {
       }
     );
 
-    if (backendRes?.order) {
-      const orders = Storage.getOrders();
-      const existsIndex = orders.findIndex((o) => o.id === backendRes.order.id);
-      if (existsIndex >= 0) {
-        orders[existsIndex] = backendRes.order;
-      } else {
-        orders.unshift(backendRes.order);
+    if (backendRes) {
+      if (backendRes.error) {
+        throw new Error(backendRes.error);
       }
-      Storage.saveOrders(orders);
-      return backendRes.order;
+      if (backendRes.order) {
+        const orders = Storage.getOrders();
+        const existsIndex = orders.findIndex((o) => o.id === backendRes.order!.id);
+        if (existsIndex >= 0) {
+          orders[existsIndex] = backendRes.order;
+        } else {
+          orders.unshift(backendRes.order);
+        }
+        Storage.saveOrders(orders);
+        return backendRes.order;
+      }
     }
 
     // 2. Client-side robust fallback order creation
-    const currentSettings = Storage.getSettings();
     const calculated = calculateOrderPrice({
       mode: payload.mode || 'DOCUMENT',
       totalPages: payload.totalPages,

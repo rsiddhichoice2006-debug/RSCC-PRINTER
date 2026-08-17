@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Eye,
   AlertCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -156,6 +157,11 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
   };
 
   const handleProceed = () => {
+    if (settings.isAcceptingOrders === false) {
+      alert(settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand. Please check back later.');
+      return;
+    }
+
     if (uploadedPhotos.length === 0) {
       alert('Please upload at least one photo before proceeding.');
       return;
@@ -197,7 +203,31 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* Not Accepting Orders Banner */}
+      {settings.isAcceptingOrders === false && (
+        <div className="bg-rose-950/90 border-2 border-rose-500 rounded-3xl p-6 text-white shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-start gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-rose-600 flex items-center justify-center shrink-0 shadow-md">
+              <ShieldAlert className="w-6 h-6 text-white" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                  Orders Temporarily Paused
+                </span>
+                <span className="font-extrabold text-base sm:text-lg text-rose-100">
+                  {settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand'}
+                </span>
+              </div>
+              <p className="text-xs text-rose-200 leading-relaxed max-w-3xl">
+                Our photo printing studio is experiencing peak queue demand. Photo print orders are temporarily paused so we can process existing jobs. Please visit our shop directly at {settings.address} or check back shortly.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-lg border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="space-y-2">
@@ -725,14 +755,25 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={handleProceed}
-                  disabled={uploadedPhotos.length === 0}
-                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-sm px-6 py-3 rounded-xl transition shadow-lg flex items-center gap-2 cursor-pointer"
-                >
-                  <span>PROCEED TO PAYMENT</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                {settings.isAcceptingOrders === false ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="bg-rose-950/80 border border-rose-600 text-rose-300 font-extrabold text-xs px-4 py-3 rounded-xl transition shadow flex items-center gap-2 cursor-not-allowed text-left max-w-xs"
+                  >
+                    <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>NOT ACCEPTING ORDERS (HIGH DEMAND)</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleProceed}
+                    disabled={uploadedPhotos.length === 0}
+                    className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-sm px-6 py-3 rounded-xl transition shadow-lg flex items-center gap-2 cursor-pointer"
+                  >
+                    <span>PROCEED TO PAYMENT</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           </div>

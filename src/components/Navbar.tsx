@@ -37,12 +37,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'photo-layout', label: 'A4 Photo Printing', icon: ImageIcon, badge: 'New' },
     { id: 'my-orders', label: 'My Orders', icon: Search },
     { id: 'track', label: 'Track Order', icon: Clock },
-    {
-      id: 'admin',
-      label: isAdminLoggedIn ? 'Admin Dashboard' : 'Admin Portal',
-      icon: ShieldCheck,
-      badge: isAdminLoggedIn ? 'Logged In' : undefined,
-    },
   ];
 
   return (
@@ -51,10 +45,17 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="bg-slate-900 text-slate-300 text-xs py-1.5 px-4 border-b border-slate-800">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1 text-emerald-400 font-medium">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Shop Open Today: {settings.pickupTimings}
-            </span>
+            {settings.isAcceptingOrders === false ? (
+              <span className="flex items-center gap-1.5 text-rose-400 font-bold bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">
+                <span className="w-2 h-2 rounded-full bg-rose-400 animate-ping"></span>
+                Currently Not Accepting Orders (High Demand)
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                Shop Open Today: {settings.pickupTimings}
+              </span>
+            )}
             <span className="hidden md:inline-flex items-center gap-1 text-slate-400">
               <MapPin className="w-3 h-3 text-amber-400" />
               RSCC Shop, Main Market

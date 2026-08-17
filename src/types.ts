@@ -40,6 +40,8 @@ export interface ShopSettings {
   maxFileSizeMb: number;
   retentionDays: number;
   pickupTimings: string;
+  isAcceptingOrders?: boolean;
+  pauseOrderReason?: string;
   pricing: ShopPricing;
 }
 

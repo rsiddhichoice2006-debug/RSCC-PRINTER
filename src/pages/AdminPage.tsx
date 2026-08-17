@@ -268,6 +268,22 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
     }
   };
 
+  const handleToggleAcceptingOrders = async (accepting: boolean) => {
+    try {
+      const updatedSettings: ShopSettings = {
+        ...settings,
+        ...editSettings,
+        isAcceptingOrders: accepting,
+        pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
+      };
+      setEditSettings(updatedSettings);
+      const saved = await apiClient.updateSettings(updatedSettings);
+      onUpdateSettings(saved);
+    } catch (err: any) {
+      alert('Error updating order status: ' + err.message);
+    }
+  };
+
   // Filtered orders list
   const filteredOrders = orders.filter((o) => {
     const matchesSearch =
@@ -296,30 +312,6 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
             <p className="text-xs text-slate-500">
               Sign in to manage printing orders, verify UPI payments, and adjust pricing.
             </p>
-          </div>
-
-          <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-950 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="font-bold flex items-center gap-1 text-amber-900">
-                <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                Shop Admin Credentials:
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setEmail('rsiddhi.choice.2006@gmail.com');
-                  setPassword('RSIDDHI2006');
-                  setLoginError('');
-                }}
-                className="text-[11px] bg-amber-200/70 hover:bg-amber-300 text-amber-950 font-bold px-2 py-0.5 rounded cursor-pointer transition"
-              >
-                Auto-fill
-              </button>
-            </div>
-            <div className="font-mono text-[11px] text-slate-700 bg-white/80 p-2 rounded-lg border border-amber-200 space-y-0.5">
-              <div>Email: <strong className="text-slate-900">rsiddhi.choice.2006@gmail.com</strong></div>
-              <div>Password: <strong className="text-slate-900">RSIDDHI2006</strong></div>
-            </div>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4 text-xs">
@@ -428,6 +420,57 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
             </div>
           </div>
         )}
+
+        {/* Live Order Acceptance Control Banner */}
+        <div className={`rounded-2xl p-5 border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all ${
+          settings.isAcceptingOrders === false
+            ? 'bg-rose-950/70 border-rose-600/80 text-rose-100 shadow-lg'
+            : 'bg-emerald-950/40 border-emerald-600/60 text-emerald-100'
+        }`}>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 text-xs font-black px-2.5 py-1 rounded-full uppercase tracking-wider ${
+                settings.isAcceptingOrders === false
+                  ? 'bg-rose-500 text-white'
+                  : 'bg-emerald-400 text-slate-950'
+              }`}>
+                {settings.isAcceptingOrders === false ? '🔴 Orders Paused' : '🟢 Accepting Orders'}
+              </span>
+              <span className="font-extrabold text-sm sm:text-base">
+                {settings.isAcceptingOrders === false
+                  ? 'Shop is NOT Accepting Orders (High Demand)'
+                  : 'Shop is Live & Receiving Customer Orders'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-300">
+              {settings.isAcceptingOrders === false
+                ? 'Customer screen displays: "Currently Not Accepting Orders Due to High Demand". Order placement buttons are locked.'
+                : 'Customer portal is open. Customers can upload documents, configure photos, and proceed to payment.'}
+            </p>
+          </div>
+
+          <div className="shrink-0">
+            {settings.isAcceptingOrders === false ? (
+              <button
+                type="button"
+                onClick={() => handleToggleAcceptingOrders(true)}
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs px-5 py-3 rounded-xl transition flex items-center gap-2 shadow-md cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                <span>RESUME ACCEPTING ORDERS</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleToggleAcceptingOrders(false)}
+                className="bg-rose-600 hover:bg-rose-700 text-white font-black text-xs px-5 py-3 rounded-xl transition flex items-center gap-2 shadow-md cursor-pointer"
+              >
+                <Ban className="w-4 h-4 text-white" />
+                <span>DO NOT ACCEPT ORDERS</span>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Tabs Navigation */}
@@ -670,6 +713,69 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       {/* TAB 2: PRICING & SHOP SETTINGS */}
       {activeTab === 'settings' && (
         <form onSubmit={handleSaveSettings} className="space-y-6">
+          {/* Order Reception & Demand Control Card */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                  <span>Store Order Acceptance Status</span>
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Quickly halt or resume new incoming print and photo orders during peak shop hours.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditSettings({ ...editSettings, isAcceptingOrders: true })}
+                  className={`px-4 py-2 rounded-xl font-black text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                    editSettings.isAcceptingOrders !== false
+                      ? 'bg-emerald-600 text-white shadow-md'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Accept Orders (Open)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditSettings({
+                    ...editSettings,
+                    isAcceptingOrders: false,
+                    pauseOrderReason: editSettings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand',
+                  })}
+                  className={`px-4 py-2 rounded-xl font-black text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                    editSettings.isAcceptingOrders === false
+                      ? 'bg-rose-600 text-white shadow-md'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Ban className="w-3.5 h-3.5" />
+                  <span>Do Not Accept (High Demand)</span>
+                </button>
+              </div>
+            </div>
+
+            {editSettings.isAcceptingOrders === false && (
+              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs space-y-2">
+                <label className="font-bold text-rose-950 block">
+                  Customer Banner Reason Message (Visible to customers):
+                </label>
+                <input
+                  type="text"
+                  value={editSettings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand'}
+                  onChange={(e) => setEditSettings({ ...editSettings, pauseOrderReason: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-rose-300 text-rose-950 font-bold bg-white text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  placeholder="Currently Not Accepting Orders Due to High Demand"
+                />
+                <p className="text-[11px] text-rose-700">
+                  Customers will see this message across the navigation bar and ordering flows will be disabled.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-6">
             <div>
               <h2 className="text-xl font-black text-slate-900 tracking-tight">

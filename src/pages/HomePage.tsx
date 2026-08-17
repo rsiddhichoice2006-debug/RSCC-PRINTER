@@ -15,6 +15,7 @@ import {
   MapPin,
   Clock,
   Phone,
+  ShieldAlert,
 } from 'lucide-react';
 import { ShopSettings } from '../types';
 import { AcceptanceCalculatorWidget } from '../components/AcceptanceCalculatorWidget';
@@ -35,6 +36,30 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
         <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#f59e0b_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none" />
 
         <div className="max-w-5xl mx-auto text-center relative z-10 space-y-6">
+          {/* Live High Demand Order Pause Banner */}
+          {settings.isAcceptingOrders === false && (
+            <div className="bg-rose-950/90 border-2 border-rose-500 rounded-3xl p-5 text-white shadow-2xl text-left flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in zoom-in-95">
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-rose-600 flex items-center justify-center shrink-0 shadow-md">
+                  <ShieldAlert className="w-6 h-6 text-white" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                      Orders Paused
+                    </span>
+                    <span className="font-extrabold text-base sm:text-lg text-rose-100">
+                      {settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-rose-200 leading-relaxed">
+                    Online print order intake is temporarily on hold to clear pending jobs. In-person shop counter is open at {settings.address}.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="inline-flex items-center gap-2 bg-slate-800/90 border border-slate-700 text-amber-400 text-xs font-semibold px-3.5 py-1.5 rounded-full shadow-inner">
             <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
             <span>Fast & Affordable Local Printing in India</span>
