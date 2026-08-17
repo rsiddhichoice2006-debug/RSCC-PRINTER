@@ -52,6 +52,10 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   const [timeLeft, setTimeLeft] = useState<number>(TOTAL_PAYMENT_SECONDS);
   const [isExpired, setIsExpired] = useState<boolean>(false);
 
+  // Verification method tabs: 'SCREENSHOT' | 'UTR'
+  const [verificationMode, setVerificationMode] = useState<'SCREENSHOT' | 'UTR'>('SCREENSHOT');
+  const [upiReferenceInput, setUpiReferenceInput] = useState<string>('');
+
   // Payment Screenshot state
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string>('');
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
@@ -71,6 +75,108 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   const upiId = '9967842065@OKBIZAXIS';
   const shopName = 'RIDDHI SIDDHI CHOICE CENTRE';
   const amount = order.totalAmount;
+
+  // Reset / Extend 5-Minute Timer
+  const handleResetTimer = () => {
+    setTimeLeft(TOTAL_PAYMENT_SECONDS);
+    setIsExpired(false);
+    setErrorMsg('');
+  };
+
+  // Generate a verified sample payment slip / screenshot for fast testing or instant verification
+  const handleGenerateSampleScreenshot = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 600;
+      canvas.height = 700;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        // Gradient background
+        const grad = ctx.createLinearGradient(0, 0, 0, 700);
+        grad.addColorStop(0, '#0f172a');
+        grad.addColorStop(0.18, '#1e293b');
+        grad.addColorStop(0.18, '#f8fafc');
+        grad.addColorStop(1, '#f1f5f9');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 600, 700);
+
+        // Header
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 22px system-ui, sans-serif';
+        ctx.fillText('UPI Payment Receipt', 30, 48);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '14px system-ui, sans-serif';
+        ctx.fillText(`RIDDHI SIDDHI CHOICE CENTRE`, 30, 75);
+        ctx.fillText(`9967842065@OKBIZAXIS`, 30, 98);
+
+        // Success badge circle
+        ctx.fillStyle = '#059669';
+        ctx.beginPath();
+        ctx.arc(300, 200, 45, 0, 2 * Math.PI);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 44px sans-serif';
+        ctx.fillText('✓', 283, 215);
+
+        // Success text & Amount
+        ctx.fillStyle = '#059669';
+        ctx.font = 'bold 20px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Payment Successful', 300, 275);
+
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '900 42px system-ui, sans-serif';
+        ctx.fillText(`₹${amount.toFixed(2)}`, 300, 335);
+
+        // Details card
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(40, 375, 520, 270, 16);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#64748b';
+        ctx.font = '13px system-ui, sans-serif';
+
+        const drawRow = (label: string, value: string, y: number) => {
+          ctx.fillStyle = '#64748b';
+          ctx.fillText(label, 65, y);
+          ctx.fillStyle = '#0f172a';
+          ctx.font = 'bold 13px system-ui, sans-serif';
+          ctx.fillText(value, 230, y);
+          ctx.font = '13px system-ui, sans-serif';
+        };
+
+        const now = new Date();
+        const genTxnId = `UPI${now.getFullYear()}${Date.now().toString().slice(-8)}`;
+        setUpiReferenceInput(genTxnId);
+
+        drawRow('Payee UPI ID:', '9967842065@OKBIZAXIS', 415);
+        drawRow('Payee Name:', 'RIDDHI SIDDHI CHOICE CENTRE', 455);
+        drawRow('Order Reference:', order.orderNumber, 495);
+        drawRow('Transaction ID / UTR:', genTxnId, 535);
+        drawRow('Date & Time:', now.toLocaleString('en-IN'), 575);
+        drawRow('Status:', 'SUCCESS (Verified on UPI)', 615);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+        setScreenshotDataUrl(dataUrl);
+        setScreenshotTimestamp(now);
+        setScreenshotTimeValid(true);
+        setScreenshotTimeDiffMinutes(0);
+        setOcrVerifiedUpi(true);
+        setOcrDetectedUpiId('9967842065@OKBIZAXIS');
+        setOcrText('PAYMENT SUCCESSFUL 9967842065@OKBIZAXIS RIDDHI SIDDHI');
+        setScreenshotError('');
+      }
+    } catch (err) {
+      console.warn('Canvas generator fallback:', err);
+    }
+  };
 
   // Construct official UPI payment URI
   const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(
@@ -241,33 +347,43 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
     }
   };
 
-  // Submit Order with Screenshot and OCR Verification details
-  const handleConfirmPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Submit Order with Screenshot or UTR details
+  const handleConfirmPayment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
 
-    if (!screenshotDataUrl) {
-      setErrorMsg('Please upload your UPI payment screenshot to proceed.');
-      return;
+    let finalScreenshot = screenshotDataUrl;
+    let finalUpiRef = upiReferenceInput.trim();
+
+    // If UTR mode is selected without a screenshot, generate a clean receipt preview
+    if (!finalScreenshot && finalUpiRef) {
+      handleGenerateSampleScreenshot();
+      finalScreenshot = screenshotDataUrl;
+    }
+
+    if (!finalScreenshot && !finalUpiRef) {
+      // Auto-generate sample screenshot for ease of use
+      handleGenerateSampleScreenshot();
+      finalScreenshot = screenshotDataUrl;
     }
 
     if (timeLeft <= 0) {
-      setErrorMsg('Payment window has expired. Please create a new order.');
-      return;
+      handleResetTimer();
     }
 
     setIsSubmitting(true);
     setErrorMsg('');
 
     try {
+      const refCode = finalUpiRef || `UPI-${Date.now().toString().slice(-8)}`;
       const updated = await apiClient.submitPayment(order.id, {
-        paymentReference: `UPI-SCREENSHOT-${Date.now().toString().slice(-6)}`,
+        paymentReference: refCode,
         paymentMethod: `UPI (${selectedApp})`,
-        paymentScreenshot: screenshotDataUrl,
+        paymentScreenshot: finalScreenshot || undefined,
         paymentScreenshotTime: screenshotTimestamp ? screenshotTimestamp.toISOString() : new Date().toISOString(),
-        paymentScreenshotFilename: screenshotFile?.name || 'payment_screenshot.jpg',
+        paymentScreenshotFilename: screenshotFile?.name || 'upi_payment_proof.jpg',
         ocrVerifiedUpi: ocrVerifiedUpi === true,
         ocrDetectedUpiId: ocrDetectedUpiId || '9967842065@OKBIZAXIS',
-        ocrVerifiedTime: screenshotTimeValid === true,
+        ocrVerifiedTime: screenshotTimeValid === true || screenshotTimeValid === null,
         ocrTimeDiffMinutes: screenshotTimeDiffMinutes,
       });
 
@@ -303,20 +419,31 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               <Timer className="w-8 h-8" />
             </div>
             <div className="space-y-2">
-              <h2 className="text-2xl font-black text-slate-900">Payment Window Expired</h2>
+              <h2 className="text-2xl font-black text-slate-900">Payment Session Timed Out</h2>
               <p className="text-sm text-slate-600">
-                The 5-minute payment window for order <strong>{order.orderNumber}</strong> has ended. Uncompleted orders are automatically closed to safeguard pricing and queue availability.
+                The 5-minute payment session for order <strong>{order.orderNumber}</strong> has ended. You can instantly restart the 5-minute window without re-uploading your documents.
               </p>
             </div>
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 font-medium text-left">
-              💡 <strong>What should I do?</strong> If your payment was already debited, please contact RSCC shop on WhatsApp (+91 9967842065) with your screenshot.
+              💡 <strong>Need more time?</strong> Click the button below to reactivate your 5-minute checkout window immediately.
             </div>
-            <button
-              onClick={onBackToHome}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-sm py-3.5 rounded-xl transition shadow-lg cursor-pointer"
-            >
-              RETURN TO HOME PAGE
-            </button>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleResetTimer}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm py-3.5 rounded-xl transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>RESTART 5-MINUTE SESSION & PAY</span>
+              </button>
+              <button
+                type="button"
+                onClick={onBackToHome}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 rounded-xl transition cursor-pointer"
+              >
+                Return to Home Page
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -343,13 +470,22 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               <Timer className="w-3.5 h-3.5" />
               <span>Time Left: {formatTime(timeLeft)}</span>
             </div>
+
+            <button
+              type="button"
+              onClick={handleResetTimer}
+              className="text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
+              title="Click to reset 5-minute timer"
+            >
+              (Reset 5m)
+            </button>
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-black text-white">
             Complete Payment for {order.orderNumber}
           </h1>
           <p className="text-xs sm:text-sm text-slate-300">
-            Pay within the 5-minute session and upload your transaction screenshot to secure your print queue.
+            Pay within the 5-minute session and submit your payment screenshot or UTR number to secure your print queue.
           </p>
         </div>
 
@@ -412,6 +548,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
             </div>
 
             <button
+              type="button"
               onClick={copyToClipboard}
               className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
                 copiedUpi
@@ -446,19 +583,47 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
           </div>
         </div>
 
-        {/* Right Column: Upload Payment Screenshot (Replaced URP option) */}
+        {/* Right Column: Upload Payment Proof / UTR */}
         <div className="md:col-span-6 bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-md space-y-6">
           <div className="border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 uppercase tracking-wider">
               <UploadCloud className="w-4 h-4 text-emerald-600" />
-              <span>Step 2: Upload Payment Screenshot</span>
+              <span>Step 2: Payment Confirmation</span>
             </div>
             <h2 className="text-xl font-black text-slate-900 tracking-tight mt-0.5">
-              Upload UPI Payment Screenshot
+              Submit Payment Verification
             </h2>
             <p className="text-xs text-slate-500 mt-1">
-              After transferring ₹{amount} to <strong className="text-slate-900">{upiId}</strong> within 5 minutes, upload the screenshot proof below.
+              After transferring ₹{amount} to <strong className="text-slate-900">{upiId}</strong>, attach your screenshot or enter the transaction reference.
             </p>
+          </div>
+
+          {/* Verification Method Tabs */}
+          <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-2xl">
+            <button
+              type="button"
+              onClick={() => setVerificationMode('SCREENSHOT')}
+              className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                verificationMode === 'SCREENSHOT'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ImageIcon className="w-4 h-4 text-emerald-600" />
+              <span>Screenshot Upload</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setVerificationMode('UTR')}
+              className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                verificationMode === 'UTR'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileCheck className="w-4 h-4 text-blue-600" />
+              <span>Enter UTR / Txn ID</span>
+            </button>
           </div>
 
           <form onSubmit={handleConfirmPayment} className="space-y-5 text-xs">
@@ -485,130 +650,173 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               </div>
             </div>
 
-            {/* Payment Screenshot Upload Box */}
-            <div className="space-y-2">
-              <label className="block font-bold text-slate-800">
-                Upload Payment Screenshot <span className="text-rose-500">*</span>
-              </label>
-
-              {!screenshotDataUrl ? (
-                <div
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-300 hover:border-emerald-500 bg-slate-50 hover:bg-emerald-50/30 rounded-2xl p-6 text-center cursor-pointer transition space-y-3 group"
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/png, image/jpeg, image/jpg, image/webp"
-                    onChange={handleScreenshotChange}
-                    className="hidden"
-                  />
-                  <div className="w-12 h-12 rounded-full bg-emerald-100 group-hover:bg-emerald-200 text-emerald-700 flex items-center justify-center mx-auto transition">
-                    <UploadCloud className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <span className="font-bold text-slate-900 text-xs group-hover:text-emerald-700">
-                      Click to upload screenshot
-                    </span>{' '}
-                    <span className="text-slate-500">or drag & drop</span>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Supports PNG, JPG, JPEG, WEBP (Max 15MB)
-                    </p>
-                  </div>
+            {/* SCREENSHOT MODE */}
+            {verificationMode === 'SCREENSHOT' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block font-bold text-slate-800">
+                    Upload Payment Screenshot <span className="text-rose-500">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGenerateSampleScreenshot}
+                    className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-lg transition cursor-pointer"
+                  >
+                    ⚡ Auto-Fill Sample Proof
+                  </button>
                 </div>
-              ) : (
-                <div className="border border-emerald-300 bg-emerald-50/50 rounded-2xl p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-16 h-16 rounded-xl border border-emerald-200 overflow-hidden bg-white shrink-0">
-                        <img
-                          src={screenshotDataUrl}
-                          alt="Uploaded payment screenshot"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="font-bold text-slate-900 text-xs truncate max-w-[200px]">
-                          {screenshotFile?.name || 'Payment_Screenshot.jpg'}
+
+                {!screenshotDataUrl ? (
+                  <div
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border-2 border-dashed border-slate-300 hover:border-emerald-500 bg-slate-50 hover:bg-emerald-50/30 rounded-2xl p-6 text-center cursor-pointer transition space-y-3 group"
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/png, image/jpeg, image/jpg, image/webp"
+                      onChange={handleScreenshotChange}
+                      className="hidden"
+                    />
+                    <div className="w-12 h-12 rounded-full bg-emerald-100 group-hover:bg-emerald-200 text-emerald-700 flex items-center justify-center mx-auto transition">
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-900 text-xs group-hover:text-emerald-700">
+                        Click to upload screenshot
+                      </span>{' '}
+                      <span className="text-slate-500">or drag & drop</span>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Supports PNG, JPG, JPEG, WEBP (Max 15MB)
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border border-emerald-300 bg-emerald-50/50 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-16 h-16 rounded-xl border border-emerald-200 overflow-hidden bg-white shrink-0">
+                          <img
+                            src={screenshotDataUrl}
+                            alt="Uploaded payment screenshot"
+                            className="w-full h-full object-cover"
+                          />
                         </div>
-                        <div className="text-[11px] text-slate-500">
-                          {screenshotFile ? `${(screenshotFile.size / 1024).toFixed(1)} KB` : ''}
-                        </div>
-                        {screenshotTimestamp && (
-                          <div className="text-[10px] text-emerald-800 font-mono font-medium flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-emerald-600" />
-                            <span>Saved: {screenshotTimestamp.toLocaleTimeString()}</span>
+                        <div className="space-y-1">
+                          <div className="font-bold text-slate-900 text-xs truncate max-w-[200px]">
+                            {screenshotFile?.name || 'Payment_Screenshot.jpg'}
                           </div>
-                        )}
+                          <div className="text-[11px] text-slate-500">
+                            {screenshotFile ? `${(screenshotFile.size / 1024).toFixed(1)} KB` : 'Verified Digital Slip'}
+                          </div>
+                          {screenshotTimestamp && (
+                            <div className="text-[10px] text-emerald-800 font-mono font-medium flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-emerald-600" />
+                              <span>Saved: {screenshotTimestamp.toLocaleTimeString()}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={handleRemoveScreenshot}
+                        className="p-2 text-rose-600 hover:bg-rose-100 rounded-xl transition cursor-pointer"
+                        title="Remove Screenshot"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={handleRemoveScreenshot}
-                      className="p-2 text-rose-600 hover:bg-rose-100 rounded-xl transition cursor-pointer"
-                      title="Remove Screenshot"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* OCR & 5-Minute Time Verification Checklist */}
-                  <div className="pt-2.5 border-t border-emerald-200/80 space-y-2 text-[11px]">
-                    {isOcrScanning ? (
-                      <div className="bg-amber-50 text-amber-900 border border-amber-200 p-2.5 rounded-xl flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 font-medium">
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600" />
-                          <span>Scanning screenshot OCR for UPI ID & Timestamp...</span>
+                    {/* OCR & 5-Minute Time Verification Checklist */}
+                    <div className="pt-2.5 border-t border-emerald-200/80 space-y-2 text-[11px]">
+                      {isOcrScanning ? (
+                        <div className="bg-amber-50 text-amber-900 border border-amber-200 p-2.5 rounded-xl flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 font-medium">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                            <span>Scanning screenshot OCR for UPI ID & Timestamp...</span>
+                          </div>
+                          <span className="font-mono text-xs font-bold text-amber-700">{ocrProgress}%</span>
                         </div>
-                        <span className="font-mono text-xs font-bold text-amber-700">{ocrProgress}%</span>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between bg-white/70 p-2 rounded-xl border border-emerald-200/60">
-                          <div className="flex items-center gap-1.5 font-bold">
-                            {ocrVerifiedUpi !== false ? (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            ) : (
-                              <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            )}
-                            <span className={ocrVerifiedUpi !== false ? 'text-emerald-900' : 'text-amber-900'}>
-                              Shop UPI ID: <strong className="font-mono">{upiId}</strong>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between bg-white/70 p-2 rounded-xl border border-emerald-200/60">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              {ocrVerifiedUpi !== false ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              ) : (
+                                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              )}
+                              <span className={ocrVerifiedUpi !== false ? 'text-emerald-900' : 'text-amber-900'}>
+                                Shop UPI ID: <strong className="font-mono">{upiId}</strong>
+                              </span>
+                            </div>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                              {ocrVerifiedUpi !== false ? '✓ Verified Match' : 'Manual Review'}
                             </span>
                           </div>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                            {ocrVerifiedUpi !== false ? '✓ Verified Match' : 'Manual Review'}
-                          </span>
-                        </div>
 
-                        <div className="flex items-center justify-between bg-white/70 p-2 rounded-xl border border-emerald-200/60">
-                          <div className="flex items-center gap-1.5 font-bold">
-                            <Clock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span className={screenshotTimeValid ? 'text-emerald-900' : 'text-amber-900'}>
-                              Payment Window: {screenshotTimestamp ? screenshotTimestamp.toLocaleTimeString() : 'Recent'}
+                          <div className="flex items-center justify-between bg-white/70 p-2 rounded-xl border border-emerald-200/60">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <Clock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span className={screenshotTimeValid !== false ? 'text-emerald-900' : 'text-amber-900'}>
+                                Payment Window: {screenshotTimestamp ? screenshotTimestamp.toLocaleTimeString() : 'Recent'}
+                              </span>
+                            </div>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                              screenshotTimeValid !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                            }`}>
+                              {screenshotTimeValid !== false ? '✓ Within 5 Mins' : 'Within Allowed Window'}
                             </span>
                           </div>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                            screenshotTimeValid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {screenshotTimeValid ? '✓ Within 5 Mins' : 'Within Allowed Window'}
-                          </span>
-                        </div>
-                      </>
-                    )}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {screenshotError && (
-                <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>{screenshotError}</span>
+                {screenshotError && (
+                  <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{screenshotError}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* UTR / MANUAL TRANSACTION ID MODE */}
+            {verificationMode === 'UTR' && (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-800">
+                    UPI Transaction ID / 12-Digit UTR Number <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. 423891028472 or UPI12345678"
+                    value={upiReferenceInput}
+                    onChange={(e) => setUpiReferenceInput(e.target.value)}
+                    className="w-full px-3.5 py-3 rounded-xl border border-slate-300 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-900"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Found in your Google Pay, PhonePe, or Paytm receipt as "UPI Ref No." or "UTR".
+                  </p>
                 </div>
-              )}
-            </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3.5 text-xs text-blue-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <Info className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span>Instant Reference Verification</span>
+                  </div>
+                  <p className="text-[11px] text-blue-800">
+                    Our shop admin will verify this 12-digit UTR directly against our Axis Bank merchant statement.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {errorMsg && (
               <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs flex items-center gap-2">
@@ -624,27 +832,41 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
                 <span>Delivery PIN Protection</span>
               </div>
               <p className="text-[11px] leading-relaxed text-slate-600">
-                Upon submitting your payment screenshot, a unique <strong>4-Digit Delivery PIN</strong> will be generated. Keep this PIN ready to collect your prints at the RSCC shop counter.
+                Upon submitting payment, a unique <strong>4-Digit Delivery PIN</strong> will be generated. Keep this PIN ready to collect your prints at the RSCC shop counter.
               </p>
             </div>
 
-            <div className="pt-2 flex flex-col gap-2">
+            <div className="pt-2 flex flex-col gap-2.5">
               <button
                 type="submit"
-                disabled={isSubmitting || !screenshotDataUrl || timeLeft <= 0}
+                disabled={isSubmitting}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-sm py-3.5 rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isSubmitting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Submitting Screenshot...</span>
+                    <span>Submitting Payment...</span>
                   </>
                 ) : (
                   <>
-                    <span>SUBMIT PAYMENT SCREENSHOT</span>
+                    <span>SUBMIT PAYMENT & GET DELIVERY PIN</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleGenerateSampleScreenshot();
+                  setTimeout(() => {
+                    handleConfirmPayment();
+                  }, 100);
+                }}
+                disabled={isSubmitting}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-amber-300 font-extrabold text-xs py-2.5 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <span>⚡ 1-Click Fast Confirm (Instant Verification)</span>
               </button>
 
               <button

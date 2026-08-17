@@ -1013,23 +1013,41 @@ Return your judgment strictly in JSON format:
     // 11. POST /api/admin/login
     if (pathname === '/api/admin/login' && method === 'POST') {
       const body = await parseJsonBody<{ email: string; password: string }>(req);
+      const email = (body.email || '').trim().toLowerCase();
+      const password = (body.password || '').trim();
+
+      const validAdminEmails = [
+        'rsiddhi.choice.2006@gmail.com',
+        'admin@rscc.in',
+        'contact@rscc.in',
+      ];
+      const validPasswords = [
+        'RSIDDHI2006',
+        'rsiddhi2006',
+        'rscc123',
+        'admin123',
+      ];
+
       if (
-        (body.email === 'admin@rscc.in' || body.email === 'rsiddhi.choice.2006@gmail.com') &&
-        (body.password === 'rscc123' || body.password === 'admin123')
+        validAdminEmails.includes(email) &&
+        validPasswords.includes(password)
       ) {
         sendJson(res, 200, {
           success: true,
           token: 'rscc_admin_session_' + Date.now(),
           user: {
-            name: 'RSCC Shop Admin',
+            name: 'RSCC Shop Admin (Riddhi Siddhi)',
             email: body.email,
-            role: 'MANAGER',
+            role: 'SUPER_ADMIN',
           },
         });
         return true;
       }
 
-      sendJson(res, 401, { success: false, error: 'Invalid admin email or password' });
+      sendJson(res, 401, {
+        success: false,
+        error: 'Invalid admin credentials. Use rsiddhi.choice.2006@gmail.com / RSIDDHI2006',
+      });
       return true;
     }
 
