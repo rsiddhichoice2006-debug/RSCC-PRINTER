@@ -930,6 +930,15 @@ Return your judgment strictly in JSON format:
         ocrTimeDiffMinutes?: number;
       }>(req);
 
+      // Mandatory validation: Customer must attach a payment screenshot to place the order
+      if (!body.paymentScreenshot || typeof body.paymentScreenshot !== 'string' || !body.paymentScreenshot.trim()) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Payment screenshot is mandatory. Please attach your UPI payment screenshot to verify payment and place your order.',
+        });
+        return true;
+      }
+
       const orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
       if (orderIndex === -1) {
         sendJson(res, 404, { success: false, error: 'Order not found' });
@@ -938,11 +947,11 @@ Return your judgment strictly in JSON format:
 
       orders[orderIndex].orderStatus = 'PLACED';
       orders[orderIndex].paymentStatus = 'PAYMENT_VERIFICATION_REQUIRED';
-      orders[orderIndex].paymentReference = body.paymentReference?.trim() || 'UPI-SCREENSHOT-VERIFICATION';
+      orders[orderIndex].paymentReference = body.paymentReference?.trim() || 'UPI-SCREENSHOT-VERIFIED';
       orders[orderIndex].paymentMethod = body.paymentMethod || 'UPI (9967842065@OKBIZAXIS)';
       orders[orderIndex].paymentScreenshot = body.paymentScreenshot;
       orders[orderIndex].paymentScreenshotTime = body.paymentScreenshotTime || new Date().toISOString();
-      orders[orderIndex].paymentScreenshotFilename = body.paymentScreenshotFilename;
+      orders[orderIndex].paymentScreenshotFilename = body.paymentScreenshotFilename || 'payment_screenshot.jpg';
       orders[orderIndex].ocrVerifiedUpi = body.ocrVerifiedUpi;
       orders[orderIndex].ocrDetectedUpiId = body.ocrDetectedUpiId;
       orders[orderIndex].ocrVerifiedTime = body.ocrVerifiedTime;
@@ -955,7 +964,7 @@ Return your judgment strictly in JSON format:
         action: 'PAYMENT_SCREENSHOT_SUBMITTED',
         actor: orders[orderIndex].customer.name,
         orderNumber: orders[orderIndex].orderNumber,
-        details: `Customer placed order & uploaded payment screenshot (${body.paymentScreenshotFilename || 'Screenshot'}). Delivery PIN: ${orders[orderIndex].deliveryPin}. OCR UPI Match: ${body.ocrVerifiedUpi ? 'YES' : 'PENDING'}.`,
+        details: `Customer placed order & attached verified payment screenshot (${body.paymentScreenshotFilename || 'Screenshot'}). Delivery PIN: ${orders[orderIndex].deliveryPin}. OCR UPI Match: ${body.ocrVerifiedUpi ? 'YES' : 'PENDING'}.`,
       });
 
       sendJson(res, 200, { success: true, order: orders[orderIndex] });
