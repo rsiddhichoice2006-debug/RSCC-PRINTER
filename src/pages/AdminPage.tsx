@@ -298,6 +298,30 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
             </p>
           </div>
 
+          <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-950 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold flex items-center gap-1 text-amber-900">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                Shop Admin Credentials:
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmail('rsiddhi.choice.2006@gmail.com');
+                  setPassword('RSIDDHI2006');
+                  setLoginError('');
+                }}
+                className="text-[11px] bg-amber-200/70 hover:bg-amber-300 text-amber-950 font-bold px-2 py-0.5 rounded cursor-pointer transition"
+              >
+                Auto-fill
+              </button>
+            </div>
+            <div className="font-mono text-[11px] text-slate-700 bg-white/80 p-2 rounded-lg border border-amber-200 space-y-0.5">
+              <div>Email: <strong className="text-slate-900">rsiddhi.choice.2006@gmail.com</strong></div>
+              <div>Password: <strong className="text-slate-900">RSIDDHI2006</strong></div>
+            </div>
+          </div>
+
           <form onSubmit={handleLogin} className="space-y-4 text-xs">
             <div className="space-y-1">
               <label className="block font-bold text-slate-700">Email Address</label>

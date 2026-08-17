@@ -31,20 +31,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [shopInfoModal, setShopInfoModal] = useState(false);
 
-  const customerNavItems = [
+  const navItems = [
     { id: 'home', label: 'Home', icon: null },
     { id: 'upload', label: 'Document Printing', icon: Printer },
     { id: 'photo-layout', label: 'A4 Photo Printing', icon: ImageIcon, badge: 'New' },
     { id: 'my-orders', label: 'My Orders', icon: Search },
-    { id: 'track', label: 'Track Order', icon: ShieldCheck },
+    { id: 'track', label: 'Track Order', icon: Clock },
+    {
+      id: 'admin',
+      label: isAdminLoggedIn ? 'Admin Dashboard' : 'Admin Portal',
+      icon: ShieldCheck,
+      badge: isAdminLoggedIn ? 'Logged In' : undefined,
+    },
   ];
-
-  const adminNavItems = [
-    ...customerNavItems,
-    { id: 'admin', label: 'Admin Dashboard', icon: ShieldCheck, badge: 'Admin' },
-  ];
-
-  const navItems = isAdminLoggedIn ? adminNavItems : customerNavItems;
 
   return (
     <>
@@ -136,9 +135,28 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* Right Action Buttons */}
             <div className="hidden sm:flex items-center gap-2">
+              {!isAdminLoggedIn ? (
+                <button
+                  onClick={() => onNavigate('admin')}
+                  className="text-xs font-bold text-slate-800 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 border border-slate-300 px-3 py-2 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                  title="Shop Admin Portal Login"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Admin Portal</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => onNavigate('admin')}
+                  className="text-xs font-black text-amber-950 bg-amber-100 border border-amber-300 hover:bg-amber-200 px-3 py-2 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Admin Panel</span>
+                </button>
+              )}
+
               <button
                 onClick={() => onNavigate('upload')}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm hover:shadow transition flex items-center gap-2"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm hover:shadow transition flex items-center gap-2 cursor-pointer"
               >
                 <Printer className="w-4 h-4 text-emerald-200" />
                 <span>Upload & Print</span>
@@ -147,7 +165,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               {isAdminLoggedIn && (
                 <button
                   onClick={onAdminLogout}
-                  className="text-xs text-rose-600 hover:text-rose-700 border border-rose-200 hover:bg-rose-50 px-2.5 py-1.5 rounded-lg transition"
+                  className="text-xs text-rose-600 hover:text-rose-700 border border-rose-200 hover:bg-rose-50 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
                 >
                   Logout
                 </button>
