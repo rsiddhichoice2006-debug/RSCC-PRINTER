@@ -156,6 +156,8 @@ let orders: OrderItem[] = [
     orderStatus: 'PRINTING',
     paymentReference: 'UPI-AXIS-99827181',
     paymentMethod: 'UPI (9967842065@OKBIZAXIS)',
+    paymentScreenshot: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500"><rect width="400" height="500" fill="%23047857"/><rect x="20" y="20" width="360" height="460" rx="16" fill="%23ffffff"/><text x="200" y="80" text-anchor="middle" font-family="sans-serif" font-size="20" font-weight="bold" fill="%23047857">Payment Successful</text><text x="200" y="140" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="bold" fill="%230f172a">₹24.00</text><text x="200" y="180" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2364748b">Paid to: 9967842065@OKBIZAXIS</text><text x="200" y="210" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">Riddhi Siddhi Choice Centre</text><text x="200" y="260" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="bold" fill="%230f172a">UPI Ref: UPI-AXIS-99827181</text></svg>',
+    paymentScreenshotFilename: 'upi_receipt_001.svg',
     paymentScreenshotTime: new Date(Date.now() - 3600000 * 2).toISOString(),
     specialInstructions: 'Please staple on top-left corner.',
     internalNotes: ['Verified via UPI Axis bank SMS alert.', 'Queued to Printer #1 (HP LaserJet).'],
@@ -193,6 +195,8 @@ let orders: OrderItem[] = [
     orderStatus: 'READY_FOR_PICKUP',
     paymentReference: 'GPay-REF-4491028',
     paymentMethod: 'UPI (GPay)',
+    paymentScreenshot: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500"><rect width="400" height="500" fill="%232563eb"/><rect x="20" y="20" width="360" height="460" rx="16" fill="%23ffffff"/><text x="200" y="80" text-anchor="middle" font-family="sans-serif" font-size="20" font-weight="bold" fill="%232563eb">Payment Successful</text><text x="200" y="140" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="bold" fill="%230f172a">₹150.00</text><text x="200" y="180" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2364748b">Paid to: 9967842065@OKBIZAXIS</text><text x="200" y="210" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">Riddhi Siddhi Choice Centre</text><text x="200" y="260" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="bold" fill="%230f172a">UPI Ref: GPay-REF-4491028</text></svg>',
+    paymentScreenshotFilename: 'gpay_receipt_002.svg',
     paymentScreenshotTime: new Date(Date.now() - 3600000 * 5).toISOString(),
     specialInstructions: 'Glossy paper if possible.',
     internalNotes: ['Printed on Konica Minolta Colour Press. Kept in Shelf B.'],
@@ -232,6 +236,8 @@ let orders: OrderItem[] = [
     orderStatus: 'PLACED',
     paymentReference: 'UPI-UTR-9918237190',
     paymentMethod: 'UPI (PhonePe)',
+    paymentScreenshot: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500"><rect width="400" height="500" fill="%23673ab7"/><rect x="20" y="20" width="360" height="460" rx="16" fill="%23ffffff"/><text x="200" y="80" text-anchor="middle" font-family="sans-serif" font-size="20" font-weight="bold" fill="%23673ab7">Transfer Successful</text><text x="200" y="140" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="bold" fill="%230f172a">₹30.00</text><text x="200" y="180" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2364748b">Paid to: 9967842065@OKBIZAXIS</text><text x="200" y="210" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">Riddhi Siddhi Choice Centre</text><text x="200" y="260" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="bold" fill="%230f172a">UPI Ref: UPI-UTR-9918237190</text></svg>',
+    paymentScreenshotFilename: 'phonepe_receipt_003.svg',
     paymentScreenshotTime: new Date(Date.now() - 1800000).toISOString(),
     specialInstructions: 'High gloss photo paper.',
     internalNotes: ['Awaiting UPI statement verification from shop owner.'],
@@ -930,6 +936,15 @@ Return your judgment strictly in JSON format:
         ocrTimeDiffMinutes?: number;
       }>(req);
 
+      // Mandatory validation: Customer must attach a payment screenshot to place the order
+      if (!body.paymentScreenshot || typeof body.paymentScreenshot !== 'string' || !body.paymentScreenshot.trim()) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Payment screenshot is mandatory. Please attach your UPI payment screenshot to verify payment and place your order.',
+        });
+        return true;
+      }
+
       const orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
       if (orderIndex === -1) {
         sendJson(res, 404, { success: false, error: 'Order not found' });
@@ -938,11 +953,11 @@ Return your judgment strictly in JSON format:
 
       orders[orderIndex].orderStatus = 'PLACED';
       orders[orderIndex].paymentStatus = 'PAYMENT_VERIFICATION_REQUIRED';
-      orders[orderIndex].paymentReference = body.paymentReference?.trim() || 'UPI-SCREENSHOT-VERIFICATION';
+      orders[orderIndex].paymentReference = body.paymentReference?.trim() || 'UPI-SCREENSHOT-VERIFIED';
       orders[orderIndex].paymentMethod = body.paymentMethod || 'UPI (9967842065@OKBIZAXIS)';
       orders[orderIndex].paymentScreenshot = body.paymentScreenshot;
       orders[orderIndex].paymentScreenshotTime = body.paymentScreenshotTime || new Date().toISOString();
-      orders[orderIndex].paymentScreenshotFilename = body.paymentScreenshotFilename;
+      orders[orderIndex].paymentScreenshotFilename = body.paymentScreenshotFilename || 'payment_screenshot.jpg';
       orders[orderIndex].ocrVerifiedUpi = body.ocrVerifiedUpi;
       orders[orderIndex].ocrDetectedUpiId = body.ocrDetectedUpiId;
       orders[orderIndex].ocrVerifiedTime = body.ocrVerifiedTime;
@@ -955,7 +970,7 @@ Return your judgment strictly in JSON format:
         action: 'PAYMENT_SCREENSHOT_SUBMITTED',
         actor: orders[orderIndex].customer.name,
         orderNumber: orders[orderIndex].orderNumber,
-        details: `Customer placed order & uploaded payment screenshot (${body.paymentScreenshotFilename || 'Screenshot'}). Delivery PIN: ${orders[orderIndex].deliveryPin}. OCR UPI Match: ${body.ocrVerifiedUpi ? 'YES' : 'PENDING'}.`,
+        details: `Customer placed order & attached verified payment screenshot (${body.paymentScreenshotFilename || 'Screenshot'}). Delivery PIN: ${orders[orderIndex].deliveryPin}. OCR UPI Match: ${body.ocrVerifiedUpi ? 'YES' : 'PENDING'}.`,
       });
 
       sendJson(res, 200, { success: true, order: orders[orderIndex] });

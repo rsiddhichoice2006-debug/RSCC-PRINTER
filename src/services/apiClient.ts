@@ -498,6 +498,10 @@ export const apiClient = {
       ocrTimeDiffMinutes?: number;
     }
   ): Promise<OrderRecord> {
+    if (!payload.paymentScreenshot || !payload.paymentScreenshot.trim()) {
+      throw new Error('Payment screenshot is required to place and verify your order.');
+    }
+
     const backendData = await safeFetchJson<{ success: boolean; order: OrderRecord; error?: string }>(
       `/api/orders/${orderId}/submit-payment`,
       {
@@ -527,7 +531,7 @@ export const apiClient = {
     const current = orders[orderIndex];
     const updated: OrderRecord = {
       ...current,
-      paymentReference: payload.paymentReference || `UPI-${Date.now().toString().slice(-8)}`,
+      paymentReference: payload.paymentReference || `UPI-SCREENSHOT-VERIFIED`,
       paymentMethod: payload.paymentMethod || 'UPI Payment Proof',
       paymentScreenshot: payload.paymentScreenshot,
       paymentScreenshotTime: payload.paymentScreenshotTime || new Date().toISOString(),
