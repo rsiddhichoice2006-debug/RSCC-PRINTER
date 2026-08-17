@@ -143,13 +143,14 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
           <div className="flex items-center gap-4">
             <button
               onClick={() => onNavigate('admin')}
-              className="text-slate-400 hover:text-amber-400 transition flex items-center gap-1 underline underline-offset-4"
+              className="text-slate-600 hover:text-slate-400 transition flex items-center gap-1 text-[11px] cursor-pointer"
+              title="Shop Staff Access"
             >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Admin Portal
+              <ShieldCheck className="w-3 h-3 text-slate-600" />
+              <span>Staff Login</span>
             </button>
-            <span>•</span>
-            <span className="text-slate-400">
+            <span className="text-slate-800">•</span>
+            <span className="text-slate-500">
               Made for Local Indian Business
             </span>
           </div>

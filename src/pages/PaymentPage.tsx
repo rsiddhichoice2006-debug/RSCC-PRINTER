@@ -258,19 +258,26 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
     setScreenshotFile(file);
 
-    // Read timestamp from file modified date
+    // Read timestamp from file modified date or current timestamp
     const fileDate = new Date(file.lastModified || Date.now());
     setScreenshotTimestamp(fileDate);
 
-    // Verify if screenshot is within 5 minutes of now
+    // Strictly verify if screenshot is within 5 minutes (300,000 ms) of now
     const now = Date.now();
     const diffMs = Math.abs(now - fileDate.getTime());
-    const diffMins = Math.round(diffMs / 60000);
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffSecs = Math.floor((diffMs % 60000) / 1000);
     setScreenshotTimeDiffMinutes(diffMins);
 
-    // Considered valid if within 5-7 minutes
-    const isTimeValid = diffMs <= 7 * 60 * 1000;
+    // Strictly <= 5 minutes (300 seconds)
+    const isTimeValid = diffMs <= 5 * 60 * 1000;
     setScreenshotTimeValid(isTimeValid);
+
+    if (!isTimeValid) {
+      setScreenshotError(
+        `Screenshot timestamp is older than 5 minutes (${diffMins}m ${diffSecs}s ago). Payment verification strictly requires a screenshot captured within 5 minutes of current time. Please upload a fresh screenshot or make payment now.`
+      );
+    }
 
     // Read base64 data URL for preview and payload
     const reader = new FileReader();
@@ -368,6 +375,14 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
     if (timeLeft <= 0) {
       handleResetTimer();
+    }
+
+    // If customer uploaded a screenshot that is older than 5 minutes, block submission
+    if (screenshotFile && screenshotTimeValid === false) {
+      setErrorMsg(
+        `Payment screenshot is older than 5 minutes (${screenshotTimeDiffMinutes}m ago). Please capture a fresh payment screenshot taken within the last 5 minutes and upload.`
+      );
+      return;
     }
 
     setIsSubmitting(true);
@@ -758,17 +773,30 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
                             </span>
                           </div>
 
-                          <div className="flex items-center justify-between bg-white/70 p-2 rounded-xl border border-emerald-200/60">
+                          <div className={`flex items-center justify-between p-2 rounded-xl border ${
+                            screenshotTimeValid !== false
+                              ? 'bg-emerald-50/80 border-emerald-200/60'
+                              : 'bg-rose-50 border-rose-200'
+                          }`}>
                             <div className="flex items-center gap-1.5 font-bold">
-                              <Clock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span className={screenshotTimeValid !== false ? 'text-emerald-900' : 'text-amber-900'}>
-                                Payment Window: {screenshotTimestamp ? screenshotTimestamp.toLocaleTimeString() : 'Recent'}
+                              <Clock className={`w-3.5 h-3.5 shrink-0 ${
+                                screenshotTimeValid !== false ? 'text-emerald-600' : 'text-rose-600'
+                              }`} />
+                              <span className={screenshotTimeValid !== false ? 'text-emerald-900' : 'text-rose-900'}>
+                                Screenshot Time: {screenshotTimestamp ? screenshotTimestamp.toLocaleTimeString() : 'Recent'}
+                                {typeof screenshotTimeDiffMinutes === 'number' && (
+                                  <span className="ml-1 text-[11px] font-normal text-slate-500">
+                                    ({screenshotTimeDiffMinutes}m ago)
+                                  </span>
+                                )}
                               </span>
                             </div>
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                              screenshotTimeValid !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                              screenshotTimeValid !== false
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-rose-100 text-rose-800'
                             }`}>
-                              {screenshotTimeValid !== false ? '✓ Within 5 Mins' : 'Within Allowed Window'}
+                              {screenshotTimeValid !== false ? '✓ Within 5 Mins' : '❌ > 5 Mins (Expired)'}
                             </span>
                           </div>
                         </>

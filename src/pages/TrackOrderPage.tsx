@@ -43,7 +43,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({
     const searchMob = mobNum || mobile;
 
     if (!searchOrd.trim() || !searchMob.trim()) {
-      setErrorMsg('Please enter both Order Number and Mobile Number.');
+      setErrorMsg('Please enter both Order Number and your Mobile Number or Email ID.');
       return;
     }
 
@@ -53,7 +53,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({
       const result = await apiClient.trackOrder(searchOrd, searchMob);
       setOrder(result);
     } catch (err: any) {
-      setErrorMsg(err.message || 'No matching order found. Please verify your order number and mobile number.');
+      setErrorMsg(err.message || 'No matching order found. Please verify your order number and mobile/email.');
       setOrder(null);
     } finally {
       setLoading(false);
@@ -114,8 +114,8 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({
 
           <div className="sm:col-span-4">
             <input
-              type="tel"
-              placeholder="10-digit Mobile Number"
+              type="text"
+              placeholder="Mobile Number or Email ID"
               value={mobile}
               onChange={(e) => setMobile(e.target.value)}
               className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"

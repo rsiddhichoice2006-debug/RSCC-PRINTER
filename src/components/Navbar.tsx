@@ -31,13 +31,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [shopInfoModal, setShopInfoModal] = useState(false);
 
-  const navItems = [
+  const customerNavItems = [
     { id: 'home', label: 'Home', icon: null },
     { id: 'upload', label: 'Document Printing', icon: Printer },
     { id: 'photo-layout', label: 'A4 Photo Printing', icon: ImageIcon, badge: 'New' },
     { id: 'my-orders', label: 'My Orders', icon: Search },
-    { id: 'admin', label: isAdminLoggedIn ? 'Admin Panel' : 'Admin Login', icon: ShieldCheck },
+    { id: 'track', label: 'Track Order', icon: ShieldCheck },
   ];
+
+  const adminNavItems = [
+    ...customerNavItems,
+    { id: 'admin', label: 'Admin Dashboard', icon: ShieldCheck, badge: 'Admin' },
+  ];
+
+  const navItems = isAdminLoggedIn ? adminNavItems : customerNavItems;
 
   return (
     <>
