@@ -1,0 +1,6 @@
+{
+  "name": "Riddhi Siddhi Choice Centre - Online Printing",
+  "description": "Official online printing and A4 photo printing platform for Riddhi Siddhi Choice Centre (RSCC) with instant page counting, UPI payments, order tracking, and admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
