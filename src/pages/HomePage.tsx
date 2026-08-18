@@ -3,6 +3,7 @@ import {
   Printer,
   FileText,
   Image as ImageIcon,
+  Camera,
   Sparkles,
   ShieldCheck,
   Zap,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { ShopSettings } from '../types';
 import { AcceptanceCalculatorWidget } from '../components/AcceptanceCalculatorWidget';
+import { RsccLogo } from '../components/RsccLogo';
 
 interface HomePageProps {
   settings: ShopSettings;
@@ -65,13 +67,18 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
             <span>Fast & Affordable Local Printing in India</span>
           </div>
 
-          <div className="space-y-2">
-            <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white">
-              RIDDHI SIDDHI CHOICE CENTRE
-            </h1>
-            <p className="text-lg sm:text-2xl font-bold text-amber-400 tracking-wide uppercase">
-              Online Printing Service
-            </p>
+          <div className="space-y-3 flex flex-col items-center justify-center">
+            <div className="flex items-center justify-center gap-3">
+              <RsccLogo size="lg" className="shrink-0" />
+              <div className="text-left">
+                <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white leading-none">
+                  RIDDHI SIDDHI CHOICE CENTRE
+                </h1>
+                <p className="text-sm sm:text-lg font-bold text-amber-400 tracking-wider uppercase mt-1">
+                  Online Printing Service
+                </p>
+              </div>
+            </div>
           </div>
 
           <p className="max-w-2xl mx-auto text-sm sm:text-base text-slate-300 leading-relaxed">
@@ -79,10 +86,10 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
           </p>
 
           {/* Primary CTA Buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
             <button
               onClick={() => onNavigate('upload')}
-              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-base px-8 py-3.5 rounded-xl shadow-lg hover:shadow-emerald-900/40 transition transform active:scale-95 flex items-center justify-center gap-2.5"
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-sm sm:text-base px-6 py-3.5 rounded-xl shadow-lg hover:shadow-emerald-900/40 transition transform active:scale-95 flex items-center justify-center gap-2.5 cursor-pointer"
             >
               <Printer className="w-5 h-5 text-emerald-200" />
               <span>START PRINTING</span>
@@ -90,16 +97,24 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
             </button>
 
             <button
+              onClick={() => onNavigate('passport-photo')}
+              className="w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm sm:text-base px-6 py-3.5 rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Camera className="w-5 h-5 text-slate-950" />
+              <span>PASSPORT PHOTOS (10 PCS)</span>
+            </button>
+
+            <button
               onClick={() => onNavigate('photo-layout')}
-              className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-base px-7 py-3.5 rounded-xl shadow-md transition flex items-center justify-center gap-2"
+              className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm sm:text-base px-6 py-3.5 rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <ImageIcon className="w-5 h-5 text-amber-300" />
-              <span>A4 PHOTO PRINTING</span>
+              <span>PHOTO LAYOUT (A4/A3)</span>
             </button>
 
             <button
               onClick={() => onNavigate('track')}
-              className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-base px-7 py-3.5 rounded-xl border border-slate-700 transition flex items-center justify-center gap-2"
+              className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm sm:text-base px-5 py-3.5 rounded-xl border border-slate-700 transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <Search className="w-4 h-4 text-amber-400" />
               <span>TRACK ORDER</span>
@@ -157,6 +172,30 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {/* Card 0: Passport & Photo Printing - Featured */}
+            <div
+              onClick={() => onNavigate('passport-photo')}
+              className="bg-gradient-to-br from-amber-500/10 via-amber-50/50 to-white rounded-2xl p-6 border-2 border-amber-400 shadow-sm hover:shadow-md transition flex flex-col justify-between cursor-pointer group"
+            >
+              <div className="space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition">
+                  <Camera className="w-6 h-6" />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <h3 className="font-bold text-slate-900 text-lg">Passport Photos</h3>
+                  <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.5 rounded">NEW</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  10 Passport photos (₹50) or 10 mixed sizes (₹60) printed on glossy photo paper with visual upload guide.
+                </p>
+              </div>
+
+              <div className="mt-5 pt-4 border-t border-amber-200 flex items-center justify-between">
+                <span className="text-xs text-amber-900 font-bold">Standard Set</span>
+                <span className="text-base font-black text-slate-950">₹50 (10 Pcs)</span>
+              </div>
+            </div>
+
             {/* Card 1: A4 Black & White */}
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between">
               <div className="space-y-3">
@@ -193,25 +232,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
               </div>
             </div>
 
-            {/* Card 3: Single Side Printing */}
-            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between">
-              <div className="space-y-3">
-                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                  <Layers className="w-6 h-6" />
-                </div>
-                <h3 className="font-bold text-slate-900 text-lg">Single Side Print</h3>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  Printed on one side per sheet. Suitable for single-page letters, certificates, resumes, and posters.
-                </p>
-              </div>
-
-              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-xs text-slate-500 font-medium">Rate</span>
-                <span className="text-sm font-bold text-slate-800">₹{p.bwSingle} (B&W) / ₹{p.colorSingle} (Colour)</span>
-              </div>
-            </div>
-
-            {/* Card 4: Both Side Printing */}
+            {/* Card 3: Both Side Printing */}
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between">
               <div className="space-y-3">
                 <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
@@ -219,7 +240,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                 </div>
                 <h3 className="font-bold text-slate-900 text-lg">Both Side (Duplex)</h3>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Front & back printing for multi-page documents, booklets, manuals, and project books. Save money & paper!
+                  Front & back printing for multi-page documents, booklets, and project books. Save money & paper!
                 </p>
               </div>
 

@@ -16,10 +16,24 @@ const DEFAULT_SETTINGS: ShopSettings = {
   isAcceptingOrders: true,
   pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
   pricing: {
+    a4Bw75Single: 5,
+    a4Bw75Both: 4,
+    a4Bw100Single: 7,
+    a4Bw100Both: 12,
+    a4Color100Single: 10,
+    a4Color100Both: 15,
+    a3Bw75Single: 10,
+    a3Bw75Both: 20,
+    a3Bw100Single: 15,
+    a3Bw100Both: 25,
+    a3Color100Single: 20,
+    a3Color100Both: 35,
+    passportStandard: 50,
+    passportMixed: 60,
     bwSingle: 5,
     bwBoth: 4,
     colorSingle: 10,
-    colorBoth: 7.5,
+    colorBoth: 15,
     photoSheet: 15,
   },
 };
@@ -154,7 +168,10 @@ function generateDeliveryPin(): string {
 }
 
 function calculateOrderPrice(params: {
-  mode: 'DOCUMENT' | 'PHOTO';
+  mode: 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
+  paperSize?: 'A4' | 'A3';
+  paperQuality?: '75_GSM' | '100_GSM';
+  passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
   totalPages?: number;
   totalSheets?: number;
   copies?: number;
@@ -164,10 +181,28 @@ function calculateOrderPrice(params: {
 }): { ratePerPage: number; totalAmount: number } {
   const p = params.customPricing || DEFAULT_SETTINGS.pricing;
   const copies = params.copies || 1;
+  const paperSize = params.paperSize || 'A4';
+  const paperQuality = params.paperQuality || (params.printType === 'COLOUR' ? '100_GSM' : '75_GSM');
+
+  if (params.mode === 'PASSPORT_PHOTO') {
+    const sheets = params.totalSheets || 1;
+    let rate = p.passportStandard || 50;
+
+    if (params.passportService === 'STANDARD_PASSPORT') {
+      rate = p.passportStandard || 50;
+    } else if (params.passportService === 'MIXED_SIZE') {
+      rate = p.passportMixed || 60;
+    }
+
+    return {
+      ratePerPage: rate,
+      totalAmount: sheets * rate * copies,
+    };
+  }
 
   if (params.mode === 'PHOTO') {
     const sheets = params.totalSheets || Math.max(1, params.totalPages || 1);
-    const ratePerPage = p.photoSheet || 15;
+    const ratePerPage = p.a4Color100Single || 10;
     return {
       ratePerPage,
       totalAmount: sheets * ratePerPage * copies,
@@ -175,11 +210,36 @@ function calculateOrderPrice(params: {
   }
 
   const pages = params.totalPages || 1;
-  let rate = p.bwSingle;
-  if (params.printType === 'COLOUR') {
-    rate = params.printingSide === 'BOTH' ? p.colorBoth : p.colorSingle;
+  let rate = 0;
+
+  if (paperSize === 'A4') {
+    if (params.printType === 'BW') {
+      if (paperQuality === '75_GSM') {
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 4) : (p.a4Bw75Single || 5);
+      } else {
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw100Both || 12) : (p.a4Bw100Single || 7);
+      }
+    } else {
+      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 15) : (p.a4Color100Single || 10);
+    }
   } else {
-    rate = params.printingSide === 'BOTH' ? p.bwBoth : p.bwSingle;
+    if (params.printType === 'BW') {
+      if (paperQuality === '75_GSM') {
+        rate = params.printingSide === 'BOTH' ? (p.a3Bw75Both || 20) : (p.a3Bw75Single || 10);
+      } else {
+        rate = params.printingSide === 'BOTH' ? (p.a3Bw100Both || 25) : (p.a3Bw100Single || 15);
+      }
+    } else {
+      rate = params.printingSide === 'BOTH' ? (p.a3Color100Both || 35) : (p.a3Color100Single || 20);
+    }
+  }
+
+  if (!rate) {
+    if (params.printType === 'COLOUR') {
+      rate = params.printingSide === 'BOTH' ? p.colorBoth : p.colorSingle;
+    } else {
+      rate = params.printingSide === 'BOTH' ? p.bwBoth : p.bwSingle;
+    }
   }
 
   return {
@@ -350,6 +410,9 @@ export const apiClient = {
     // 2. Client-side robust fallback order creation
     const calculated = calculateOrderPrice({
       mode: payload.mode || 'DOCUMENT',
+      paperSize: payload.paperSize || 'A4',
+      paperQuality: payload.paperQuality || (payload.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
+      passportService: payload.passportService,
       totalPages: payload.totalPages,
       totalSheets: payload.totalSheets,
       copies: payload.copies || 1,
@@ -372,6 +435,9 @@ export const apiClient = {
         email: payload.customer?.email?.trim() || undefined,
       },
       mode: payload.mode || 'DOCUMENT',
+      paperSize: payload.paperSize || 'A4',
+      paperQuality: payload.paperQuality || (payload.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
+      passportService: payload.passportService,
       photoLayout: payload.photoLayout,
       photoOrientation: payload.photoOrientation,
       files: (payload.files || []).map((f: any) => ({
@@ -380,6 +446,7 @@ export const apiClient = {
         size: f.size || 1024,
         type: f.type || 'application/pdf',
         pageCount: f.pageCount || 1,
+        previewUrl: f.previewUrl,
         moderationStatus: 'SAFE',
       })),
       totalPages: payload.totalPages || 1,

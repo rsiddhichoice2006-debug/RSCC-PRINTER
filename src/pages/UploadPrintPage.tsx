@@ -15,16 +15,24 @@ import {
   Sparkles,
   Layers,
   HelpCircle,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   CustomerDetails,
   CustomerUser,
+  PaperQuality,
+  PaperSize,
   PrintType,
   PrintingSide,
   ShopSettings,
   UploadedFileItem,
 } from '../types';
 import { formatFileSize, processUploadedFile } from '../utils/fileProcessor';
+import {
+  DEFAULT_PRICING,
+  getDocumentRate,
+  getAvailableQualitiesForPrintType,
+} from '../utils/pricingCalculator';
 
 interface UploadPrintPageProps {
   settings: ShopSettings;
@@ -48,8 +56,10 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   const [isProcessingFiles, setIsProcessingFiles] = useState<boolean>(false);
   const [dragActive, setDragActive] = useState<boolean>(false);
 
-  // Printing Preferences
+  // Printing Preferences: Paper Size, Print Type, Paper Quality (GSM), Printing Side, Copies
+  const [paperSize, setPaperSize] = useState<PaperSize>('A4');
   const [printType, setPrintType] = useState<PrintType>(sampleParams?.printType || 'BW');
+  const [paperQuality, setPaperQuality] = useState<PaperQuality>('75_GSM');
   const [printingSide, setPrintingSide] = useState<PrintingSide>(sampleParams?.printingSide || 'SINGLE');
   const [copies, setCopies] = useState<number>(sampleParams?.copies || 1);
 
@@ -72,9 +82,16 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
       }));
     }
   }, [loggedInCustomer]);
-  const [formErrors, setFormErrors] = useState<{ name?: string; mobile?: string }>({});
 
+  const [formErrors, setFormErrors] = useState<{ name?: string; mobile?: string }>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Enforce Rule: When Colour is selected, 75 GSM is not available (auto-switch to 100 GSM)
+  useEffect(() => {
+    if (printType === 'COLOUR' && paperQuality === '75_GSM') {
+      setPaperQuality('100_GSM');
+    }
+  }, [printType, paperQuality]);
 
   // Handle Sample Parameters prefill from acceptance tests
   useEffect(() => {
@@ -118,17 +135,11 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     }
   }, [isBothSideAllowed, printingSide]);
 
-  // Price Calculation according to RSCC Business Rules
-  const p = settings.pricing;
-  let ratePerPage = 0;
-  if (printType === 'BW') {
-    ratePerPage = printingSide === 'BOTH' ? p.bwBoth : p.bwSingle;
-  } else {
-    ratePerPage = printingSide === 'BOTH' ? p.colorBoth : p.colorSingle;
-  }
+  // Price Calculation according to RSCC Dynamic Pricing Engine
+  const pricing = settings.pricing || DEFAULT_PRICING;
+  const ratePerPage = getDocumentRate(paperSize, printType, paperQuality, printingSide, pricing);
 
-  // Formula: Total = Number of Pages × Copies × Rate
-  // NEVER divide page count by 2 for duplex printing
+  // Formula: Total = Number of Pages × Copies × Rate per page
   const totalAmount = (totalPages > 0 ? totalPages : 0) * copies * ratePerPage;
 
   // Handle Drag & Drop Files
@@ -139,53 +150,156 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     const newItems: UploadedFileItem[] = [];
 
     for (let i = 0; i < fileList.length; i++) {
-      const f = fileList[i];
-      const processed = await processUploadedFile(f, settings.maxFileSizeMb);
-      newItems.push(processed);
+      const rawFile = fileList[i];
+      const maxBytes = (settings.maxFileSizeMb || 50) * 1024 * 1024;
+
+      if (rawFile.size > maxBytes) {
+        newItems.push({
+          id: `f-${Date.now()}-${i}`,
+          file: rawFile,
+          name: rawFile.name,
+          size: rawFile.size,
+          type: rawFile.type || 'application/octet-stream',
+          pageCount: 0,
+          isProcessing: false,
+          error: `File size exceeds ${settings.maxFileSizeMb}MB limit.`,
+          moderationStatus: 'SAFE',
+        });
+        continue;
+      }
+
+      // Initial loading state item
+      const tempId = `f-${Date.now()}-${i}`;
+      const placeholderItem: UploadedFileItem = {
+        id: tempId,
+        file: rawFile,
+        name: rawFile.name,
+        size: rawFile.size,
+        type: rawFile.type || 'application/octet-stream',
+        pageCount: 1,
+        isProcessing: true,
+        moderationStatus: 'PENDING',
+      };
+      newItems.push(placeholderItem);
     }
 
     setUploadedFiles((prev) => [...prev, ...newItems]);
+
+    // Process each file in background (page count detection + safety check)
+    for (let i = 0; i < newItems.length; i++) {
+      const item = newItems[i];
+      if (item.error) continue;
+
+      try {
+        const processed = await processUploadedFile(item.file);
+        setUploadedFiles((prev) =>
+          prev.map((f) =>
+            f.id === item.id
+              ? {
+                  ...f,
+                  pageCount: processed.pageCount,
+                  previewUrl: processed.previewUrl,
+                  isProcessing: false,
+                  moderationStatus: processed.moderationStatus,
+                  moderationReason: processed.moderationReason,
+                }
+              : f
+          )
+        );
+      } catch (err: any) {
+        setUploadedFiles((prev) =>
+          prev.map((f) =>
+            f.id === item.id
+              ? {
+                  ...f,
+                  isProcessing: false,
+                  error: 'Failed to read file pages. Defaulted to 1 page.',
+                  pageCount: 1,
+                  moderationStatus: 'SAFE',
+                }
+              : f
+          )
+        );
+      }
+    }
+
     setIsProcessingFiles(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    handleFiles(e.dataTransfer.files);
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFiles(e.target.files);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const removeFile = (id: string) => {
     setUploadedFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
-  const validateForm = (): boolean => {
-    const errs: { name?: string; mobile?: string } = {};
-    if (!customer.name.trim()) errs.name = 'Please enter your full name';
-    if (!customer.mobile.trim() || customer.mobile.trim().length < 10) {
-      errs.mobile = 'Please enter a valid 10-digit mobile number';
+  const updatePageCount = (id: string, newCount: number) => {
+    if (newCount < 1) return;
+    setUploadedFiles((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, pageCount: newCount } : f))
+    );
+  };
+
+  const validateCustomerForm = (): boolean => {
+    const errors: { name?: string; mobile?: string } = {};
+    if (!customer.name.trim()) {
+      errors.name = 'Please enter your full name.';
     }
-    setFormErrors(errs);
-    return Object.keys(errs).length === 0;
+    if (!customer.mobile.trim() || customer.mobile.trim().length < 10) {
+      errors.mobile = 'Please enter a valid 10-digit mobile number for pickup updates.';
+    }
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleProceed = () => {
     if (settings.isAcceptingOrders === false) {
-      alert(settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand. Please check back later.');
+      alert(settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand.');
       return;
     }
 
     if (validFiles.length === 0) {
-      alert('Please upload at least one valid printable document.');
+      alert('Please upload at least one valid document file (PDF, Word, Image, etc.).');
+      fileInputRef.current?.click();
       return;
     }
 
-    const hasFlagged = uploadedFiles.some((f) => f.moderationStatus === 'FLAGGED');
-    if (hasFlagged) {
-      alert('One or more files cannot be accepted due to policy violations. Please remove them.');
+    if (hasFlaggedFiles) {
+      alert('Your upload contains flagged content that violates our printing policy. Please remove the flagged item to proceed.');
       return;
     }
 
-    if (!validateForm()) {
+    if (!validateCustomerForm()) {
       return;
     }
 
     const orderPayload = {
       mode: 'DOCUMENT',
+      paperSize,
+      paperQuality,
       customer: {
         name: customer.name.trim(),
         mobile: customer.mobile.trim(),
@@ -197,6 +311,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         size: f.size,
         type: f.type,
         pageCount: f.pageCount,
+        previewUrl: f.previewUrl,
         moderationStatus: f.moderationStatus,
         moderationReason: f.moderationReason,
       })),
@@ -213,12 +328,13 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   };
 
   const hasFlaggedFiles = uploadedFiles.some((f) => f.moderationStatus === 'FLAGGED');
+  const availableQualities = getAvailableQualitiesForPrintType(printType);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Not Accepting Orders Banner */}
       {settings.isAcceptingOrders === false && (
-        <div className="bg-rose-950/90 border-2 border-rose-500 rounded-3xl p-6 text-white shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+        <div className="bg-rose-950/90 border-2 border-rose-500 rounded-3xl p-6 text-white shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
             <div className="w-11 h-11 rounded-2xl bg-rose-600 flex items-center justify-center shrink-0 shadow-md">
               <ShieldAlert className="w-6 h-6 text-white" />
@@ -251,14 +367,15 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             Upload & Print Documents
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-            Upload your PDF, Word, PowerPoint, Excel, or Image files. Our system automatically detects the page count, runs content safety checks, and applies instant pricing.
+            Upload your PDF, Word, PowerPoint, Excel, or Image files. Choose your paper size, print type, paper quality (GSM), and printing side for instant transparent pricing.
           </p>
         </div>
 
         <div className="bg-slate-800/80 border border-slate-700 rounded-2xl p-4 text-left shrink-0 text-xs text-slate-300 space-y-1">
           <div className="font-bold text-amber-400">RSCC Rate Card:</div>
-          <div>B&W Single: ₹{p.bwSingle} | Both: ₹{p.bwBoth}</div>
-          <div>Colour Single: ₹{p.colorSingle} | Both: ₹{p.colorBoth}</div>
+          <div>A4 B&W 75 GSM: ₹{pricing.a4Bw75Single} / ₹{pricing.a4Bw75Both}</div>
+          <div>A4 Colour 100 GSM: ₹{pricing.a4Color100Single} / ₹{pricing.a4Color100Both}</div>
+          <div>A3 B&W 75 GSM: ₹{pricing.a3Bw75Single} / ₹{pricing.a3Bw75Both}</div>
         </div>
       </div>
 
@@ -279,164 +396,153 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             </div>
 
             <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragActive(true);
-              }}
-              onDragLeave={() => setDragActive(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragActive(false);
-                handleFiles(e.dataTransfer.files);
-              }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition space-y-3 group ${
+              className={`border-2 border-dashed rounded-2xl p-8 sm:p-10 text-center cursor-pointer transition flex flex-col items-center justify-center gap-3 ${
                 dragActive
                   ? 'border-emerald-500 bg-emerald-50/50 scale-[1.01]'
-                  : 'border-slate-300 hover:border-emerald-500 bg-slate-50/70 hover:bg-emerald-50/30'
+                  : 'border-slate-300 hover:border-slate-400 bg-slate-50/50'
               }`}
             >
               <input
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.rtf,.jpg,.jpeg,.png,.webp"
-                onChange={(e) => handleFiles(e.target.files)}
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt"
+                onChange={handleFileInputChange}
                 className="hidden"
               />
 
-              <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto group-hover:scale-110 transition shadow-xs">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-xs">
                 <Upload className="w-7 h-7" />
               </div>
 
               <div>
                 <div className="text-base font-bold text-slate-900">
-                  Click or Drag & Drop Documents Here
+                  Click to upload or drag & drop documents here
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Supported formats: PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, TXT, RTF, JPG, PNG
+                  Supports PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), and Images (PNG, JPG)
                 </p>
               </div>
 
-              <button
-                type="button"
-                className="bg-slate-900 group-hover:bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-xl transition inline-flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Browse Files from Phone / Computer</span>
-              </button>
-            </div>
-
-            {isProcessingFiles && (
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 flex items-center gap-3 text-xs text-blue-900">
-                <RefreshCw className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
-                <div>
-                  <div className="font-bold">Analyzing files & counting pages...</div>
-                  <div className="text-[11px] text-blue-700">Checking document integrity and content safety.</div>
-                </div>
+              <div className="flex items-center gap-4 text-xs font-semibold text-slate-600 mt-2">
+                <span className="flex items-center gap-1">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" /> AI Moderation
+                </span>
+                <span className="flex items-center gap-1">
+                  <CheckCircle2 className="w-4 h-4 text-blue-600" /> Auto Page Counter
+                </span>
               </div>
-            )}
+            </div>
           </div>
 
-          {/* Uploaded Files Table / List */}
+          {/* Uploaded Files List */}
           {uploadedFiles.length > 0 && (
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-black text-slate-900 text-base">
-                    Uploaded Documents ({uploadedFiles.length})
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Total Detected Pages: <strong className="text-emerald-700 font-bold">{totalPages}</strong>
-                  </p>
-                </div>
+                <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
+                  <span>Uploaded Files</span>
+                  <span className="bg-slate-100 text-slate-700 text-xs px-2.5 py-0.5 rounded-full font-bold">
+                    {uploadedFiles.length} file{uploadedFiles.length === 1 ? '' : 's'}
+                  </span>
+                </h3>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition flex items-center gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add Another File</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add More Files</span>
+                </button>
               </div>
 
               <div className="space-y-3">
-                {uploadedFiles.map((fileItem, idx) => {
+                {uploadedFiles.map((fileItem) => {
                   const isFlagged = fileItem.moderationStatus === 'FLAGGED';
-                  const hasError = !!fileItem.error && !isFlagged;
-
                   return (
                     <div
                       key={fileItem.id}
-                      className={`p-4 rounded-xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                      className={`p-4 rounded-xl border transition flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
                         isFlagged
-                          ? 'bg-rose-50 border-rose-300 text-rose-950'
-                          : hasError
-                          ? 'bg-amber-50 border-amber-300 text-amber-950'
-                          : 'bg-slate-50 border-slate-200 text-slate-900'
+                          ? 'bg-rose-50/70 border-rose-200'
+                          : fileItem.error
+                          ? 'bg-amber-50/70 border-amber-200'
+                          : 'bg-slate-50/80 hover:bg-slate-50 border-slate-200'
                       }`}
                     >
-                      <div className="flex items-start gap-3 min-w-0">
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
                         <div
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold text-xs ${
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                             isFlagged
-                              ? 'bg-rose-200 text-rose-800'
-                              : hasError
-                              ? 'bg-amber-200 text-amber-800'
+                              ? 'bg-rose-100 text-rose-700'
                               : 'bg-slate-200 text-slate-700'
                           }`}
                         >
-                          #{idx + 1}
+                          <FileText className="w-5 h-5" />
                         </div>
 
-                        <div className="min-w-0 space-y-1">
-                          <div className="font-bold text-sm truncate">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="font-bold text-slate-900 text-xs sm:text-sm truncate">
                             {fileItem.name}
                           </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                             <span>{formatFileSize(fileItem.size)}</span>
                             <span>•</span>
-                            <span className="uppercase font-mono text-[11px]">
-                              {fileItem.type.split('/')[1] || 'DOC'}
+                            <span className="font-semibold text-slate-700">
+                              {fileItem.isProcessing ? (
+                                <span className="text-amber-600 flex items-center gap-1">
+                                  <RefreshCw className="w-3 h-3 animate-spin" /> Counting pages...
+                                </span>
+                              ) : (
+                                `${fileItem.pageCount} page${fileItem.pageCount === 1 ? '' : 's'}`
+                              )}
                             </span>
+
+                            {isFlagged && (
+                              <span className="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
+                                <AlertTriangle className="w-3 h-3" /> Flagged Content
+                              </span>
+                            )}
                           </div>
 
-                          {/* Flagged or Error Message */}
-                          {isFlagged ? (
-                            <div className="flex items-center gap-1.5 text-xs text-rose-700 font-semibold pt-1">
-                              <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
-                              <span>{fileItem.error || 'Prohibited content detected by safety filter.'}</span>
-                            </div>
-                          ) : hasError ? (
-                            <div className="flex items-center gap-1.5 text-xs text-amber-700 font-semibold pt-1">
-                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                              <span>{fileItem.error}</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 font-semibold pt-0.5">
-                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Safety Check: Verified Safe for Print</span>
-                            </div>
+                          {isFlagged && fileItem.moderationReason && (
+                            <p className="text-[11px] text-rose-700 font-medium pt-1">
+                              {fileItem.moderationReason}
+                            </p>
                           )}
                         </div>
                       </div>
 
-                      {/* Right Side: Page Count Badge & Delete */}
-                      <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60">
-                        {!isFlagged && !hasError && (
-                          <div className="text-right">
-                            <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 font-black text-xs px-2.5 py-1 rounded-lg">
-                              {fileItem.pageCount} {fileItem.pageCount === 1 ? 'Page' : 'Pages'}
+                      {/* Manual page count editor & Delete action */}
+                      <div className="flex items-center gap-3 self-end sm:self-center">
+                        {!fileItem.isProcessing && !isFlagged && (
+                          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-1">
+                            <span className="text-[11px] text-slate-500 pl-1 font-medium">
+                              Pages:
                             </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={999}
+                              value={fileItem.pageCount}
+                              onChange={(e) =>
+                                updatePageCount(fileItem.id, parseInt(e.target.value) || 1)
+                              }
+                              className="w-12 text-center text-xs font-bold text-slate-900 focus:outline-none"
+                            />
                           </div>
                         )}
 
                         <button
+                          type="button"
                           onClick={() => removeFile(fileItem.id)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                          title="Remove file"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                          title="Remove File"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -446,7 +552,6 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 })}
               </div>
 
-              {/* Policy Warning Banner if files are flagged */}
               {hasFlaggedFiles && (
                 <div className="bg-rose-100 border border-rose-300 rounded-xl p-4 text-rose-900 text-xs space-y-2">
                   <div className="font-bold text-sm flex items-center gap-1.5">
@@ -463,7 +568,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                       );
                       fileInputRef.current?.click();
                     }}
-                    className="bg-rose-800 hover:bg-rose-900 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition"
+                    className="bg-rose-800 hover:bg-rose-900 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer"
                   >
                     UPLOAD ANOTHER FILE
                   </button>
@@ -503,7 +608,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  Mobile Number (for Tracking) <span className="text-rose-500">*</span>
+                  Mobile Number (for Pickup Tracking) <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="tel"
@@ -544,7 +649,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 </label>
                 <textarea
                   rows={2}
-                  placeholder="e.g. Print first 2 pages in colour, staple top-left, spiral binding if available."
+                  placeholder="e.g. Staple top-left corner, print first page on glossy, spiral binding if available."
                   value={customer.specialInstructions}
                   onChange={(e) =>
                     setCustomer({ ...customer, specialInstructions: e.target.value })
@@ -554,17 +659,17 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               </div>
             </div>
 
-            {/* Delivery Option notice */}
+            {/* Delivery Method notice */}
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700 flex items-center justify-between">
               <span className="font-semibold">Delivery Method:</span>
               <span className="bg-slate-200 text-slate-800 font-bold px-2.5 py-1 rounded-md text-[11px]">
-                Pickup From RSCC Shop
+                Pickup From RSCC Counter ({settings.pickupTimings || '9:00 AM - 9:00 PM'})
               </span>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Printing Options, Price Calculator & Order Summary (5 cols) */}
+        {/* Right Column: Printing Options, Dynamic Price Calculator & Summary (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-xl space-y-6">
             <div className="border-b border-slate-100 pb-4">
@@ -572,11 +677,27 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 Printing Preferences
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Customize your print type, side, and copies.
+                Customize your paper size, print type, paper quality, and side.
               </p>
             </div>
 
-            {/* 1. PRINT TYPE */}
+            {/* 1. PAPER SIZE DROPDOWN (A4 / A3) */}
+            <div className="space-y-2">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                Paper Size
+              </label>
+
+              <select
+                value={paperSize}
+                onChange={(e) => setPaperSize(e.target.value as PaperSize)}
+                className="w-full px-3.5 py-3 rounded-2xl border border-slate-300 bg-slate-50 text-slate-900 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
+              >
+                <option value="A4">A4 (Standard Document - 210 × 297 mm)</option>
+                <option value="A3">A3 (Large Format Sheet - 297 × 420 mm)</option>
+              </select>
+            </div>
+
+            {/* 2. PRINT TYPE DROPDOWN (Black & White / Colour) */}
             <div className="space-y-2">
               <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
                 Print Type
@@ -586,7 +707,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setPrintType('BW')}
-                  className={`p-3.5 rounded-2xl border text-left transition flex items-center justify-between ${
+                  className={`p-3.5 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
                     printType === 'BW'
                       ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-slate-900/20'
                       : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
@@ -599,7 +720,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                         printType === 'BW' ? 'text-slate-300' : 'text-slate-500'
                       }`}
                     >
-                      ₹{p.bwSingle} / ₹{p.bwBoth}
+                      B&W Print
                     </div>
                   </div>
                   <div
@@ -614,7 +735,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setPrintType('COLOUR')}
-                  className={`p-3.5 rounded-2xl border text-left transition flex items-center justify-between ${
+                  className={`p-3.5 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
                     printType === 'COLOUR'
                       ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-md ring-2 ring-amber-500/30'
                       : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
@@ -630,7 +751,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                         printType === 'COLOUR' ? 'text-slate-900 font-semibold' : 'text-slate-500'
                       }`}
                     >
-                      ₹{p.colorSingle} / ₹{p.colorBoth}
+                      Vivid Laser
                     </div>
                   </div>
                   <div
@@ -644,7 +765,33 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               </div>
             </div>
 
-            {/* 2. PRINTING SIDE (WITH STRICT ONLY WHEN >1 PAGE CONDITIONAL ENFORCEMENT) */}
+            {/* 3. PAPER QUALITY / GSM DROPDOWN (75 GSM / 100 GSM) */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                  Paper Quality
+                </label>
+                {printType === 'COLOUR' && (
+                  <span className="text-[10px] text-amber-800 bg-amber-100 font-bold px-2 py-0.5 rounded">
+                    Colour requires 100 GSM
+                  </span>
+                )}
+              </div>
+
+              <select
+                value={paperQuality}
+                onChange={(e) => setPaperQuality(e.target.value as PaperQuality)}
+                className="w-full px-3.5 py-3 rounded-2xl border border-slate-300 bg-slate-50 text-slate-900 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
+              >
+                {availableQualities.map((q) => (
+                  <option key={q.value} value={q.value}>
+                    {q.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. PRINTING SIDE SELECTION (Single Side / Both Side) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
@@ -661,7 +808,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setPrintingSide('SINGLE')}
-                  className={`p-3.5 rounded-2xl border text-left transition flex items-center justify-between ${
+                  className={`p-3.5 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
                     printingSide === 'SINGLE'
                       ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-slate-900/20'
                       : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
@@ -674,7 +821,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                         printingSide === 'SINGLE' ? 'text-slate-300' : 'text-slate-500'
                       }`}
                     >
-                      ₹{printType === 'BW' ? p.bwSingle : p.colorSingle}/page
+                      ₹{getDocumentRate(paperSize, printType, paperQuality, 'SINGLE', pricing)}/page
                     </div>
                   </div>
                   <div
@@ -696,8 +843,8 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                     !isBothSideAllowed
                       ? 'opacity-40 cursor-not-allowed bg-slate-100 text-slate-400 border-slate-200'
                       : printingSide === 'BOTH'
-                      ? 'bg-emerald-700 text-white border-emerald-800 shadow-md ring-2 ring-emerald-600/20'
-                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                      ? 'bg-emerald-700 text-white border-emerald-800 shadow-md ring-2 ring-emerald-600/20 cursor-pointer'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 cursor-pointer'
                   }`}
                 >
                   <div className="space-y-0.5">
@@ -710,7 +857,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                         printingSide === 'BOTH' ? 'text-emerald-100' : 'text-slate-500'
                       }`}
                     >
-                      ₹{printType === 'BW' ? p.bwBoth : p.colorBoth}/page
+                      ₹{getDocumentRate(paperSize, printType, paperQuality, 'BOTH', pricing)}/page
                     </div>
                   </div>
                   <div
@@ -724,7 +871,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               </div>
             </div>
 
-            {/* 3. NUMBER OF COPIES */}
+            {/* 5. NUMBER OF COPIES */}
             <div className="space-y-2">
               <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
                 Number of Copies
@@ -738,7 +885,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   <button
                     type="button"
                     onClick={() => setCopies(Math.max(1, copies - 1))}
-                    className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition"
+                    className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition cursor-pointer"
                   >
                     -
                   </button>
@@ -748,7 +895,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   <button
                     type="button"
                     onClick={() => setCopies(copies + 1)}
-                    className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition"
+                    className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition cursor-pointer"
                   >
                     +
                   </button>
@@ -756,7 +903,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               </div>
             </div>
 
-            {/* ORDER SUMMARY BLOCK */}
+            {/* DYNAMIC ORDER SUMMARY BLOCK */}
             <div className="bg-slate-900 text-white rounded-2xl p-5 space-y-4 border border-slate-800">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <h3 className="font-extrabold text-sm uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
@@ -786,20 +933,34 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
               <div className="space-y-1.5 text-xs text-slate-300 pt-2 border-t border-slate-800">
                 <div className="flex justify-between">
+                  <span className="text-slate-400">Paper Size:</span>
+                  <span className="font-bold text-white">{paperSize}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Print Type:</span>
+                  <span className="font-bold text-white">
+                    {printType === 'BW' ? 'Black & White' : 'Colour'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Paper Quality:</span>
+                  <span className="font-bold text-white">
+                    {paperQuality === '75_GSM' ? '75 GSM' : '100 GSM'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Printing Side:</span>
+                  <span className="font-bold text-white">
+                    {printingSide === 'BOTH' ? 'Both Side' : 'Single Side'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-slate-400">Total Pages:</span>
                   <span className="font-bold text-white">{totalPages}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Copies:</span>
                   <span className="font-bold text-white">{copies}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Print Type:</span>
-                  <span className="font-bold text-white">{printType === 'BW' ? 'Black & White' : 'Colour'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Printing Side:</span>
-                  <span className="font-bold text-white">{printingSide === 'BOTH' ? 'Both Side' : 'Single Side'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Rate:</span>
@@ -814,7 +975,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                     {totalPages} pgs × {copies} cps × ₹{ratePerPage}
                   </div>
                   <div className="text-2xl font-black text-amber-400 tracking-tight">
-                    Total: ₹{totalAmount}
+                    Price: ₹{totalAmount}
                   </div>
                 </div>
 
@@ -822,10 +983,10 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   <button
                     type="button"
                     disabled
-                    className="bg-rose-950/80 border border-rose-600 text-rose-300 font-extrabold text-xs px-4 py-3 rounded-xl transition shadow flex items-center gap-2 cursor-not-allowed text-left max-w-xs"
+                    className="bg-rose-950/80 border border-rose-600 text-rose-300 font-extrabold text-xs px-4 py-3 rounded-xl transition flex items-center gap-2 cursor-not-allowed"
                   >
                     <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
-                    <span>NOT ACCEPTING ORDERS (HIGH DEMAND)</span>
+                    <span>NOT ACCEPTING ORDERS</span>
                   </button>
                 ) : (
                   <button
@@ -845,10 +1006,10 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 space-y-1">
               <div className="font-bold flex items-center gap-1">
                 <Info className="w-3.5 h-3.5 text-amber-700" />
-                <span>Pricing Logic Note:</span>
+                <span>RSCC Transparent Pricing Policy:</span>
               </div>
               <p>
-                Price is strictly calculated based on the <strong>total number of pages</strong> in your document. Both-side printing does not halve the chargeable pages — instead, it gives you a lower rate per page (₹4 instead of ₹5 for B&W).
+                Price is strictly computed as <strong>Total Pages × Copies × Rate per page</strong> for your chosen paper size ({paperSize}), print type ({printType === 'BW' ? 'B&W' : 'Colour'}), and GSM ({paperQuality === '75_GSM' ? '75 GSM' : '100 GSM'}).
               </p>
             </div>
           </div>

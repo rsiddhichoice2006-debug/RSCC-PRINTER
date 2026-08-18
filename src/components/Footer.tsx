@@ -1,6 +1,7 @@
 import React from 'react';
-import { Printer, ShieldCheck, MapPin, Phone, Mail, Clock, ArrowRight, Heart } from 'lucide-react';
+import { Printer, ShieldCheck, MapPin, Phone, Mail, Clock, ArrowRight, Heart, Camera } from 'lucide-react';
 import { ShopSettings } from '../types';
+import { RsccLogo } from './RsccLogo';
 
 interface FooterProps {
   settings: ShopSettings;
@@ -15,9 +16,7 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
           {/* Col 1: Brand & Bio */}
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-amber-400 font-bold">
-                <Printer className="w-5 h-5" />
-              </div>
+              <RsccLogo size="md" className="ring-1 ring-slate-700 shadow-md" />
               <div>
                 <h3 className="text-white font-bold tracking-tight text-base">
                   {settings.shopName}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <rect width="500" height="500" rx="40" fill="#ffffff"/>
+  <g font-family="Georgia, 'Times New Roman', 'Playfair Display', serif" font-weight="900">
+    <!-- Big Yellow R in background -->
+    <text x="50%" y="430" font-size="440" text-anchor="middle" fill="#FFDE00" letter-spacing="-10">R</text>
+    <!-- Red S on Top Left -->
+    <text x="32%" y="280" font-size="310" text-anchor="middle" fill="#E62129">S</text>
+    <!-- Navy Blue C on Top Right -->
+    <text x="73%" y="270" font-size="300" text-anchor="middle" fill="#1C2179">C</text>
+    <!-- Emerald Green C on Bottom Center -->
+    <text x="49%" y="475" font-size="310" text-anchor="middle" fill="#0A9448">C</text>
+  </g>
+</svg>

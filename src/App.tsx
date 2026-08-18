@@ -3,6 +3,7 @@ import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { HomePage } from './pages/HomePage';
 import { UploadPrintPage } from './pages/UploadPrintPage';
+import { PassportPhotoPage } from './pages/PassportPhotoPage';
 import { PhotoLayoutPage } from './pages/PhotoLayoutPage';
 import { PaymentPage } from './pages/PaymentPage';
 import { OrderConfirmationPage } from './pages/OrderConfirmationPage';
@@ -106,6 +107,13 @@ export default function App() {
           />
         )}
 
+        {currentPage === 'passport-photo' && (
+          <PassportPhotoPage
+            settings={settings}
+            onProceedToPayment={handleProceedToPayment}
+          />
+        )}
+
         {currentPage === 'photo-layout' && (
           <PhotoLayoutPage
             settings={settings}
@@ -119,7 +127,9 @@ export default function App() {
             settings={settings}
             onPaymentSubmitted={handlePaymentSubmitted}
             onBackToEdit={() => {
-              if (activeOrder.mode === 'PHOTO') {
+              if (activeOrder.mode === 'PASSPORT_PHOTO') {
+                setCurrentPage('passport-photo');
+              } else if (activeOrder.mode === 'PHOTO') {
                 setCurrentPage('photo-layout');
               } else {
                 setCurrentPage('upload');

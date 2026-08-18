@@ -298,26 +298,37 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
           },
         });
 
-        const text = (result?.data?.text || '').toUpperCase();
+        const rawText = result?.data?.text || '';
+        const text = rawText.toUpperCase();
         setOcrText(text);
 
-        // Check if official UPI ID or components are present in OCR text
-        const hasFullUpi = text.includes('9967842065@OKBIZAXIS') || (text.includes('9967842065') && text.includes('OKBIZAXIS'));
-        const hasShopOrNumber = text.includes('9967842065') || text.includes('RIDDHI') || text.includes('SIDDHI') || text.includes('RSCC') || text.includes('AXIS');
+        // Normalize expected shop UPI ID and shop details
+        const cleanExpectedUpi = upiId.toUpperCase().trim();
+        const expectedPhone = (settings.phone || '9967842065').replace(/[^0-9]/g, '');
 
-        if (hasFullUpi || hasShopOrNumber) {
+        // Extract any email/UPI format strings from OCR text
+        const upiPattern = /[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}/g;
+        const matches = text.match(upiPattern) || [];
+
+        // Check if official UPI ID or components are present in OCR text
+        const hasDirectUpi = text.includes(cleanExpectedUpi) || (cleanExpectedUpi.includes('@') && text.includes(cleanExpectedUpi.split('@')[0]) && text.includes(cleanExpectedUpi.split('@')[1]));
+        const hasPhoneMatch = expectedPhone.length >= 10 && text.includes(expectedPhone);
+        const hasShopNameMatch = text.includes('RIDDHI') || text.includes('SIDDHI') || text.includes('CHOICE CENTRE') || text.includes('RSCC');
+        const hasBankHandleMatch = text.includes('OKBIZAXIS') || text.includes('OKAXIS') || text.includes('AXIS');
+
+        if (hasDirectUpi || (hasPhoneMatch && (hasBankHandleMatch || hasShopNameMatch)) || hasShopNameMatch) {
           setOcrVerifiedUpi(true);
-          setOcrDetectedUpiId('9967842065@OKBIZAXIS');
+          setOcrDetectedUpiId(matches.length > 0 ? matches[0] : cleanExpectedUpi);
         } else {
-          // If image doesn't show clearly, default to unverified warning
+          // If neither UPI ID nor shop name is found, show warning for admin verification
           setOcrVerifiedUpi(false);
-          setOcrDetectedUpiId('Verification Pending Admin Review');
+          setOcrDetectedUpiId(matches.length > 0 ? matches[0] : 'UPI ID Not Detected in Screenshot');
         }
       } catch (ocrErr) {
         console.warn('OCR scan fallback:', ocrErr);
         // Fallback: accept screenshot for manual shop admin verification
         setOcrVerifiedUpi(true);
-        setOcrDetectedUpiId('Verified by upload time');
+        setOcrDetectedUpiId('Manual Admin Review');
       } finally {
         setIsOcrScanning(false);
       }

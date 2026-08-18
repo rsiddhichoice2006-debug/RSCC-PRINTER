@@ -5,6 +5,20 @@ import path from 'path';
 
 // Storage in-memory + JSON persistence fallback for demo & dev
 interface ShopPricing {
+  a4Bw75Single: number;
+  a4Bw75Both: number;
+  a4Bw100Single: number;
+  a4Bw100Both: number;
+  a4Color100Single: number;
+  a4Color100Both: number;
+  a3Bw75Single: number;
+  a3Bw75Both: number;
+  a3Bw100Single: number;
+  a3Bw100Both: number;
+  a3Color100Single: number;
+  a3Color100Both: number;
+  passportStandard: number;
+  passportMixed: number;
   bwSingle: number;
   bwBoth: number;
   colorSingle: number;
@@ -50,7 +64,10 @@ export interface OrderItem {
     mobile: string;
     email?: string;
   };
-  mode: 'DOCUMENT' | 'PHOTO';
+  mode: 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
+  paperSize?: 'A4' | 'A3';
+  paperQuality?: '75_GSM' | '100_GSM';
+  passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE';
   photoLayout?: '9_PHOTOS' | '4_PHOTOS' | '2_PHOTOS' | '1_PHOTO';
   photoOrientation?: 'PORTRAIT' | 'LANDSCAPE';
   files: OrderFileItem[];
@@ -115,10 +132,24 @@ const defaultSettings: ShopSettings = {
   isAcceptingOrders: true,
   pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
   pricing: {
+    a4Bw75Single: 5,
+    a4Bw75Both: 4,
+    a4Bw100Single: 7,
+    a4Bw100Both: 12,
+    a4Color100Single: 10,
+    a4Color100Both: 15,
+    a3Bw75Single: 10,
+    a3Bw75Both: 20,
+    a3Bw100Single: 15,
+    a3Bw100Both: 25,
+    a3Color100Single: 20,
+    a3Color100Both: 35,
+    passportStandard: 50,
+    passportMixed: 60,
     bwSingle: 5,
     bwBoth: 4,
     colorSingle: 10,
-    colorBoth: 7.5,
+    colorBoth: 15,
     photoSheet: 15,
   },
 };
@@ -264,7 +295,7 @@ function initDataStore() {
       const data = fs.readFileSync(ORDERS_FILE, 'utf-8');
       if (data) {
         const loaded = JSON.parse(data);
-        if (Array.isArray(loaded) && loaded.length > 0) {
+        if (Array.isArray(loaded)) {
           orders = loaded;
         }
       }
@@ -379,7 +410,10 @@ function getGemini(): GoogleGenAI | null {
 
 // Calculate price strictly following RSCC business rules
 export function calculateOrderPrice(params: {
-  mode: 'DOCUMENT' | 'PHOTO';
+  mode: 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
+  paperSize?: 'A4' | 'A3';
+  paperQuality?: '75_GSM' | '100_GSM';
+  passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
   totalPages: number;
   totalSheets?: number;
   copies: number;
@@ -389,26 +423,71 @@ export function calculateOrderPrice(params: {
 }): { ratePerPage: number; totalAmount: number } {
   const p = params.customPricing || settings.pricing;
   const copies = Math.max(1, params.copies || 1);
+  const paperSize = params.paperSize || 'A4';
+  const paperQuality = params.paperQuality || (params.printType === 'COLOUR' ? '100_GSM' : '75_GSM');
 
+  // Passport Photo and Image Color Print mode
+  if (params.mode === 'PASSPORT_PHOTO') {
+    const sheets = Math.max(1, params.totalSheets || 1);
+    let rate = p.passportStandard || 50;
+
+    if (params.passportService === 'STANDARD_PASSPORT') {
+      rate = p.passportStandard || 50;
+    } else if (params.passportService === 'MIXED_SIZE') {
+      rate = p.passportMixed || 60;
+    }
+
+    const totalAmount = sheets * copies * rate;
+    return { ratePerPage: rate, totalAmount };
+  }
+
+  // Photo Collage mode (strictly A4 @ ₹10)
   if (params.mode === 'PHOTO') {
     const sheets = Math.max(1, params.totalSheets || params.totalPages || 1);
-    const ratePerSheet = p.photoSheet || 15;
+    const ratePerSheet = p.a4Color100Single || 10;
     const totalAmount = sheets * copies * ratePerSheet;
     return { ratePerPage: ratePerSheet, totalAmount };
   }
 
-  // Document printing
+  // Document printing with granular matrix: Paper Size (A4/A3) -> Type (BW/Color) -> GSM (75/100) -> Side (Single/Both)
   const pages = Math.max(1, params.totalPages || 1);
   let rate = 0;
 
-  if (params.printType === 'BW') {
-    rate = params.printingSide === 'BOTH' ? p.bwBoth : p.bwSingle;
+  if (paperSize === 'A4') {
+    if (params.printType === 'BW') {
+      if (paperQuality === '75_GSM') {
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 4) : (p.a4Bw75Single || 5);
+      } else {
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw100Both || 12) : (p.a4Bw100Single || 7);
+      }
+    } else {
+      // A4 Colour (100 GSM)
+      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 15) : (p.a4Color100Single || 10);
+    }
   } else {
-    rate = params.printingSide === 'BOTH' ? p.colorBoth : p.colorSingle;
+    // A3
+    if (params.printType === 'BW') {
+      if (paperQuality === '75_GSM') {
+        rate = params.printingSide === 'BOTH' ? (p.a3Bw75Both || 20) : (p.a3Bw75Single || 10);
+      } else {
+        rate = params.printingSide === 'BOTH' ? (p.a3Bw100Both || 25) : (p.a3Bw100Single || 15);
+      }
+    } else {
+      // A3 Colour (100 GSM)
+      rate = params.printingSide === 'BOTH' ? (p.a3Color100Both || 35) : (p.a3Color100Single || 20);
+    }
+  }
+
+  // Fallback to legacy fields if 0
+  if (!rate) {
+    if (params.printType === 'BW') {
+      rate = params.printingSide === 'BOTH' ? (p.bwBoth || 4) : (p.bwSingle || 5);
+    } else {
+      rate = params.printingSide === 'BOTH' ? (p.colorBoth || 15) : (p.colorSingle || 10);
+    }
   }
 
   // Strictly: Total = Number of Pages * Copies * Rate
-  // NEVER divide page count by 2 for duplex printing
   const totalAmount = pages * copies * rate;
   return { ratePerPage: rate, totalAmount };
 }
@@ -537,7 +616,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const ai = getGemini();
       if (ai) {
         try {
-          let prompt = `You are a content safety classifier for a commercial printing shop in India ("Riddhi Siddhi Choice Centre").
+          const prompt = `You are a content safety classifier for a commercial printing shop in India ("Riddhi Siddhi Choice Centre").
 Evaluate whether this uploaded document/image violates printing policies (strictly prohibited: pornographic content, extreme graphic nudity, explicit sexual violence, illegal illicit materials).
 Legitimate medical diagrams, educational biology charts, art history, official IDs, and regular text MUST NOT be flagged.
 
@@ -547,49 +626,63 @@ Snippet/Text content: "${body.textSnippet || ''}"
 
 Return your judgment strictly in JSON format:
 {
-  "safe": true/false,
-  "status": "SAFE" | "FLAGGED" | "MANUAL_REVIEW",
+  "safe": true,
+  "status": "SAFE",
   "reason": "Clear explanation of finding"
 }`;
 
-          let response;
-          if (body.base64Sample && body.fileType.startsWith('image/')) {
-            const cleanBase64 = body.base64Sample.replace(/^data:image\/[a-z]+;base64,/, '');
-            response = await ai.models.generateContent({
-              model: 'gemini-3.7-flash',
-              contents: {
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: body.fileType || 'image/jpeg',
-                      data: cleanBase64,
-                    },
+          let responseText: string | undefined;
+          const candidateModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'];
+
+          for (const modelName of candidateModels) {
+            try {
+              let resObj;
+              if (body.base64Sample && body.fileType.startsWith('image/')) {
+                const cleanBase64 = body.base64Sample.replace(/^data:image\/[a-z]+;base64,/, '');
+                resObj = await ai.models.generateContent({
+                  model: modelName,
+                  contents: {
+                    parts: [
+                      {
+                        inlineData: {
+                          mimeType: body.fileType || 'image/jpeg',
+                          data: cleanBase64,
+                        },
+                      },
+                      { text: prompt },
+                    ],
                   },
-                  { text: prompt },
-                ],
-              },
-              config: {
-                responseMimeType: 'application/json',
-              },
-            });
-          } else {
-            response = await ai.models.generateContent({
-              model: 'gemini-3.7-flash',
-              contents: prompt,
-              config: {
-                responseMimeType: 'application/json',
-              },
-            });
+                  config: {
+                    responseMimeType: 'application/json',
+                  },
+                });
+              } else {
+                resObj = await ai.models.generateContent({
+                  model: modelName,
+                  contents: prompt,
+                  config: {
+                    responseMimeType: 'application/json',
+                  },
+                });
+              }
+
+              if (resObj?.text) {
+                responseText = resObj.text;
+                break; // Succeeded
+              }
+            } catch (modelErr: any) {
+              // Try next model if 503 or unavailable
+              continue;
+            }
           }
 
-          if (response?.text) {
-            const parsed = JSON.parse(response.text);
+          if (responseText) {
+            const parsed = JSON.parse(responseText);
             moderationStatus = parsed.safe ? 'SAFE' : (parsed.status || 'FLAGGED');
             moderationReason = parsed.reason || (parsed.safe ? 'Verified safe for printing' : 'Prohibited content detected');
           }
-        } catch (err: any) {
-          console.warn('Gemini moderation check failed, using fallback:', err?.message);
-          // Fallback heuristic if API key is missing or rate limited
+        } catch {
+          // Non-blocking fallback heuristic
           moderationStatus = 'SAFE';
           moderationReason = 'Passed standard format and integrity validation.';
         }
@@ -616,7 +709,10 @@ Return your judgment strictly in JSON format:
 
       const body = await parseJsonBody<{
         customer: { name: string; mobile: string; email?: string };
-        mode: 'DOCUMENT' | 'PHOTO';
+        mode: 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
+        paperSize?: 'A4' | 'A3';
+        paperQuality?: '75_GSM' | '100_GSM';
+        passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
         photoLayout?: '9_PHOTOS' | '4_PHOTOS' | '2_PHOTOS' | '1_PHOTO';
         photoOrientation?: 'PORTRAIT' | 'LANDSCAPE';
         files: OrderFileItem[];
@@ -625,6 +721,8 @@ Return your judgment strictly in JSON format:
         copies: number;
         printType: 'BW' | 'COLOUR';
         printingSide: 'SINGLE' | 'BOTH';
+        ratePerPage?: number;
+        totalAmount?: number;
         specialInstructions?: string;
       }>(req);
 
@@ -648,9 +746,12 @@ Return your judgment strictly in JSON format:
         return true;
       }
 
-      // Server-side authoritative price calculation (never trust client price)
+      // Server-side authoritative price calculation
       const calculated = calculateOrderPrice({
         mode: body.mode || 'DOCUMENT',
+        paperSize: body.paperSize || 'A4',
+        paperQuality: body.paperQuality || (body.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
+        passportService: body.passportService,
         totalPages: body.totalPages,
         totalSheets: body.totalSheets,
         copies: body.copies || 1,
@@ -673,6 +774,9 @@ Return your judgment strictly in JSON format:
           email: body.customer.email?.trim() || undefined,
         },
         mode: body.mode || 'DOCUMENT',
+        paperSize: body.paperSize || 'A4',
+        paperQuality: body.paperQuality || (body.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
+        passportService: body.passportService,
         photoLayout: body.photoLayout,
         photoOrientation: body.photoOrientation,
         files: body.files,

@@ -6,6 +6,8 @@ import {
   Search,
   Filter,
   DollarSign,
+  IndianRupee,
+  Tag,
   Printer,
   Clock,
   CheckCircle2,
@@ -49,7 +51,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [loginLoading, setLoginLoading] = useState(false);
 
   // Admin Dashboard State
-  const [activeTab, setActiveTab] = useState<'orders' | 'settings' | 'audit'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'prices' | 'settings' | 'audit'>('orders');
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
@@ -70,6 +72,15 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [savingSettings, setSavingSettings] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const [orderToDelete, setOrderToDelete] = useState<OrderRecord | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => {
+      setToastMsg((cur) => (cur === msg ? null : cur));
+    }, 4000);
+  };
 
   useEffect(() => {
     setEditSettings(settings);
@@ -110,12 +121,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }
   };
 
-  const handleDeleteOrder = async (order: OrderRecord) => {
-    const confirmDelete = window.confirm(
-      `Are you sure you want to delete Order #${order.orderNumber} for ${order.customer.name} (Amount: ₹${order.totalAmount})?\n\nThis will permanently delete this order.`
-    );
-    if (!confirmDelete) return;
+  const handleDeleteOrder = (order: OrderRecord) => {
+    setOrderToDelete(order);
+  };
 
+  const handleConfirmDelete = async () => {
+    if (!orderToDelete) return;
+    const order = orderToDelete;
     setDeletingOrderId(order.id);
     try {
       await apiClient.deleteOrder(order.id);
@@ -123,9 +135,12 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
         setSelectedOrder(null);
       }
+      setOrderToDelete(null);
+      showToast(`Order #${order.orderNumber} deleted successfully.`);
       loadDashboardData();
     } catch (err: any) {
-      alert('Failed to delete order: ' + (err?.message || 'Error occurred'));
+      console.error('Failed to delete order:', err);
+      showToast('Failed to delete order: ' + (err?.message || 'Error occurred'));
     } finally {
       setDeletingOrderId(null);
     }
@@ -185,7 +200,7 @@ RIDDHI SIDDHI CHOICE CENTRE (RSCC) - ORDER FILES BUNDLE
 Order Number   : ${order.orderNumber}
 Delivery PIN   : ${order.deliveryPin || 'N/A'}
 Creation Date  : ${new Date(order.createdAt).toLocaleString('en-IN')}
-Service Mode   : ${order.mode === 'PHOTO' ? 'A4 Photo Printing' : 'Document Printing'}
+Service Mode   : ${order.mode === 'PHOTO' ? 'A4 Photo Printing' : order.mode === 'PASSPORT_PHOTO' ? 'Passport Photos' : 'Document Printing'}
 
 CUSTOMER DETAILS:
 Name           : ${order.customer.name}
@@ -216,28 +231,54 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
         const safeName = file.name.replace(/[/\\?%*:|"<>]/g, '_');
         const filename = `${String(i + 1).padStart(2, '0')}_${safeName}`;
 
-        if (file.previewUrl && file.previewUrl.startsWith('data:')) {
-          const commaIdx = file.previewUrl.indexOf(',');
-          if (commaIdx !== -1) {
-            const base64Data = file.previewUrl.substring(commaIdx + 1);
-            zip.file(filename, base64Data, { base64: true });
-            continue;
+        let added = false;
+        if (file.previewUrl) {
+          if (file.previewUrl.startsWith('data:')) {
+            const commaIdx = file.previewUrl.indexOf(',');
+            if (commaIdx !== -1) {
+              const base64Data = file.previewUrl.substring(commaIdx + 1);
+              zip.file(filename, base64Data, { base64: true });
+              added = true;
+            }
+          } else if (file.previewUrl.startsWith('blob:') || file.previewUrl.startsWith('http')) {
+            try {
+              const res = await fetch(file.previewUrl);
+              const blob = await res.blob();
+              const buffer = await blob.arrayBuffer();
+              zip.file(filename, buffer);
+              added = true;
+            } catch (fetchErr) {
+              console.warn('Could not fetch previewUrl blob:', fetchErr);
+            }
           }
         }
 
-        // Add informative text entry if base64 is binary streamed
-        zip.file(
-          filename.endsWith('.pdf') ? filename + '.txt' : filename,
-          `File: ${file.name}\nPage Count: ${file.pageCount}\nSize: ${file.size} bytes\nOrder: ${order.orderNumber}`
-        );
+        if (!added) {
+          // Add informative text entry if base64 is not attached
+          zip.file(
+            filename.endsWith('.pdf') ? filename + '.txt' : filename + '.txt',
+            `File: ${file.name}\nPage Count: ${file.pageCount}\nSize: ${file.size} bytes\nOrder: ${order.orderNumber}`
+          );
+        }
       }
 
       // 3. Add Payment Proof Screenshot if attached
-      if (order.paymentScreenshot && order.paymentScreenshot.startsWith('data:')) {
-        const commaIdx = order.paymentScreenshot.indexOf(',');
-        if (commaIdx !== -1) {
-          const base64Screenshot = order.paymentScreenshot.substring(commaIdx + 1);
-          zip.file(`PAYMENT_PROOF_${order.paymentScreenshotFilename || 'screenshot.jpg'}`, base64Screenshot, { base64: true });
+      if (order.paymentScreenshot) {
+        if (order.paymentScreenshot.startsWith('data:')) {
+          const commaIdx = order.paymentScreenshot.indexOf(',');
+          if (commaIdx !== -1) {
+            const base64Screenshot = order.paymentScreenshot.substring(commaIdx + 1);
+            zip.file(`PAYMENT_PROOF_${order.paymentScreenshotFilename || 'screenshot.jpg'}`, base64Screenshot, { base64: true });
+          }
+        } else if (order.paymentScreenshot.startsWith('blob:') || order.paymentScreenshot.startsWith('http')) {
+          try {
+            const res = await fetch(order.paymentScreenshot);
+            const blob = await res.blob();
+            const buffer = await blob.arrayBuffer();
+            zip.file(`PAYMENT_PROOF_${order.paymentScreenshotFilename || 'screenshot.jpg'}`, buffer);
+          } catch (e) {
+            console.warn('Failed to fetch payment screenshot blob', e);
+          }
         }
       }
 
@@ -245,16 +286,22 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       const downloadUrl = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
+      a.style.display = 'none';
       a.href = downloadUrl;
       const cleanCustomerName = order.customer.name.replace(/[^a-zA-Z0-9]/g, '_');
-      a.download = `RSCC_${order.orderNumber}_${cleanCustomerName}_Files.zip`;
+      a.setAttribute('download', `RSCC_${order.orderNumber}_${cleanCustomerName}_Files.zip`);
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(downloadUrl);
+      setTimeout(() => {
+        if (document.body.contains(a)) {
+          document.body.removeChild(a);
+        }
+        URL.revokeObjectURL(downloadUrl);
+      }, 2000);
+      showToast(`ZIP downloaded for Order #${order.orderNumber}`);
     } catch (err: any) {
       console.error('Failed to create ZIP download:', err);
-      alert('Failed to generate ZIP archive: ' + (err.message || 'Unknown error'));
+      showToast('Failed to generate ZIP archive: ' + (err.message || 'Unknown error'));
     } finally {
       setDownloadingZipOrderId(null);
     }
@@ -509,10 +556,10 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       </div>
 
       {/* Tabs Navigation */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 flex-wrap">
         <button
           onClick={() => setActiveTab('orders')}
-          className={`px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
+          className={`px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'orders'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'text-slate-600 hover:bg-slate-100'
@@ -523,20 +570,32 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
         </button>
 
         <button
+          onClick={() => setActiveTab('prices')}
+          className={`px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'prices'
+              ? 'bg-emerald-700 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <IndianRupee className="w-4 h-4" />
+          <span>Edit Prices & Rates</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('settings')}
-          className={`px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
+          className={`px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'settings'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
           <SettingsIcon className="w-4 h-4" />
-          <span>Pricing & Shop Settings</span>
+          <span>Shop & UPI Settings</span>
         </button>
 
         <button
           onClick={() => setActiveTab('audit')}
-          className={`px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
+          className={`px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'audit'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'text-slate-600 hover:bg-slate-100'
@@ -762,7 +821,508 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
         </div>
       )}
 
-      {/* TAB 2: PRICING & SHOP SETTINGS */}
+      {/* TAB 2: EDIT PRICES & RATES (DEDICATED PRICING TAB) */}
+      {activeTab === 'prices' && (
+        <form onSubmit={handleSaveSettings} className="space-y-6">
+          {/* Header Banner */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
+                    <IndianRupee className="w-5 h-5" />
+                  </div>
+                  <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                    RSCC Pricing Matrix & Rate Editor
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Configure real-time per-page rates for A4/A3 formats, paper weights (75 GSM & 100 GSM), single/both sides, and passport services. Changes take effect immediately across all customer devices.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={savingSettings}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs px-6 py-3 rounded-xl shadow transition flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                {savingSettings ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>SAVE ALL RATES</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {saveSuccessMsg && (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-xl text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>{saveSuccessMsg}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Section 1: A4 Document Printing Rates */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-900 text-xs font-black">A4</span>
+                  <span>A4 Paper Document Printing Rates</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Standard A4 page rates by print color and paper quality (75 GSM / 100 GSM).
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+              {/* A4 B&W 75 GSM */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="font-bold text-slate-900 border-b border-slate-200 pb-1 flex items-center justify-between">
+                  <span>B&W • 75 GSM</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Economy B&W</span>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Single Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a4Bw75Single ?? editSettings.pricing.bwSingle ?? 5}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a4Bw75Single: parseFloat(e.target.value) || 0,
+                            bwSingle: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹5/page</span>
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Both Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a4Bw75Both ?? editSettings.pricing.bwBoth ?? 4}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a4Bw75Both: parseFloat(e.target.value) || 0,
+                            bwBoth: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹4/page</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* A4 B&W 100 GSM */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="font-bold text-slate-900 border-b border-slate-200 pb-1 flex items-center justify-between">
+                  <span>B&W • 100 GSM</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Heavy Premium B&W</span>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Single Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a4Bw100Single ?? 7}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a4Bw100Single: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹7/page</span>
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Both Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a4Bw100Both ?? 12}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a4Bw100Both: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹12/page</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* A4 Colour 100 GSM */}
+              <div className="bg-amber-50/60 p-4 rounded-2xl border border-amber-200 space-y-3">
+                <div className="font-bold text-amber-950 border-b border-amber-200 pb-1 flex items-center justify-between">
+                  <span>Colour • 100 GSM</span>
+                  <span className="text-[10px] text-amber-700 font-normal">Standard Colour</span>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-amber-900 font-semibold mb-1">
+                      Single Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a4Color100Single ?? editSettings.pricing.colorSingle ?? 10}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a4Color100Single: parseFloat(e.target.value) || 0,
+                            colorSingle: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-amber-300 font-black text-amber-950 text-base"
+                    />
+                    <span className="text-[10px] text-amber-700">Default: ₹10/page</span>
+                  </div>
+                  <div>
+                    <label className="block text-amber-900 font-semibold mb-1">
+                      Both Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a4Color100Both ?? editSettings.pricing.colorBoth ?? 15}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a4Color100Both: parseFloat(e.target.value) || 0,
+                            colorBoth: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-amber-300 font-black text-amber-950 text-base"
+                    />
+                    <span className="text-[10px] text-amber-700">Default: ₹15/page</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: A3 Document Printing Rates */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-900 text-xs font-black">A3</span>
+                  <span>A3 Large Paper Document Printing Rates</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Large ledger A3 page rates by print color and paper quality (75 GSM / 100 GSM).
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+              {/* A3 B&W 75 GSM */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="font-bold text-slate-900 border-b border-slate-200 pb-1 flex items-center justify-between">
+                  <span>B&W • 75 GSM</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Economy Large B&W</span>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Single Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a3Bw75Single ?? 10}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a3Bw75Single: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹10/page</span>
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Both Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a3Bw75Both ?? 20}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a3Bw75Both: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹20/page</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* A3 B&W 100 GSM */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="font-bold text-slate-900 border-b border-slate-200 pb-1 flex items-center justify-between">
+                  <span>B&W • 100 GSM</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Heavy Ledger B&W</span>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Single Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a3Bw100Single ?? 15}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a3Bw100Single: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹15/page</span>
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Both Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a3Bw100Both ?? 25}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a3Bw100Both: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
+                    />
+                    <span className="text-[10px] text-slate-400">Default: ₹25/page</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* A3 Colour 100 GSM */}
+              <div className="bg-amber-50/60 p-4 rounded-2xl border border-amber-200 space-y-3">
+                <div className="font-bold text-amber-950 border-b border-amber-200 pb-1 flex items-center justify-between">
+                  <span>Colour • 100 GSM</span>
+                  <span className="text-[10px] text-amber-700 font-normal">A3 Vivid Colour</span>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-amber-900 font-semibold mb-1">
+                      Single Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a3Color100Single ?? 20}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a3Color100Single: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-amber-300 font-black text-amber-950 text-base"
+                    />
+                    <span className="text-[10px] text-amber-700">Default: ₹20/page</span>
+                  </div>
+                  <div>
+                    <label className="block text-amber-900 font-semibold mb-1">
+                      Both Side Rate (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.a3Color100Both ?? 35}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            a3Color100Both: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-amber-300 font-black text-amber-950 text-base"
+                    />
+                    <span className="text-[10px] text-amber-700">Default: ₹35/page</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Passport Photo Services & Photo Sheet Rates */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-6">
+            <div className="border-b border-slate-100 pb-3">
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 text-xs font-black">PHOTO</span>
+                <span>Passport Size Photos & Studio Photo Sheets</span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Official fixed package rates for Passport Size studio prints and custom A4 photo sheets.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+              {/* Standard Passport Size */}
+              <div className="bg-emerald-50/60 p-4 rounded-2xl border border-emerald-200 space-y-2">
+                <label className="font-bold text-emerald-950 block">
+                  Standard Passport (8 Photos) Rate (₹)
+                </label>
+                <input
+                  type="number"
+                  step="1"
+                  value={editSettings.pricing.passportStandard ?? 50}
+                  onChange={(e) =>
+                    setEditSettings({
+                      ...editSettings,
+                      pricing: {
+                        ...editSettings.pricing,
+                        passportStandard: parseFloat(e.target.value) || 0,
+                      },
+                    })
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-emerald-300 font-black text-emerald-900 text-base"
+                />
+                <span className="text-[10px] text-emerald-700">Default: ₹50 for 8 photos (3.5 × 4.5 cm)</span>
+              </div>
+
+              {/* Mixed Size Photos */}
+              <div className="bg-emerald-50/60 p-4 rounded-2xl border border-emerald-200 space-y-2">
+                <label className="font-bold text-emerald-950 block">
+                  Mixed Size (8 Pass + 8 Stamp) Rate (₹)
+                </label>
+                <input
+                  type="number"
+                  step="1"
+                  value={editSettings.pricing.passportMixed ?? 60}
+                  onChange={(e) =>
+                    setEditSettings({
+                      ...editSettings,
+                      pricing: {
+                        ...editSettings.pricing,
+                        passportMixed: parseFloat(e.target.value) || 0,
+                      },
+                    })
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-emerald-300 font-black text-emerald-900 text-base"
+                />
+                <span className="text-[10px] text-emerald-700">Default: ₹60 for 16 photos total</span>
+              </div>
+
+              {/* Photo Sheet Rate */}
+              <div className="bg-indigo-50/60 p-4 rounded-2xl border border-indigo-200 space-y-2">
+                <label className="font-bold text-indigo-950 block">
+                  A4 Glossy Photo Sheet Rate (₹)
+                </label>
+                <input
+                  type="number"
+                  step="1"
+                  value={editSettings.pricing.photoSheet ?? 15}
+                  onChange={(e) =>
+                    setEditSettings({
+                      ...editSettings,
+                      pricing: {
+                        ...editSettings.pricing,
+                        photoSheet: parseFloat(e.target.value) || 0,
+                      },
+                    })
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-indigo-300 font-black text-indigo-900 text-base"
+                />
+                <span className="text-[10px] text-indigo-700">Default: ₹15 per photo sheet</span>
+              </div>
+            </div>
+
+            {/* Bottom Save Action */}
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-xs text-slate-500 font-medium">
+                Changes will instantly update pricing calculations on customer upload forms.
+              </span>
+              <button
+                type="submit"
+                disabled={savingSettings}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs px-6 py-3 rounded-xl shadow transition flex items-center gap-2 cursor-pointer"
+              >
+                {savingSettings ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>SAVE ALL PRICES</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {/* TAB 3: SHOP & UPI SETTINGS */}
       {activeTab === 'settings' && (
         <form onSubmit={handleSaveSettings} className="space-y-6">
           {/* Order Reception & Demand Control Card */}
@@ -826,130 +1386,6 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                 </p>
               </div>
             )}
-          </div>
-
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-6">
-            <div>
-              <h2 className="text-xl font-black text-slate-900 tracking-tight">
-                Printing Rates & Formulas
-              </h2>
-              <p className="text-xs text-slate-500">
-                Update the official RSCC per-page and per-sheet rates. Changes apply immediately to all incoming customer orders.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1.5">
-                <label className="font-bold text-slate-900 block">
-                  A4 B&W Single Side (₹)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={editSettings.pricing.bwSingle}
-                  onChange={(e) =>
-                    setEditSettings({
-                      ...editSettings,
-                      pricing: {
-                        ...editSettings.pricing,
-                        bwSingle: parseFloat(e.target.value) || 0,
-                      },
-                    })
-                  }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
-                />
-                <span className="text-[10px] text-slate-500">Default: ₹5/page</span>
-              </div>
-
-              <div className="bg-emerald-50/60 p-4 rounded-2xl border border-emerald-200 space-y-1.5">
-                <label className="font-bold text-emerald-950 block">
-                  A4 B&W Both Side (₹)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={editSettings.pricing.bwBoth}
-                  onChange={(e) =>
-                    setEditSettings({
-                      ...editSettings,
-                      pricing: {
-                        ...editSettings.pricing,
-                        bwBoth: parseFloat(e.target.value) || 0,
-                      },
-                    })
-                  }
-                  className="w-full px-3 py-2 rounded-xl border border-emerald-300 font-black text-emerald-900 text-base"
-                />
-                <span className="text-[10px] text-emerald-700">Default: ₹4/page</span>
-              </div>
-
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1.5">
-                <label className="font-bold text-slate-900 block">
-                  A4 Colour Single Side (₹)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={editSettings.pricing.colorSingle}
-                  onChange={(e) =>
-                    setEditSettings({
-                      ...editSettings,
-                      pricing: {
-                        ...editSettings.pricing,
-                        colorSingle: parseFloat(e.target.value) || 0,
-                      },
-                    })
-                  }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
-                />
-                <span className="text-[10px] text-slate-500">Default: ₹10/page</span>
-              </div>
-
-              <div className="bg-amber-50/60 p-4 rounded-2xl border border-amber-200 space-y-1.5">
-                <label className="font-bold text-amber-950 block">
-                  A4 Colour Both Side (₹)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={editSettings.pricing.colorBoth}
-                  onChange={(e) =>
-                    setEditSettings({
-                      ...editSettings,
-                      pricing: {
-                        ...editSettings.pricing,
-                        colorBoth: parseFloat(e.target.value) || 0,
-                      },
-                    })
-                  }
-                  className="w-full px-3 py-2 rounded-xl border border-amber-300 font-black text-amber-900 text-base"
-                />
-                <span className="text-[10px] text-amber-700">Default: ₹7.50/page</span>
-              </div>
-            </div>
-
-            {/* Photo Sheet Rate */}
-            <div className="bg-indigo-50/60 p-4 rounded-2xl border border-indigo-200 max-w-sm space-y-1.5 text-xs">
-              <label className="font-bold text-indigo-950 block">
-                A4 Photo Printing Sheet Rate (₹)
-              </label>
-              <input
-                type="number"
-                step="1"
-                value={editSettings.pricing.photoSheet}
-                onChange={(e) =>
-                  setEditSettings({
-                    ...editSettings,
-                    pricing: {
-                      ...editSettings.pricing,
-                      photoSheet: parseFloat(e.target.value) || 0,
-                    },
-                  })
-                }
-                className="w-full px-3 py-2 rounded-xl border border-indigo-300 font-black text-indigo-900 text-base"
-              />
-              <span className="text-[10px] text-indigo-700">Default: ₹15/sheet</span>
-            </div>
           </div>
 
           {/* Shop UPI & Details */}

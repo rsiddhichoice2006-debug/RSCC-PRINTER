@@ -1,6 +1,9 @@
+export type PaperSize = 'A4' | 'A3';
+export type PaperQuality = '75_GSM' | '100_GSM';
 export type PrintType = 'BW' | 'COLOUR';
 export type PrintingSide = 'SINGLE' | 'BOTH';
-export type OrderMode = 'DOCUMENT' | 'PHOTO';
+export type OrderMode = 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
+export type PassportServiceType = 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
 export type PhotoLayoutType = '9_PHOTOS' | '4_PHOTOS' | '2_PHOTOS' | '1_PHOTO';
 export type PhotoOrientation = 'PORTRAIT' | 'LANDSCAPE';
 
@@ -21,11 +24,31 @@ export type OrderStatus =
   | 'CANCELLED';
 
 export interface ShopPricing {
-  bwSingle: number; // e.g. 5
-  bwBoth: number;   // e.g. 4
-  colorSingle: number; // e.g. 10
-  colorBoth: number;   // e.g. 7.5
-  photoSheet: number;  // e.g. 15
+  // A4 Black & White
+  a4Bw75Single: number;  // 5
+  a4Bw75Both: number;    // 4
+  a4Bw100Single: number; // 7
+  a4Bw100Both: number;   // 12
+  // A4 Colour
+  a4Color100Single: number; // 10
+  a4Color100Both: number;   // 15
+  // A3 Black & White
+  a3Bw75Single: number;  // 10
+  a3Bw75Both: number;    // 20
+  a3Bw100Single: number; // 15
+  a3Bw100Both: number;   // 25
+  // A3 Colour
+  a3Color100Single: number; // 20
+  a3Color100Both: number;   // 35
+  // Passport Size Photos
+  passportStandard: number; // 50
+  passportMixed: number;    // 60
+  // Compatibility / Fallback properties
+  bwSingle: number;
+  bwBoth: number;
+  colorSingle: number;
+  colorBoth: number;
+  photoSheet: number;
 }
 
 export interface ShopSettings {
@@ -97,6 +120,9 @@ export interface OrderRecord {
     email?: string;
   };
   mode: OrderMode;
+  paperSize?: PaperSize;
+  paperQuality?: PaperQuality;
+  passportService?: PassportServiceType;
   photoLayout?: PhotoLayoutType;
   photoOrientation?: PhotoOrientation;
   files: SerializableFileItem[];

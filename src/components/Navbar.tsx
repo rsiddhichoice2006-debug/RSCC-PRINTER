@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Printer,
   Image as ImageIcon,
+  Camera,
   Search,
   ShieldCheck,
   Phone,
@@ -12,6 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ShopSettings } from '../types';
+import { RsccLogo } from './RsccLogo';
 
 interface NavbarProps {
   currentPage: string;
@@ -34,7 +36,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   const navItems = [
     { id: 'home', label: 'Home', icon: null },
     { id: 'upload', label: 'Document Printing', icon: Printer },
-    { id: 'photo-layout', label: 'A4 Photo Printing', icon: ImageIcon, badge: 'New' },
+    { id: 'passport-photo', label: 'Passport Size Photo', icon: Camera, badge: 'Popular' },
+    { id: 'photo-layout', label: 'Photo Layouts', icon: ImageIcon },
     { id: 'my-orders', label: 'My Orders', icon: Search },
     { id: 'track', label: 'Track Order', icon: Clock },
   ];
@@ -87,9 +90,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => onNavigate('home')}
               className="flex items-center gap-3 cursor-pointer group select-none"
             >
-              <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-slate-900 via-blue-900 to-indigo-900 flex items-center justify-center text-white shadow-md group-hover:scale-105 transition">
-                <Printer className="w-6 h-6 text-amber-400" />
-              </div>
+              <RsccLogo size="md" className="group-hover:scale-105 transition shadow-sm ring-1 ring-slate-200" />
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-extrabold text-slate-900 text-lg tracking-tight">
