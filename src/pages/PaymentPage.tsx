@@ -643,19 +643,9 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
             {/* SCREENSHOT UPLOAD AREA */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="block font-bold text-slate-800">
-                  Payment Screenshot Attachment <span className="text-rose-500">*</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={handleGenerateSampleScreenshot}
-                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg transition cursor-pointer border border-emerald-200"
-                  title="Generate a sample verified receipt to test the order flow"
-                >
-                  ⚡ Load Test Screenshot
-                </button>
-              </div>
+              <label className="block font-bold text-slate-800">
+                Payment Screenshot Attachment <span className="text-rose-500">*</span>
+              </label>
 
               {!screenshotDataUrl ? (
                 <div

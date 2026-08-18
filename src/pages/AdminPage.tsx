@@ -24,6 +24,7 @@ import {
   Download,
   FileArchive,
   Ban,
+  Trash2,
 } from 'lucide-react';
 import { AdminStats, OrderRecord, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -68,6 +69,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [editSettings, setEditSettings] = useState<ShopSettings>(settings);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     setEditSettings(settings);
@@ -76,6 +78,18 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   useEffect(() => {
     if (isAdminLoggedIn) {
       loadDashboardData();
+      // Real-time background sync every 4 seconds so orders from all devices show up immediately
+      const syncTimer = setInterval(() => {
+        apiClient.getOrders().then((ordersData) => {
+          setOrders(ordersData);
+        }).catch(() => {});
+        apiClient.getAdminStats().then((statsData) => {
+          if (statsData?.stats) setStats(statsData.stats);
+          if (statsData?.recentAuditLogs) setAuditLogs(statsData.recentAuditLogs);
+        }).catch(() => {});
+      }, 4000);
+
+      return () => clearInterval(syncTimer);
     }
   }, [isAdminLoggedIn]);
 
@@ -93,6 +107,27 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       console.error('Failed to load admin data:', err);
     } finally {
       setLoadingOrders(false);
+    }
+  };
+
+  const handleDeleteOrder = async (order: OrderRecord) => {
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete Order #${order.orderNumber} for ${order.customer.name} (Amount: ₹${order.totalAmount})?\n\nThis will permanently delete this order.`
+    );
+    if (!confirmDelete) return;
+
+    setDeletingOrderId(order.id);
+    try {
+      await apiClient.deleteOrder(order.id);
+      setOrders((prev) => prev.filter((o) => o.id !== order.id && o.orderNumber !== order.orderNumber));
+      if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
+        setSelectedOrder(null);
+      }
+      loadDashboardData();
+    } catch (err: any) {
+      alert('Failed to delete order: ' + (err?.message || 'Error occurred'));
+    } finally {
+      setDeletingOrderId(null);
     }
   };
 
@@ -698,6 +733,23 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                             >
                               Manage
                             </button>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteOrder(ord);
+                              }}
+                              disabled={deletingOrderId === ord.id}
+                              className="bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-900 border border-rose-200 hover:border-rose-400 font-bold text-[11px] px-2 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              title={`Delete order #${ord.orderNumber}`}
+                            >
+                              {deletingOrderId === ord.id ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                              )}
+                              <span className="hidden sm:inline">Delete</span>
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1281,11 +1333,29 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                 />
                 <button
                   type="submit"
-                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-xl text-xs"
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-xl text-xs cursor-pointer"
                 >
                   Add Note
                 </button>
               </form>
+            </div>
+
+            {/* Danger Zone: Delete Order */}
+            <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-500 font-medium">Remove this order record from system</span>
+              <button
+                type="button"
+                onClick={() => handleDeleteOrder(selectedOrder)}
+                disabled={deletingOrderId === selectedOrder.id}
+                className="bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-900 border border-rose-300 font-bold text-xs px-4 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {deletingOrderId === selectedOrder.id ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>Delete Order #{selectedOrder.orderNumber}</span>
+              </button>
             </div>
           </div>
         </div>

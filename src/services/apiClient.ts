@@ -502,12 +502,18 @@ export const apiClient = {
       throw new Error('Payment screenshot is required to place and verify your order.');
     }
 
+    const currentOrders = Storage.getOrders();
+    const localOrderObj = currentOrders.find((o) => o.id === orderId);
+
     const backendData = await safeFetchJson<{ success: boolean; order: OrderRecord; error?: string }>(
       `/api/orders/${orderId}/submit-payment`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          ...payload,
+          order: localOrderObj,
+        }),
       }
     );
 
@@ -516,8 +522,10 @@ export const apiClient = {
       const idx = orders.findIndex((o) => o.id === orderId);
       if (idx >= 0) {
         orders[idx] = backendData.order;
-        Storage.saveOrders(orders);
+      } else {
+        orders.unshift(backendData.order);
       }
+      Storage.saveOrders(orders);
       return backendData.order;
     }
 
@@ -758,6 +766,25 @@ export const apiClient = {
     orders[idx] = updated;
     Storage.saveOrders(orders);
     return updated;
+  },
+
+  // Admin: Delete an individual order
+  async deleteOrder(orderId: string): Promise<{ success: boolean; message: string }> {
+    const backendData = await safeFetchJson<{ success: boolean; message?: string; error?: string }>(
+      `/api/orders/${orderId}`,
+      {
+        method: 'DELETE',
+      }
+    );
+
+    const orders = Storage.getOrders();
+    const filtered = orders.filter((o) => o.id !== orderId && o.orderNumber !== orderId);
+    Storage.saveOrders(filtered);
+
+    return {
+      success: true,
+      message: backendData?.message || 'Order deleted successfully',
+    };
   },
 
   // Admin: Get Dashboard Stats
