@@ -109,7 +109,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
               className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm sm:text-base px-6 py-3.5 rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <ImageIcon className="w-5 h-5 text-amber-300" />
-              <span>PHOTO LAYOUT (A4/A3)</span>
+              <span>PHOTO LAYOUT (A4)</span>
             </button>
 
             <button

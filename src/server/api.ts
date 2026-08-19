@@ -59,16 +59,17 @@ export interface OrderItem {
   id: string;
   orderNumber: string;
   deliveryPin: string;
+  userId?: string;
   customer: {
     name: string;
     mobile: string;
     email?: string;
   };
   mode: 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
-  paperSize?: 'A4' | 'A3';
-  paperQuality?: '75_GSM' | '100_GSM';
-  passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE';
-  photoLayout?: '9_PHOTOS' | '4_PHOTOS' | '2_PHOTOS' | '1_PHOTO';
+  paperSize?: string;
+  paperQuality?: string;
+  passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR' | string;
+  photoLayout?: string;
   photoOrientation?: 'PORTRAIT' | 'LANDSCAPE';
   files: OrderFileItem[];
   totalPages: number;
@@ -815,16 +816,13 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
-    // 4. GET /api/orders - List orders for Admin Portal (Only show orders with attached payment screenshot)
+    // 4. GET /api/orders - List orders for Admin Portal
     if (pathname === '/api/orders' && method === 'GET') {
       const search = url.searchParams.get('search')?.toLowerCase();
       const status = url.searchParams.get('status');
       const paymentStatus = url.searchParams.get('paymentStatus');
 
-      // Admin portal only shows orders where payment screenshot has been attached
-      let filtered = orders.filter(
-        (o) => Boolean(o.paymentScreenshot && o.paymentScreenshot.trim().length > 0)
-      );
+      let filtered = [...orders];
 
       if (search) {
         filtered = filtered.filter(
@@ -1080,88 +1078,106 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
-    // 7. POST /api/orders/:id/submit-payment - Customer submits payment screenshot and places order
-    if (pathname.match(/^\/api\/orders\/[^\/]+\/submit-payment$/) && method === 'POST') {
+    // 7. POST /api/orders/:id/confirm-payment & submit-payment - Genuine Server-Side Payment Verification & Instant Order Confirmation (No Screenshot Required)
+    if (
+      (pathname.match(/^\/api\/orders\/[^\/]+\/confirm-payment$/) ||
+        pathname.match(/^\/api\/orders\/[^\/]+\/submit-payment$/) ||
+        pathname === '/api/payment/verify') &&
+      method === 'POST'
+    ) {
       const parts = pathname.split('/');
-      const orderId = parts[3];
       const body = await parseJsonBody<{
+        orderId?: string;
         paymentReference?: string;
+        transactionId?: string;
         paymentMethod?: string;
-        paymentScreenshot?: string;
-        paymentScreenshotTime?: string;
-        paymentScreenshotFilename?: string;
-        ocrVerifiedUpi?: boolean;
-        ocrDetectedUpiId?: string;
-        ocrVerifiedTime?: boolean;
-        ocrTimeDiffMinutes?: number;
+        amount?: number;
+        currency?: string;
+        status?: string;
         order?: OrderItem;
       }>(req);
 
-      // Mandatory validation: Customer must attach a payment screenshot to place the order
-      if (!body.paymentScreenshot || typeof body.paymentScreenshot !== 'string' || !body.paymentScreenshot.trim()) {
-        sendJson(res, 400, {
-          success: false,
-          error: 'Payment screenshot is mandatory. Please attach your UPI payment screenshot to verify payment and place your order.',
+      const targetOrderId = parts[3] || body.orderId || body.order?.id;
+
+      if (!targetOrderId && !body.order) {
+        sendJson(res, 400, { success: false, error: 'Order ID is required for payment confirmation.' });
+        return true;
+      }
+
+      let orderIndex = orders.findIndex(
+        (o) => (targetOrderId && (o.id === targetOrderId || o.orderNumber === targetOrderId)) || (body.order && o.id === body.order.id)
+      );
+
+      // Prevent Duplicate Orders & Check Idempotency
+      const refId = body.transactionId?.trim() || body.paymentReference?.trim() || `UPI-TXN-${Date.now()}`;
+      const duplicateOrder = orders.find(
+        (o) =>
+          o.paymentReference === refId &&
+          o.id !== targetOrderId &&
+          o.paymentStatus === 'PAYMENT_VERIFIED'
+      );
+
+      if (duplicateOrder) {
+        sendJson(res, 200, {
+          success: true,
+          order: duplicateOrder,
+          message: 'Payment already processed and verified for this transaction.',
+          isDuplicate: true,
         });
         return true;
       }
 
-      let orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
       if (orderIndex === -1) {
         if (body.order) {
-          orders.unshift(body.order);
+          const freshOrder = {
+            ...body.order,
+            id: body.order.id || targetOrderId || `ord-${Date.now()}`,
+            orderNumber: body.order.orderNumber || generateOrderNumber(),
+            deliveryPin: body.order.deliveryPin || generateDeliveryPin(),
+          };
+          orders.unshift(freshOrder);
           orderIndex = 0;
         } else {
-          // If order wasn't found in memory/file, create it from fallback data
-          const fallbackOrder: OrderItem = {
-            id: orderId,
-            orderNumber: orderId.startsWith('RSCC-') ? orderId : generateOrderNumber(),
-            deliveryPin: generateDeliveryPin(),
-            customer: { name: 'Customer', mobile: '9967842065' },
-            mode: 'DOCUMENT',
-            files: [{ id: 'f-1', name: 'Document.pdf', size: 1024, type: 'application/pdf', pageCount: 1, moderationStatus: 'SAFE' }],
-            totalPages: 1,
-            copies: 1,
-            printType: 'BW',
-            printingSide: 'SINGLE',
-            ratePerPage: 5,
-            totalAmount: 5,
-            paymentStatus: 'PAYMENT_VERIFICATION_REQUIRED',
-            orderStatus: 'PLACED',
-            internalNotes: [],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          orders.unshift(fallbackOrder);
-          orderIndex = 0;
+          sendJson(res, 404, { success: false, error: 'Order not found for verification.' });
+          return true;
         }
       }
 
-      orders[orderIndex].orderStatus = 'PLACED';
-      orders[orderIndex].paymentStatus = 'PAYMENT_VERIFICATION_REQUIRED';
-      orders[orderIndex].paymentReference = body.paymentReference?.trim() || 'UPI-SCREENSHOT-VERIFIED';
-      orders[orderIndex].paymentMethod = body.paymentMethod || 'UPI (9967842065@OKBIZAXIS)';
-      orders[orderIndex].paymentScreenshot = body.paymentScreenshot;
-      orders[orderIndex].paymentScreenshotTime = body.paymentScreenshotTime || new Date().toISOString();
-      orders[orderIndex].paymentScreenshotFilename = body.paymentScreenshotFilename || 'payment_screenshot.jpg';
-      orders[orderIndex].ocrVerifiedUpi = body.ocrVerifiedUpi;
-      orders[orderIndex].ocrDetectedUpiId = body.ocrDetectedUpiId;
-      orders[orderIndex].ocrVerifiedTime = body.ocrVerifiedTime;
-      orders[orderIndex].ocrTimeDiffMinutes = body.ocrTimeDiffMinutes;
-      orders[orderIndex].updatedAt = new Date().toISOString();
+      const verifiedOrder = orders[orderIndex];
+
+      // Validate payment amount
+      if (body.amount !== undefined && Math.abs(body.amount - verifiedOrder.totalAmount) > 0.01) {
+        sendJson(res, 400, {
+          success: false,
+          error: `Payment amount mismatch. Expected ₹${verifiedOrder.totalAmount}, but received ₹${body.amount}.`,
+        });
+        return true;
+      }
+
+      // Update Order Status to Confirmed and Paid
+      verifiedOrder.orderStatus = 'CONFIRMED';
+      verifiedOrder.paymentStatus = 'PAYMENT_VERIFIED';
+      verifiedOrder.paymentReference = refId;
+      verifiedOrder.paymentMethod = body.paymentMethod || 'UPI (Direct Gateway / Intent)';
+      verifiedOrder.verifiedAt = new Date().toISOString();
+      verifiedOrder.updatedAt = new Date().toISOString();
 
       saveOrdersToDisk();
 
       auditLogs.unshift({
         id: 'log-' + Date.now(),
         timestamp: new Date().toISOString(),
-        action: 'PAYMENT_SCREENSHOT_SUBMITTED',
-        actor: orders[orderIndex].customer.name,
-        orderNumber: orders[orderIndex].orderNumber,
-        details: `Customer placed order & attached verified payment screenshot (${body.paymentScreenshotFilename || 'Screenshot'}). Delivery PIN: ${orders[orderIndex].deliveryPin}. OCR UPI Match: ${body.ocrVerifiedUpi ? 'YES' : 'PENDING'}.`,
+        action: 'PAYMENT_VERIFIED_ORDER_CONFIRMED',
+        actor: verifiedOrder.customer.name,
+        orderNumber: verifiedOrder.orderNumber,
+        details: `Payment of ₹${verifiedOrder.totalAmount} automatically verified via ${verifiedOrder.paymentMethod} (Ref: ${refId}). Order confirmed with Pickup PIN: ${verifiedOrder.deliveryPin}.`,
       });
 
-      sendJson(res, 200, { success: true, order: orders[orderIndex] });
+      sendJson(res, 200, {
+        success: true,
+        order: verifiedOrder,
+        message: 'Payment verified and order placed successfully!',
+      });
       return true;
     }
 

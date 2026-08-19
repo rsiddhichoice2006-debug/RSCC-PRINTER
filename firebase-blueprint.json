@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered customer profile on RSCC platform",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 100 },
+        "mobile": { "type": "string", "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "mobile"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer print order and booking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orderNumber": { "type": "string", "maxLength": 30 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "customer": { "type": "object" },
+        "mode": { "type": "string", "enum": ["DOCUMENT", "PHOTO", "PASSPORT_PHOTO"] },
+        "paperSize": { "type": "string", "enum": ["A4", "A3"] },
+        "paperQuality": { "type": "string", "enum": ["75_GSM", "100_GSM"] },
+        "printType": { "type": "string", "enum": ["BW", "COLOUR"] },
+        "printingSide": { "type": "string", "enum": ["SINGLE", "BOTH"] },
+        "copies": { "type": "number" },
+        "totalPages": { "type": "number" },
+        "totalSheets": { "type": "number" },
+        "ratePerPage": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING_PAYMENT", "PAYMENT_SUBMITTED", "CONFIRMED", "PRINTING", "READY_FOR_PICKUP", "COMPLETED", "CANCELLED"] },
+        "paymentStatus": { "type": "string", "enum": ["PENDING", "SUBMITTED", "VERIFIED", "FAILED", "REFUNDED"] },
+        "paymentRef": { "type": "string", "maxLength": 100 },
+        "deliveryPin": { "type": "string", "maxLength": 10 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orderNumber", "customer", "mode", "totalAmount", "status", "paymentStatus"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User customer accounts"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Order records and bookings placed by customers"
+    }
+  }
+}

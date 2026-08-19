@@ -16,10 +16,12 @@ import {
   Layers,
   HelpCircle,
   FileSpreadsheet,
+  Sliders,
 } from 'lucide-react';
 import {
   CustomerDetails,
   CustomerUser,
+  PageSelectionMode,
   PaperQuality,
   PaperSize,
   PrintType,
@@ -28,11 +30,13 @@ import {
   UploadedFileItem,
 } from '../types';
 import { formatFileSize, processUploadedFile } from '../utils/fileProcessor';
+import { getSelectedPageCount } from '../utils/pageCalculator';
 import {
   DEFAULT_PRICING,
   getDocumentRate,
   getAvailableQualitiesForPrintType,
 } from '../utils/pricingCalculator';
+import { useAuth } from '../context/AuthContext';
 
 interface UploadPrintPageProps {
   settings: ShopSettings;
@@ -52,6 +56,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   onProceedToPayment,
   loggedInCustomer,
 }) => {
+  const { currentUser, customerProfile } = useAuth();
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = useState<boolean>(false);
   const [dragActive, setDragActive] = useState<boolean>(false);
@@ -65,23 +70,25 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
   // Customer Details Form (prefill if logged in)
   const [customer, setCustomer] = useState<CustomerDetails>({
-    name: loggedInCustomer?.name || '',
-    mobile: loggedInCustomer?.mobile || '',
-    email: loggedInCustomer?.email || '',
+    name: loggedInCustomer?.name || customerProfile?.name || currentUser?.displayName || '',
+    mobile: loggedInCustomer?.mobile || customerProfile?.mobile || '',
+    email: loggedInCustomer?.email || currentUser?.email || customerProfile?.email || '',
     specialInstructions: '',
   });
 
   // Sync when logged in
   useEffect(() => {
-    if (loggedInCustomer) {
-      setCustomer((prev) => ({
-        ...prev,
-        name: prev.name || loggedInCustomer.name,
-        mobile: prev.mobile || loggedInCustomer.mobile,
-        email: prev.email || loggedInCustomer.email || '',
-      }));
-    }
-  }, [loggedInCustomer]);
+    const activeName = loggedInCustomer?.name || customerProfile?.name || currentUser?.displayName || '';
+    const activeMobile = loggedInCustomer?.mobile || customerProfile?.mobile || '';
+    const activeEmail = loggedInCustomer?.email || currentUser?.email || customerProfile?.email || '';
+
+    setCustomer((prev) => ({
+      ...prev,
+      name: prev.name || activeName,
+      mobile: prev.mobile || activeMobile,
+      email: prev.email || activeEmail,
+    }));
+  }, [loggedInCustomer, currentUser, customerProfile]);
 
   const [formErrors, setFormErrors] = useState<{ name?: string; mobile?: string }>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -119,11 +126,18 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     }
   }, [sampleParams]);
 
-  // Compute Total Pages across all uploaded valid files
+  // Compute Total Pages across all uploaded valid files using individual page selections
   const validFiles = uploadedFiles.filter(
     (f) => !f.error && f.moderationStatus !== 'FLAGGED' && f.pageCount > 0
+  ).map((f) => ({
+    ...f,
+    selectedPageCount: getSelectedPageCount(f.pageCount, f.pageSelectionMode || 'ALL', f.customPageRange || ''),
+  }));
+
+  const totalPages = validFiles.reduce(
+    (acc, f) => acc + (f.selectedPageCount || f.pageCount),
+    0
   );
-  const totalPages = validFiles.reduce((acc, f) => acc + f.pageCount, 0);
 
   // STRICT RULE: ONLY WHEN FILE CONTAINS MORE THAN 1 PAGE ENABLE BOTH SIDE PRINT OPTION
   const isBothSideAllowed = totalPages > 1;
@@ -263,6 +277,21 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     );
   };
 
+  const updatePageSelection = (id: string, mode: PageSelectionMode, customRange?: string) => {
+    setUploadedFiles((prev) =>
+      prev.map((f) => {
+        if (f.id !== id) return f;
+        const newRange = customRange !== undefined ? customRange : f.customPageRange || '';
+        return {
+          ...f,
+          pageSelectionMode: mode,
+          customPageRange: newRange,
+          selectedPageCount: getSelectedPageCount(f.pageCount, mode, newRange),
+        };
+      })
+    );
+  };
+
   const validateCustomerForm = (): boolean => {
     const errors: { name?: string; mobile?: string } = {};
     if (!customer.name.trim()) {
@@ -311,6 +340,9 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         size: f.size,
         type: f.type,
         pageCount: f.pageCount,
+        pageSelectionMode: f.pageSelectionMode || 'ALL',
+        customPageRange: f.customPageRange,
+        selectedPageCount: f.selectedPageCount || f.pageCount,
         previewUrl: f.previewUrl,
         moderationStatus: f.moderationStatus,
         moderationReason: f.moderationReason,
@@ -463,90 +495,190 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               <div className="space-y-3">
                 {uploadedFiles.map((fileItem) => {
                   const isFlagged = fileItem.moderationStatus === 'FLAGGED';
+                  const currentMode = fileItem.pageSelectionMode || 'ALL';
+                  const effectiveCount = getSelectedPageCount(
+                    fileItem.pageCount,
+                    currentMode,
+                    fileItem.customPageRange || ''
+                  );
+
                   return (
                     <div
                       key={fileItem.id}
-                      className={`p-4 rounded-xl border transition flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+                      className={`p-4 rounded-2xl border transition flex flex-col gap-3.5 ${
                         isFlagged
                           ? 'bg-rose-50/70 border-rose-200'
                           : fileItem.error
                           ? 'bg-amber-50/70 border-amber-200'
-                          : 'bg-slate-50/80 hover:bg-slate-50 border-slate-200'
+                          : 'bg-slate-50/90 hover:bg-slate-50 border-slate-200 shadow-xs'
                       }`}
                     >
-                      <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <div
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                            isFlagged
-                              ? 'bg-rose-100 text-rose-700'
-                              : 'bg-slate-200 text-slate-700'
-                          }`}
-                        >
-                          <FileText className="w-5 h-5" />
-                        </div>
-
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="font-bold text-slate-900 text-xs sm:text-sm truncate">
-                            {fileItem.name}
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <div
+                            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                              isFlagged
+                                ? 'bg-rose-100 text-rose-700'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            <FileText className="w-5 h-5" />
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                            <span>{formatFileSize(fileItem.size)}</span>
-                            <span>•</span>
-                            <span className="font-semibold text-slate-700">
-                              {fileItem.isProcessing ? (
-                                <span className="text-amber-600 flex items-center gap-1">
-                                  <RefreshCw className="w-3 h-3 animate-spin" /> Counting pages...
-                                </span>
-                              ) : (
-                                `${fileItem.pageCount} page${fileItem.pageCount === 1 ? '' : 's'}`
-                              )}
-                            </span>
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="font-bold text-slate-900 text-xs sm:text-sm truncate">
+                              {fileItem.name}
+                            </div>
 
-                            {isFlagged && (
-                              <span className="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
-                                <AlertTriangle className="w-3 h-3" /> Flagged Content
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                              <span>{formatFileSize(fileItem.size)}</span>
+                              <span>•</span>
+                              <span className="font-semibold text-slate-700">
+                                {fileItem.isProcessing ? (
+                                  <span className="text-amber-600 flex items-center gap-1">
+                                    <RefreshCw className="w-3 h-3 animate-spin" /> Counting pages...
+                                  </span>
+                                ) : (
+                                  `${fileItem.pageCount} total page${fileItem.pageCount === 1 ? '' : 's'}`
+                                )}
                               </span>
+
+                              {isFlagged && (
+                                <span className="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
+                                  <AlertTriangle className="w-3 h-3" /> Flagged Content
+                                </span>
+                              )}
+                            </div>
+
+                            {isFlagged && fileItem.moderationReason && (
+                              <p className="text-[11px] text-rose-700 font-medium pt-1">
+                                {fileItem.moderationReason}
+                              </p>
                             )}
                           </div>
+                        </div>
 
-                          {isFlagged && fileItem.moderationReason && (
-                            <p className="text-[11px] text-rose-700 font-medium pt-1">
-                              {fileItem.moderationReason}
-                            </p>
+                        {/* Manual total page count editor & Delete action */}
+                        <div className="flex items-center gap-3 self-end sm:self-center">
+                          {!fileItem.isProcessing && !isFlagged && (
+                            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-1">
+                              <span className="text-[11px] text-slate-500 pl-1 font-medium">
+                                Total:
+                              </span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={999}
+                                value={fileItem.pageCount}
+                                onChange={(e) =>
+                                  updatePageCount(fileItem.id, parseInt(e.target.value) || 1)
+                                }
+                                className="w-12 text-center text-xs font-bold text-slate-900 focus:outline-none"
+                              />
+                            </div>
                           )}
+
+                          <button
+                            type="button"
+                            onClick={() => removeFile(fileItem.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            title="Remove File"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
 
-                      {/* Manual page count editor & Delete action */}
-                      <div className="flex items-center gap-3 self-end sm:self-center">
-                        {!fileItem.isProcessing && !isFlagged && (
-                          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-1">
-                            <span className="text-[11px] text-slate-500 pl-1 font-medium">
-                              Pages:
-                            </span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={999}
-                              value={fileItem.pageCount}
-                              onChange={(e) =>
-                                updatePageCount(fileItem.id, parseInt(e.target.value) || 1)
-                              }
-                              className="w-12 text-center text-xs font-bold text-slate-900 focus:outline-none"
-                            />
-                          </div>
-                        )}
+                      {/* Page Selection Controls */}
+                      {!fileItem.isProcessing && !isFlagged && (
+                        <div className="bg-white/90 rounded-xl p-3 border border-slate-200/80 space-y-2.5">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                              <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Pages to Print:</span>
+                            </div>
 
-                        <button
-                          type="button"
-                          onClick={() => removeFile(fileItem.id)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                          title="Remove File"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                            <div className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-950 font-bold px-2.5 py-1 rounded-lg text-[11px]">
+                              <span>Printing</span>
+                              <span className="bg-indigo-600 text-white px-1.5 py-0.2 rounded font-mono">
+                                {effectiveCount}
+                              </span>
+                              <span>of {fileItem.pageCount} pages</span>
+                            </div>
+                          </div>
+
+                          {/* Options: All, Odd, Even, Custom */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => updatePageSelection(fileItem.id, 'ALL')}
+                              className={`py-1.5 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                                currentMode === 'ALL'
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <span>All Pages</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => updatePageSelection(fileItem.id, 'ODD')}
+                              className={`py-1.5 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                                currentMode === 'ODD'
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <span>Odd Pages</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => updatePageSelection(fileItem.id, 'EVEN')}
+                              className={`py-1.5 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                                currentMode === 'EVEN'
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <span>Even Pages</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => updatePageSelection(fileItem.id, 'CUSTOM')}
+                              className={`py-1.5 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                                currentMode === 'CUSTOM'
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <span>Custom</span>
+                            </button>
+                          </div>
+
+                          {/* Custom Page Input */}
+                          {currentMode === 'CUSTOM' && (
+                            <div className="pt-1 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. 1-3, 5, 8-10"
+                                  value={fileItem.customPageRange || ''}
+                                  onChange={(e) =>
+                                    updatePageSelection(fileItem.id, 'CUSTOM', e.target.value)
+                                  }
+                                  className="w-full text-xs font-medium text-slate-900 px-3 py-1.5 bg-slate-50 border border-indigo-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                                />
+                              </div>
+                              <p className="text-[10px] text-slate-500">
+                                Enter individual page numbers and/or ranges separated by commas (Max: {fileItem.pageCount})
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import {
   ShieldCheck,
@@ -27,9 +27,52 @@ import {
   FileArchive,
   Ban,
   Trash2,
+  Bell,
+  BellRing,
+  Volume2,
+  VolumeX,
+  X,
 } from 'lucide-react';
 import { AdminStats, OrderRecord, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+
+// Web Audio API Chime for New Order Notification
+const playOrderChime = () => {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // First Tone (D5 - 587.33Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    gain1.gain.setValueAtTime(0.25, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.35);
+
+    // Second Tone (A5 - 880Hz) - higher chime
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880, now + 0.15);
+    gain2.gain.setValueAtTime(0.3, now + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.15);
+    osc2.stop(now + 0.65);
+  } catch (e) {
+    console.warn('Audio chime warning:', e);
+  }
+};
 
 interface AdminPageProps {
   settings: ShopSettings;
@@ -58,6 +101,14 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [downloadingZipOrderId, setDownloadingZipOrderId] = useState<string | null>(null);
 
+  // Sound & Live Notifications
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('rscc_admin_sound') !== 'false';
+  });
+  const [newOrderAlerts, setNewOrderAlerts] = useState<OrderRecord[]>([]);
+  const knownOrderIdsRef = useRef<Set<string>>(new Set());
+  const isInitialSnapshotRef = useRef<boolean>(true);
+
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -82,27 +133,93 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }, 4000);
   };
 
+  const toggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    localStorage.setItem('rscc_admin_sound', String(next));
+    if (next) {
+      playOrderChime();
+      showToast('Notification Sound Enabled 🔔');
+    } else {
+      showToast('Notification Sound Muted 🔕');
+    }
+  };
+
+  const dismissAlert = (orderId: string) => {
+    setNewOrderAlerts((prev) => prev.filter((o) => o.id !== orderId));
+  };
+
   useEffect(() => {
     setEditSettings(settings);
   }, [settings]);
 
+  // Real-time Firestore Snapshot Listener for Live Order Notifications
   useEffect(() => {
-    if (isAdminLoggedIn) {
-      loadDashboardData();
-      // Real-time background sync every 4 seconds so orders from all devices show up immediately
-      const syncTimer = setInterval(() => {
-        apiClient.getOrders().then((ordersData) => {
-          setOrders(ordersData);
-        }).catch(() => {});
-        apiClient.getAdminStats().then((statsData) => {
-          if (statsData?.stats) setStats(statsData.stats);
-          if (statsData?.recentAuditLogs) setAuditLogs(statsData.recentAuditLogs);
-        }).catch(() => {});
-      }, 4000);
+    if (!isAdminLoggedIn) return;
 
-      return () => clearInterval(syncTimer);
+    loadDashboardData();
+
+    // Attach Firestore real-time onSnapshot listener
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const ordersCol = collection(db, 'orders');
+      unsubscribe = onSnapshot(
+        ordersCol,
+        (snapshot) => {
+          const fetchedOrders: OrderRecord[] = [];
+          const freshlyAdded: OrderRecord[] = [];
+
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as OrderRecord;
+            fetchedOrders.push(data);
+
+            if (!isInitialSnapshotRef.current && !knownOrderIdsRef.current.has(data.id)) {
+              freshlyAdded.push(data);
+            }
+          });
+
+          // Sort orders by date descending
+          fetchedOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+          setOrders(fetchedOrders);
+
+          // If new orders detected
+          if (!isInitialSnapshotRef.current && freshlyAdded.length > 0) {
+            freshlyAdded.forEach((newOrd) => {
+              knownOrderIdsRef.current.add(newOrd.id);
+            });
+
+            if (soundEnabled) {
+              playOrderChime();
+            }
+
+            setNewOrderAlerts((prev) => [...freshlyAdded, ...prev].slice(0, 5));
+            showToast(`🔔 ${freshlyAdded.length} New Order(s) Received!`);
+          } else if (isInitialSnapshotRef.current) {
+            fetchedOrders.forEach((o) => knownOrderIdsRef.current.add(o.id));
+            isInitialSnapshotRef.current = false;
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'orders');
+        }
+      );
+    } catch (e) {
+      console.warn('Firestore snapshot setup warning:', e);
     }
-  }, [isAdminLoggedIn]);
+
+    // Secondary fallback sync timer
+    const syncTimer = setInterval(() => {
+      apiClient.getAdminStats().then((statsData) => {
+        if (statsData?.stats) setStats(statsData.stats);
+        if (statsData?.recentAuditLogs) setAuditLogs(statsData.recentAuditLogs);
+      }).catch(() => {});
+    }, 5000);
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+      clearInterval(syncTimer);
+    };
+  }, [isAdminLoggedIn, soundEnabled]);
 
   const loadDashboardData = async () => {
     setLoadingOrders(true);
@@ -463,16 +580,100 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
             </h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={toggleSound}
+              title={soundEnabled ? 'Click to Mute New Order Chime' : 'Click to Enable New Order Chime'}
+              className={`text-xs font-bold px-3 py-2 rounded-xl border transition flex items-center gap-1.5 cursor-pointer ${
+                soundEnabled
+                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-sm'
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+              }`}
+            >
+              {soundEnabled ? <Volume2 className="w-4 h-4 text-slate-950" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
+              <span>{soundEnabled ? 'Live Chime ON' : 'Live Chime OFF'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                playOrderChime();
+                showToast('🔔 Played test order chime!');
+              }}
+              title="Test notification chime sound"
+              className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-2.5 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1 cursor-pointer"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Test Sound</span>
+            </button>
+
             <button
               onClick={loadDashboardData}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5"
+              className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5 cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>Refresh Orders</span>
+              <span>Refresh</span>
             </button>
           </div>
         </div>
+
+        {/* Real-time Order Alerts Popup/Banner */}
+        {newOrderAlerts.length > 0 && (
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-slate-950 p-4 rounded-2xl shadow-xl border-2 border-amber-300 animate-in slide-in-from-top-2 duration-300 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-black text-sm uppercase tracking-wide">
+                <BellRing className="w-5 h-5 animate-bounce text-slate-950" />
+                <span>Real-Time Alert: {newOrderAlerts.length} New Order(s) Received</span>
+              </div>
+              <button
+                onClick={() => setNewOrderAlerts([])}
+                className="text-xs font-bold bg-slate-950/20 hover:bg-slate-950/40 text-slate-950 px-2 py-1 rounded-lg transition cursor-pointer"
+              >
+                Clear All
+              </button>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              {newOrderAlerts.map((alertOrder) => (
+                <div
+                  key={alertOrder.id}
+                  className="bg-white/95 backdrop-blur-xs p-3 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-xs border border-amber-200"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
+                    <div>
+                      <div className="font-extrabold text-slate-900 text-sm">
+                        Order #{alertOrder.orderNumber} • ₹{alertOrder.totalAmount}
+                      </div>
+                      <div className="text-xs text-slate-600 font-medium">
+                        Customer: <span className="font-bold text-slate-900">{alertOrder.customer.name}</span> ({alertOrder.customer.mobile}) • {alertOrder.mode}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setSelectedOrder(alertOrder);
+                        setActiveTab('orders');
+                        dismissAlert(alertOrder.id);
+                      }}
+                      className="bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>View Order</span>
+                    </button>
+                    <button
+                      onClick={() => dismissAlert(alertOrder.id)}
+                      className="text-slate-400 hover:text-slate-700 p-1 rounded-md transition cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Stats Row */}
         {stats && (

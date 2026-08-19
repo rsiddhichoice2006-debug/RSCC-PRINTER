@@ -68,6 +68,8 @@ export interface ShopSettings {
   pricing: ShopPricing;
 }
 
+export type PageSelectionMode = 'ALL' | 'ODD' | 'EVEN' | 'CUSTOM';
+
 export interface UploadedFileItem {
   id: string;
   file: File;
@@ -76,6 +78,9 @@ export interface UploadedFileItem {
   type: string;
   previewUrl?: string;
   pageCount: number;
+  pageSelectionMode?: PageSelectionMode;
+  customPageRange?: string;
+  selectedPageCount?: number;
   isProcessing: boolean;
   error?: string;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
@@ -88,6 +93,9 @@ export interface SerializableFileItem {
   size: number;
   type: string;
   pageCount: number;
+  pageSelectionMode?: PageSelectionMode;
+  customPageRange?: string;
+  selectedPageCount?: number;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
   moderationReason?: string;
   previewUrl?: string;
@@ -113,6 +121,7 @@ export interface CustomerUser {
 export interface OrderRecord {
   id: string;
   orderNumber: string;
+  userId?: string;
   deliveryPin: string;
   customer: {
     name: string;

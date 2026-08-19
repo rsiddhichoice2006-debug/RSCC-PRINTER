@@ -31,6 +31,7 @@ import {
 } from '../types';
 import { PHOTO_LAYOUTS, calculateRequiredSheets, generateSheetSlots } from '../utils/photoLayouts';
 import { formatFileSize, processUploadedFile } from '../utils/fileProcessor';
+import { useAuth } from '../context/AuthContext';
 
 interface PhotoLayoutPageProps {
   settings: ShopSettings;
@@ -43,7 +44,8 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
   onProceedToPayment,
   loggedInCustomer,
 }) => {
-  const paperSize: PaperSize = 'A4';
+  const { currentUser, customerProfile } = useAuth();
+  const [paperSize, setPaperSize] = useState<PaperSize>('A4');
   const [selectedLayout, setSelectedLayout] = useState<PhotoLayoutType>('4_PHOTOS');
   const [photoOrientation, setPhotoOrientation] = useState<PhotoOrientation>('PORTRAIT');
   const [uploadedPhotos, setUploadedPhotos] = useState<
@@ -57,23 +59,25 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
   // Customer Details Form (auto-prefill if logged in)
   const [customer, setCustomer] = useState<CustomerDetails>({
-    name: loggedInCustomer?.name || '',
-    mobile: loggedInCustomer?.mobile || '',
-    email: loggedInCustomer?.email || '',
+    name: loggedInCustomer?.name || customerProfile?.name || currentUser?.displayName || '',
+    mobile: loggedInCustomer?.mobile || customerProfile?.mobile || '',
+    email: loggedInCustomer?.email || currentUser?.email || customerProfile?.email || '',
     specialInstructions: '',
   });
 
   // Sync if customer logs in
   useEffect(() => {
-    if (loggedInCustomer) {
-      setCustomer((prev) => ({
-        ...prev,
-        name: prev.name || loggedInCustomer.name,
-        mobile: prev.mobile || loggedInCustomer.mobile,
-        email: prev.email || loggedInCustomer.email || '',
-      }));
-    }
-  }, [loggedInCustomer]);
+    const activeName = loggedInCustomer?.name || customerProfile?.name || currentUser?.displayName || '';
+    const activeMobile = loggedInCustomer?.mobile || customerProfile?.mobile || '';
+    const activeEmail = loggedInCustomer?.email || currentUser?.email || customerProfile?.email || '';
+
+    setCustomer((prev) => ({
+      ...prev,
+      name: prev.name || activeName,
+      mobile: prev.mobile || activeMobile,
+      email: prev.email || activeEmail,
+    }));
+  }, [loggedInCustomer, currentUser, customerProfile]);
   const [customerErrors, setCustomerErrors] = useState<{ name?: string; mobile?: string }>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);

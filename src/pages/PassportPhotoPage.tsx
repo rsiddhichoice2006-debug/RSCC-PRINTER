@@ -25,6 +25,7 @@ import {
   ShopSettings,
 } from '../types';
 import { DEFAULT_PRICING } from '../utils/pricingCalculator';
+import { useAuth } from '../context/AuthContext';
 
 interface PassportPhotoPageProps {
   settings: ShopSettings;
@@ -37,6 +38,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
   onProceedToPayment,
   loggedInCustomer,
 }) => {
+  const { currentUser, customerProfile } = useAuth();
   const [serviceType, setServiceType] = useState<PassportServiceType>('STANDARD_PASSPORT');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string>('');
@@ -46,11 +48,24 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
   const [activeGuideTab, setActiveGuideTab] = useState<'visual' | 'specifications' | 'checklist'>('visual');
 
   const [customer, setCustomer] = useState<CustomerDetails>({
-    name: loggedInCustomer?.name || '',
-    mobile: loggedInCustomer?.mobile || '',
-    email: loggedInCustomer?.email || '',
+    name: loggedInCustomer?.name || customerProfile?.name || currentUser?.displayName || '',
+    mobile: loggedInCustomer?.mobile || customerProfile?.mobile || '',
+    email: loggedInCustomer?.email || currentUser?.email || customerProfile?.email || '',
     specialInstructions: '',
   });
+
+  React.useEffect(() => {
+    const activeName = loggedInCustomer?.name || customerProfile?.name || currentUser?.displayName || '';
+    const activeMobile = loggedInCustomer?.mobile || customerProfile?.mobile || '';
+    const activeEmail = loggedInCustomer?.email || currentUser?.email || customerProfile?.email || '';
+
+    setCustomer((prev) => ({
+      ...prev,
+      name: prev.name || activeName,
+      mobile: prev.mobile || activeMobile,
+      email: prev.email || activeEmail,
+    }));
+  }, [loggedInCustomer, currentUser, customerProfile]);
   const [formErrors, setFormErrors] = useState<{ name?: string; mobile?: string }>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);

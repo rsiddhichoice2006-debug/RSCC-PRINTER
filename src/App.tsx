@@ -10,15 +10,31 @@ import { OrderConfirmationPage } from './pages/OrderConfirmationPage';
 import { TrackOrderPage } from './pages/TrackOrderPage';
 import { MyOrdersPage } from './pages/MyOrdersPage';
 import { AdminPage } from './pages/AdminPage';
+import { AuthModal } from './components/AuthModal';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { auth } from './firebase';
 import { OrderRecord, ShopSettings } from './types';
 import { apiClient } from './services/apiClient';
 
-export default function App() {
+function MainApp() {
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [navigationParams, setNavigationParams] = useState<any>(null);
 
   // Active Pending / Completed Order in current checkout flow
   const [activeOrder, setActiveOrder] = useState<OrderRecord | null>(null);
+
+  // Auth Modal State
+  const [authModalState, setAuthModalState] = useState<{
+    isOpen: boolean;
+    mode: 'login' | 'signup';
+    title?: string;
+    onAuthenticated?: () => void;
+  }>({
+    isOpen: false,
+    mode: 'signup',
+  });
+
+  const { currentUser, customerProfile } = useAuth();
 
   // Shop Settings & Pricing State
   const [settings, setSettings] = useState<ShopSettings>({
@@ -62,11 +78,61 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const openAuthModal = (mode: 'login' | 'signup' = 'login', title?: string, onAuthenticated?: () => void) => {
+    setAuthModalState({
+      isOpen: true,
+      mode,
+      title,
+      onAuthenticated,
+    });
+  };
+
   // Called when user clicks "Proceed to Payment" from Document or Photo page
   const handleProceedToPayment = async (orderPayload: any) => {
+    // If user is not authenticated yet, require sign-in or sign-up before taking order
+    if (!currentUser) {
+      openAuthModal(
+        'signup',
+        'Create Account / Sign In to Place Order & Save Booking',
+        async () => {
+          // Callback after successful authentication
+          try {
+            const user = auth.currentUser;
+            const enhancedPayload = {
+              ...orderPayload,
+              userId: user?.uid || orderPayload.userId,
+              customer: {
+                ...orderPayload.customer,
+                name: orderPayload.customer?.name || user?.displayName || user?.email?.split('@')[0] || 'Customer',
+                email: orderPayload.customer?.email || user?.email || '',
+                mobile: orderPayload.customer?.mobile || '',
+              },
+            };
+            const createdOrder = await apiClient.createOrder(enhancedPayload);
+            setActiveOrder(createdOrder);
+            setCurrentPage('payment');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } catch (err: any) {
+            alert('Could not initiate order: ' + (err.message || 'Server error'));
+          }
+        }
+      );
+      return;
+    }
+
     try {
-      // Authoritative creation on backend with locked amount calculation
-      const createdOrder = await apiClient.createOrder(orderPayload);
+      // Authoritative creation on backend with locked amount calculation & userId
+      const enhancedPayload = {
+        ...orderPayload,
+        userId: currentUser.uid,
+        customer: {
+          ...orderPayload.customer,
+          name: orderPayload.customer?.name || currentUser.displayName || customerProfile?.name || 'Customer',
+          email: orderPayload.customer?.email || currentUser.email || '',
+          mobile: orderPayload.customer?.mobile || customerProfile?.mobile || '',
+        },
+      };
+      const createdOrder = await apiClient.createOrder(enhancedPayload);
       setActiveOrder(createdOrder);
       setCurrentPage('payment');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -91,6 +157,7 @@ export default function App() {
         settings={settings}
         isAdminLoggedIn={isAdminLoggedIn}
         onAdminLogout={() => setIsAdminLoggedIn(false)}
+        onOpenAuthModal={(mode) => openAuthModal(mode || 'login')}
       />
 
       {/* Main Content Area */}
@@ -158,6 +225,7 @@ export default function App() {
           <MyOrdersPage
             settings={settings}
             onNavigate={handleNavigate}
+            onOpenAuthModal={(mode) => openAuthModal(mode || 'login')}
           />
         )}
 
@@ -173,6 +241,27 @@ export default function App() {
 
       {/* Footer */}
       <Footer settings={settings} onNavigate={handleNavigate} />
+
+      {/* Global Authentication Modal */}
+      <AuthModal
+        isOpen={authModalState.isOpen}
+        onClose={() => setAuthModalState((prev) => ({ ...prev, isOpen: false }))}
+        initialMode={authModalState.mode}
+        title={authModalState.title}
+        onAuthenticated={() => {
+          if (authModalState.onAuthenticated) {
+            authModalState.onAuthenticated();
+          }
+        }}
+      />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }
