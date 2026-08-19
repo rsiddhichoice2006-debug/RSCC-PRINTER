@@ -172,13 +172,12 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {/* Card 0: Passport & Photo Printing - Featured */}
+            {/* Card 0: Passport & Photo Printing - Featured (Non-clickable card) */}
             <div
-              onClick={() => onNavigate('passport-photo')}
-              className="bg-gradient-to-br from-amber-500/10 via-amber-50/50 to-white rounded-2xl p-6 border-2 border-amber-400 shadow-sm hover:shadow-md transition flex flex-col justify-between cursor-pointer group"
+              className="bg-gradient-to-br from-amber-500/10 via-amber-50/50 to-white rounded-2xl p-6 border-2 border-amber-400 shadow-sm transition flex flex-col justify-between select-none"
             >
               <div className="space-y-3">
-                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition">
+                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs">
                   <Camera className="w-6 h-6" />
                 </div>
                 <div className="flex items-center gap-1.5">

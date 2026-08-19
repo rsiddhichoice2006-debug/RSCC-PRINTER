@@ -33,42 +33,46 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { AdminStats, OrderRecord, ShopSettings } from '../types';
+import { AdminStats, OrderRecord, ShopSettings, SerializableFileItem } from '../types';
 import { apiClient } from '../services/apiClient';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext';
 
-// Web Audio API Chime for New Order Notification
+// Web Audio API Multi-Tone Chime for New Order Notification
 const playOrderChime = () => {
   try {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
     const now = ctx.currentTime;
 
-    // First Tone (D5 - 587.33Hz)
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(587.33, now);
-    gain1.gain.setValueAtTime(0.25, now);
-    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(now);
-    osc1.stop(now + 0.35);
+    // Rich 4-Note Order Alert Chime (C5, E5, G5, C6 Arpeggio)
+    const notes = [
+      { freq: 523.25, time: now, duration: 0.2, vol: 0.4 },
+      { freq: 659.25, time: now + 0.12, duration: 0.2, vol: 0.4 },
+      { freq: 783.99, time: now + 0.24, duration: 0.25, vol: 0.45 },
+      { freq: 1046.5, time: now + 0.38, duration: 0.5, vol: 0.5 },
+    ];
 
-    // Second Tone (A5 - 880Hz) - higher chime
-    const osc2 = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(880, now + 0.15);
-    gain2.gain.setValueAtTime(0.3, now + 0.15);
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.start(now + 0.15);
-    osc2.stop(now + 0.65);
+    notes.forEach((note) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(note.freq, note.time);
+
+      gain.gain.setValueAtTime(0.001, note.time);
+      gain.gain.exponentialRampToValueAtTime(note.vol, note.time + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, note.time + note.duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(note.time);
+      osc.stop(note.time + note.duration);
+    });
   } catch (e) {
     console.warn('Audio chime warning:', e);
   }
@@ -87,6 +91,17 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   isAdminLoggedIn,
   onAdminLoginSuccess,
 }) => {
+  const { currentUser, signInWithGoogle } = useAuth();
+
+  // Auto grant access if signed in as authorized admin email
+  useEffect(() => {
+    if (currentUser?.email?.toLowerCase() === 'rsiddhi.choice.2006@gmail.com') {
+      if (!isAdminLoggedIn) {
+        onAdminLoginSuccess();
+      }
+    }
+  }, [currentUser, isAdminLoggedIn, onAdminLoginSuccess]);
+
   // Login State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -267,21 +282,31 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     e.preventDefault();
     setLoginLoading(true);
     setLoginError('');
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = password.trim();
+
+    // Check specific admin credentials requested
+    if (
+      cleanEmail === 'rsiddhi.choice.2006@gmail.com' &&
+      (cleanPass === 'RSIDDHI2006' || cleanPass === 'rsiddhi2006')
+    ) {
+      onAdminLoginSuccess();
+      loadDashboardData();
+      setLoginLoading(false);
+      return;
+    }
+
     try {
       await apiClient.adminLogin(email.trim(), password.trim());
       onAdminLoginSuccess();
       loadDashboardData();
     } catch (err: any) {
-      // Offline fallback verification
-      const cleanEmail = email.trim().toLowerCase();
-      const cleanPass = password.trim();
-      const validEmails = ['rsiddhi.choice.2006@gmail.com', 'admin@rscc.in', 'contact@rscc.in'];
-      const validPass = ['RSIDDHI2006', 'rsiddhi2006', 'rscc123', 'admin123'];
-      if (validEmails.includes(cleanEmail) && validPass.includes(cleanPass)) {
+      if (cleanEmail === 'rsiddhi.choice.2006@gmail.com' && (cleanPass === 'RSIDDHI2006' || cleanPass === 'rsiddhi2006')) {
         onAdminLoginSuccess();
         loadDashboardData();
       } else {
-        setLoginError('Invalid email or password. Access denied.');
+        setLoginError('Access denied. Please log in with rsiddhi.choice.2006@gmail.com and password RSIDDHI2006.');
       }
     } finally {
       setLoginLoading(false);
@@ -302,6 +327,28 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       loadDashboardData();
     } catch (err: any) {
       alert('Error verifying payment: ' + err.message);
+    }
+  };
+
+  const handleDownloadSingleFile = (file: SerializableFileItem, orderNumber: string) => {
+    if (!file.previewUrl) {
+      showToast(`File "${file.name}" has no preview URL attached.`);
+      return;
+    }
+
+    try {
+      const link = document.createElement('a');
+      link.href = file.previewUrl;
+      link.download = file.name || `Order_${orderNumber}_file`;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (document.body.contains(link)) document.body.removeChild(link);
+      }, 500);
+      showToast(`Downloading "${file.name}"...`);
+    } catch (e: any) {
+      window.open(file.previewUrl, '_blank');
     }
   };
 
@@ -329,11 +376,12 @@ PRINT SPECIFICATIONS:
 Print Type     : ${order.printType}
 Printing Side  : ${order.printingSide}
 Copies         : ${order.copies}
-Total Sheets   : ${order.totalSheets}
+Total Sheets   : ${order.totalSheets || order.totalPages}
 Rate Per Page  : ₹${order.ratePerPage}
 Total Amount   : ₹${order.totalAmount}
 Payment Status : ${order.paymentStatus}
 Order Status   : ${order.orderStatus}
+Payment Ref    : ${order.paymentReference || 'N/A'}
 
 =====================================================
 FILES LIST (${order.files.length} Total):
@@ -345,7 +393,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       // 2. Add each file into the zip
       for (let i = 0; i < order.files.length; i++) {
         const file = order.files[i];
-        const safeName = file.name.replace(/[/\\?%*:|"<>]/g, '_');
+        const safeName = (file.name || `file_${i + 1}`).replace(/[/\\?%*:|"<>]/g, '_');
         const filename = `${String(i + 1).padStart(2, '0')}_${safeName}`;
 
         let added = false;
@@ -360,10 +408,12 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
           } else if (file.previewUrl.startsWith('blob:') || file.previewUrl.startsWith('http')) {
             try {
               const res = await fetch(file.previewUrl);
-              const blob = await res.blob();
-              const buffer = await blob.arrayBuffer();
-              zip.file(filename, buffer);
-              added = true;
+              if (res.ok) {
+                const blob = await res.blob();
+                const buffer = await blob.arrayBuffer();
+                zip.file(filename, buffer);
+                added = true;
+              }
             } catch (fetchErr) {
               console.warn('Could not fetch previewUrl blob:', fetchErr);
             }
@@ -371,10 +421,10 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
         }
 
         if (!added) {
-          // Add informative text entry if base64 is not attached
+          // Add text placeholder if binary file is not directly in data URI
           zip.file(
             filename.endsWith('.pdf') ? filename + '.txt' : filename + '.txt',
-            `File: ${file.name}\nPage Count: ${file.pageCount}\nSize: ${file.size} bytes\nOrder: ${order.orderNumber}`
+            `File Name: ${file.name}\nPage Count: ${file.pageCount}\nSize: ${file.size} bytes\nOrder: ${order.orderNumber}\nPrint Type: ${order.printType}`
           );
         }
       }
@@ -390,32 +440,51 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
         } else if (order.paymentScreenshot.startsWith('blob:') || order.paymentScreenshot.startsWith('http')) {
           try {
             const res = await fetch(order.paymentScreenshot);
-            const blob = await res.blob();
-            const buffer = await blob.arrayBuffer();
-            zip.file(`PAYMENT_PROOF_${order.paymentScreenshotFilename || 'screenshot.jpg'}`, buffer);
+            if (res.ok) {
+              const blob = await res.blob();
+              const buffer = await blob.arrayBuffer();
+              zip.file(`PAYMENT_PROOF_${order.paymentScreenshotFilename || 'screenshot.jpg'}`, buffer);
+            }
           } catch (e) {
             console.warn('Failed to fetch payment screenshot blob', e);
           }
         }
       }
 
-      // 4. Generate ZIP & Trigger download
+      // 4. Generate ZIP & Trigger download reliably
       const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const downloadUrl = URL.createObjectURL(zipBlob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = downloadUrl;
-      const cleanCustomerName = order.customer.name.replace(/[^a-zA-Z0-9]/g, '_');
-      a.setAttribute('download', `RSCC_${order.orderNumber}_${cleanCustomerName}_Files.zip`);
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        if (document.body.contains(a)) {
-          document.body.removeChild(a);
-        }
-        URL.revokeObjectURL(downloadUrl);
-      }, 2000);
-      showToast(`ZIP downloaded for Order #${order.orderNumber}`);
+      const cleanCustomerName = (order.customer.name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
+      const zipFilename = `RSCC_${order.orderNumber}_${cleanCustomerName}_Files.zip`;
+
+      try {
+        const downloadUrl = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = downloadUrl;
+        a.setAttribute('download', zipFilename);
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          if (document.body.contains(a)) {
+            document.body.removeChild(a);
+          }
+          URL.revokeObjectURL(downloadUrl);
+        }, 3000);
+      } catch (blobErr) {
+        const zipBase64 = await zip.generateAsync({ type: 'base64' });
+        const dataUrl = `data:application/zip;base64,${zipBase64}`;
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = zipFilename;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          if (document.body.contains(a)) document.body.removeChild(a);
+        }, 3000);
+      }
+
+      showToast(`ZIP downloaded for Order #${order.orderNumber} ✅`);
     } catch (err: any) {
       console.error('Failed to create ZIP download:', err);
       showToast('Failed to generate ZIP archive: ' + (err.message || 'Unknown error'));
@@ -506,20 +575,59 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               <ShieldCheck className="w-8 h-8" />
             </div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              RSCC Shop Admin
+              RSCC Shop Admin Portal
             </h1>
             <p className="text-xs text-slate-500">
-              Sign in to manage printing orders, verify UPI payments, and adjust pricing.
+              Access restricted to authorized shop account (rsiddhi.choice.2006@gmail.com).
             </p>
+          </div>
+
+          {/* Quick Google Sign In for Admin */}
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await signInWithGoogle();
+              } catch (e) {
+                console.warn('Google admin sign-in error:', e);
+              }
+            }}
+            className="w-full bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs py-3 px-4 rounded-xl border border-slate-300 shadow-xs flex items-center justify-center gap-2.5 transition cursor-pointer"
+          >
+            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+              <path
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+              />
+            </svg>
+            <span>Sign In with Google (rsiddhi.choice.2006@gmail.com)</span>
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="flex-1 border-t border-slate-200"></div>
+            <span className="text-[10px] text-slate-400 font-bold uppercase">Or Admin Email & Password</span>
+            <div className="flex-1 border-t border-slate-200"></div>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4 text-xs">
             <div className="space-y-1">
-              <label className="block font-bold text-slate-700">Email Address</label>
+              <label className="block font-bold text-slate-700">Admin Email Address</label>
               <input
                 type="email"
                 required
-                placeholder="Enter admin email address"
+                placeholder="rsiddhi.choice.2006@gmail.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
@@ -527,11 +635,11 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
             </div>
 
             <div className="space-y-1">
-              <label className="block font-bold text-slate-700">Password</label>
+              <label className="block font-bold text-slate-700">Admin Password</label>
               <input
                 type="password"
                 required
-                placeholder="Enter admin password"
+                placeholder="Enter password (RSIDDHI2006)"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
@@ -1938,9 +2046,32 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     </button>
                   </div>
                   {selectedOrder.files.map((f, i) => (
-                    <div key={i} className="flex justify-between items-center text-slate-600 bg-white p-2 rounded-lg border border-slate-200 text-[11px]">
-                      <span className="font-medium truncate max-w-[300px]">• {f.name}</span>
-                      <span className="font-mono text-slate-500 shrink-0">{f.pageCount} pgs</span>
+                    <div key={i} className="flex justify-between items-center text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200 text-xs gap-2">
+                      <div className="min-w-0 flex items-center gap-2">
+                        <span className="w-5 h-5 rounded bg-slate-100 text-slate-700 font-mono font-bold flex items-center justify-center text-[10px] shrink-0">
+                          {i + 1}
+                        </span>
+                        <span className="font-semibold text-slate-900 truncate max-w-[220px] sm:max-w-[280px]">
+                          {f.name}
+                        </span>
+                        <span className="font-mono text-slate-400 text-[11px] shrink-0">
+                          ({f.pageCount} pgs • {(f.size / 1024).toFixed(1)} KB)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {f.previewUrl && (
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadSingleFile(f, selectedOrder.orderNumber)}
+                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 transition flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                            title="Download this file directly"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Download</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1992,6 +2123,70 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                   <Trash2 className="w-3.5 h-3.5" />
                 )}
                 <span>Delete Order #{selectedOrder.orderNumber}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Order Confirmation Modal */}
+      {orderToDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in zoom-in-95 text-slate-900">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-1.5">
+              <h3 className="text-lg font-black text-slate-900">
+                Delete Order #{orderToDelete.orderNumber}?
+              </h3>
+              <p className="text-xs text-slate-500">
+                Are you sure you want to permanently delete this order for <strong>{orderToDelete.customer.name}</strong> (₹{orderToDelete.totalAmount})? This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Customer:</span>
+                <span className="font-bold text-slate-800">{orderToDelete.customer.name} ({orderToDelete.customer.mobile})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Service:</span>
+                <span className="font-bold text-slate-800">{orderToDelete.mode}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Files:</span>
+                <span className="font-bold text-slate-800">{orderToDelete.files.length} file(s)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Total Amount:</span>
+                <span className="font-black text-emerald-700">₹{orderToDelete.totalAmount}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setOrderToDelete(null)}
+                disabled={deletingOrderId !== null}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deletingOrderId !== null}
+                className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
+              >
+                {deletingOrderId === orderToDelete.id ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                <span>Yes, Delete</span>
               </button>
             </div>
           </div>

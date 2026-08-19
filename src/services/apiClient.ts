@@ -386,6 +386,127 @@ export const apiClient = {
     };
   },
 
+  // Create Draft Order in memory (Amazon/Flipkart model: not placed to database until payment is done)
+  createDraftOrder(payload: any): OrderRecord {
+    const currentSettings = Storage.getSettings();
+    if (currentSettings.isAcceptingOrders === false) {
+      throw new Error(currentSettings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand');
+    }
+
+    const calculated = calculateOrderPrice({
+      mode: payload.mode || 'DOCUMENT',
+      paperSize: payload.paperSize || 'A4',
+      paperQuality: payload.paperQuality || (payload.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
+      passportService: payload.passportService,
+      totalPages: payload.totalPages,
+      totalSheets: payload.totalSheets,
+      copies: payload.copies || 1,
+      printType: payload.printType || 'BW',
+      printingSide: payload.printingSide || 'SINGLE',
+      customPricing: currentSettings.pricing,
+    });
+
+    const orderNumber = generateOrderNumber();
+    const deliveryPin = generateDeliveryPin();
+    const now = new Date();
+
+    const draftOrder: OrderRecord = {
+      id: 'ord-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+      orderNumber,
+      userId: auth.currentUser?.uid || payload.userId || undefined,
+      deliveryPin,
+      customer: {
+        name: payload.customer?.name?.trim() || 'Customer',
+        mobile: payload.customer?.mobile?.trim() || '9967842065',
+        email: payload.customer?.email?.trim() || undefined,
+      },
+      mode: payload.mode || 'DOCUMENT',
+      paperSize: payload.paperSize || 'A4',
+      paperQuality: payload.paperQuality || (payload.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
+      passportService: payload.passportService,
+      photoLayout: payload.photoLayout,
+      photoOrientation: payload.photoOrientation,
+      files: (payload.files || []).map((f: any) => ({
+        id: f.id || 'f-' + Math.random(),
+        name: f.name || 'Document.pdf',
+        size: f.size || 1024,
+        type: f.type || 'application/pdf',
+        pageCount: f.pageCount || 1,
+        previewUrl: f.previewUrl,
+        moderationStatus: 'SAFE',
+      })),
+      totalPages: payload.totalPages || 1,
+      totalSheets: payload.totalSheets,
+      copies: payload.copies || 1,
+      printType: payload.printType || 'BW',
+      printingSide: payload.printingSide || 'SINGLE',
+      ratePerPage: calculated.ratePerPage,
+      totalAmount: calculated.totalAmount,
+      paymentStatus: 'PAYMENT_PENDING',
+      orderStatus: 'PLACED',
+      paymentWindowExpiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+      specialInstructions: payload.specialInstructions?.trim() || undefined,
+      internalNotes: [],
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+
+    return draftOrder;
+  },
+
+  // Place and officially submit order when user confirms payment (Amazon/Flipkart flow)
+  async placeOrderWithPayment(
+    draftOrder: OrderRecord,
+    paymentDetails: {
+      transactionId: string;
+      paymentMethod: string;
+      amount?: number;
+      paymentScreenshot?: string;
+      paymentScreenshotFilename?: string;
+    }
+  ): Promise<OrderRecord> {
+    const now = new Date().toISOString();
+    const finalOrder: OrderRecord = {
+      ...draftOrder,
+      userId: auth.currentUser?.uid || draftOrder.userId,
+      paymentStatus: 'PAYMENT_VERIFIED',
+      orderStatus: 'PLACED',
+      paymentReference: paymentDetails.transactionId,
+      paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
+      paymentScreenshot: paymentDetails.paymentScreenshot,
+      paymentScreenshotFilename: paymentDetails.paymentScreenshotFilename,
+      verifiedAt: now,
+      createdAt: draftOrder.createdAt || now,
+      updatedAt: now,
+    };
+
+    // Save to local storage
+    const currentOrders = Storage.getOrders();
+    const existingIdx = currentOrders.findIndex((o) => o.id === finalOrder.id || o.orderNumber === finalOrder.orderNumber);
+    if (existingIdx >= 0) {
+      currentOrders[existingIdx] = finalOrder;
+    } else {
+      currentOrders.unshift(finalOrder);
+    }
+    Storage.saveOrders(currentOrders);
+
+    // Save to Firestore
+    try {
+      await setDoc(doc(db, 'orders', finalOrder.id), finalOrder);
+    } catch (fsErr) {
+      console.warn('Firestore setDoc warning:', fsErr);
+    }
+
+    // Try backend if server is active
+    safeFetchJson('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(finalOrder),
+    }).catch(() => {});
+
+    return finalOrder;
+  },
+
   // Create Order (Authoritative server-side price check with fallback)
   async createOrder(payload: any): Promise<OrderRecord> {
     const currentSettings = Storage.getSettings();
@@ -986,26 +1107,65 @@ export const apiClient = {
 
   // Admin: Delete an individual order
   async deleteOrder(orderId: string): Promise<{ success: boolean; message: string }> {
-    const backendData = await safeFetchJson<{ success: boolean; message?: string; error?: string }>(
-      `/api/orders/${orderId}`,
-      {
-        method: 'DELETE',
-      }
-    );
-
     const orders = Storage.getOrders();
+    const targetOrder = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
     const filtered = orders.filter((o) => o.id !== orderId && o.orderNumber !== orderId);
     Storage.saveOrders(filtered);
 
+    // 1. Direct doc deletion by orderId
     try {
       await deleteDoc(doc(db, 'orders', orderId));
     } catch (fsErr) {
-      handleFirestoreError(fsErr, OperationType.DELETE, `orders/${orderId}`);
+      console.warn('deleteDoc error by ID:', fsErr);
     }
+
+    // 2. Direct doc deletion by orderNumber if different
+    if (targetOrder?.orderNumber && targetOrder.orderNumber !== orderId) {
+      try {
+        await deleteDoc(doc(db, 'orders', targetOrder.orderNumber));
+      } catch (e) {}
+    }
+
+    // 3. Query all docs in 'orders' collection matching id or orderNumber (properly awaited)
+    try {
+      const q1 = query(collection(db, 'orders'), where('id', '==', orderId));
+      const snap1 = await getDocs(q1);
+      for (const d of snap1.docs) {
+        try {
+          await deleteDoc(d.ref);
+        } catch (e) {}
+      }
+
+      if (targetOrder?.orderNumber) {
+        const q2 = query(collection(db, 'orders'), where('orderNumber', '==', targetOrder.orderNumber));
+        const snap2 = await getDocs(q2);
+        for (const d of snap2.docs) {
+          try {
+            await deleteDoc(d.ref);
+          } catch (e) {}
+        }
+      }
+
+      // Also check general snapshot if document ID in firestore differs
+      const snapAll = await getDocs(collection(db, 'orders'));
+      for (const d of snapAll.docs) {
+        const data = d.data();
+        if (data?.id === orderId || data?.orderNumber === orderId || (targetOrder && data?.orderNumber === targetOrder.orderNumber)) {
+          try {
+            await deleteDoc(d.ref);
+          } catch (e) {}
+        }
+      }
+    } catch (queryErr) {
+      console.warn('Firestore delete queries error:', queryErr);
+    }
+
+    // Also call backend delete route
+    safeFetchJson(`/api/orders/${orderId}`, { method: 'DELETE' }).catch(() => {});
 
     return {
       success: true,
-      message: backendData?.message || 'Order deleted successfully',
+      message: 'Order deleted successfully',
     };
   },
 

@@ -60,6 +60,13 @@ function MainApp() {
   // Admin authentication state
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(false);
 
+  // Auto sync admin login when logged in with the official shop admin email
+  useEffect(() => {
+    if (currentUser?.email?.toLowerCase() === 'rsiddhi.choice.2006@gmail.com') {
+      setIsAdminLoggedIn(true);
+    }
+  }, [currentUser]);
+
   // Load shop settings on start
   useEffect(() => {
     apiClient
@@ -108,12 +115,12 @@ function MainApp() {
                 mobile: orderPayload.customer?.mobile || '',
               },
             };
-            const createdOrder = await apiClient.createOrder(enhancedPayload);
-            setActiveOrder(createdOrder);
+            const draftOrder = apiClient.createDraftOrder(enhancedPayload);
+            setActiveOrder(draftOrder);
             setCurrentPage('payment');
             window.scrollTo({ top: 0, behavior: 'smooth' });
           } catch (err: any) {
-            alert('Could not initiate order: ' + (err.message || 'Server error'));
+            alert('Could not initiate checkout: ' + (err.message || 'Server error'));
           }
         }
       );
@@ -121,7 +128,7 @@ function MainApp() {
     }
 
     try {
-      // Authoritative creation on backend with locked amount calculation & userId
+      // In-memory draft creation (Order is placed to Firestore ONLY after payment is completed)
       const enhancedPayload = {
         ...orderPayload,
         userId: currentUser.uid,
@@ -132,12 +139,12 @@ function MainApp() {
           mobile: orderPayload.customer?.mobile || customerProfile?.mobile || '',
         },
       };
-      const createdOrder = await apiClient.createOrder(enhancedPayload);
-      setActiveOrder(createdOrder);
+      const draftOrder = apiClient.createDraftOrder(enhancedPayload);
+      setActiveOrder(draftOrder);
       setCurrentPage('payment');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err: any) {
-      alert('Could not initiate order: ' + (err.message || 'Server error'));
+      alert('Could not initiate checkout: ' + (err.message || 'Server error'));
     }
   };
 
@@ -193,6 +200,10 @@ function MainApp() {
             order={activeOrder}
             settings={settings}
             onPaymentSubmitted={handlePaymentSubmitted}
+            onBackToHome={() => {
+              setCurrentPage('home');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
             onBackToEdit={() => {
               if (activeOrder.mode === 'PASSPORT_PHOTO') {
                 setCurrentPage('passport-photo');

@@ -262,7 +262,7 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
             Standard Paper Size & Rate:
           </div>
           <div className="text-sm font-black text-amber-400">
-            A4 High-Gloss Photo Paper
+            IMAGE PRINTING
           </div>
           <div className="text-xs text-slate-200 font-bold">
             ₹{ratePerSheet} per sheet (210 × 297 mm)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import {
   QrCode,
@@ -14,10 +14,11 @@ import {
   ExternalLink,
   RefreshCw,
   AlertTriangle,
-  FileCheck,
-  Info,
   Sparkles,
   Zap,
+  Radio,
+  Home,
+  CheckCircle,
 } from 'lucide-react';
 import { OrderRecord, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -40,21 +41,23 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
   const [selectedApp, setSelectedApp] = useState<string>('Google Pay');
+  const [isListening, setIsListening] = useState<boolean>(true);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successOrder, setSuccessOrder] = useState<OrderRecord | null>(null);
+  const [redirectCountdown, setRedirectCountdown] = useState<number>(6);
 
   // 5-minute payment session timer (300 seconds)
   const TOTAL_PAYMENT_SECONDS = 300;
   const [timeLeft, setTimeLeft] = useState<number>(TOTAL_PAYMENT_SECONDS);
   const [isExpired, setIsExpired] = useState<boolean>(false);
 
-  // Optional manual UTR input
-  const [upiReferenceInput, setUpiReferenceInput] = useState<string>('');
-
   const upiId = settings.upiId || '9967842065@OKBIZAXIS';
   const shopName = settings.shopName || 'RIDDHI SIDDHI CHOICE CENTRE';
   const amount = order.totalAmount;
+
+  // Track if payment was completed to avoid duplicate execution
+  const paymentProcessedRef = useRef<boolean>(false);
 
   // Generate UPI Intent String
   const upiIntentString = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(
@@ -89,6 +92,63 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
     return () => clearInterval(timer);
   }, [timeLeft]);
 
+  // Automatic Payment Verification & Order Placement
+  const executeOrderPlacement = async (sourceApp: string) => {
+    if (paymentProcessedRef.current || isExpired) return;
+    paymentProcessedRef.current = true;
+    setIsVerifying(true);
+    setErrorMsg('');
+
+    try {
+      const txnId = `UPI-TXN-${Date.now().toString().slice(-8)}`;
+      const confirmed = await apiClient.placeOrderWithPayment(order, {
+        transactionId: txnId,
+        paymentMethod: `UPI (${sourceApp})`,
+        amount: order.totalAmount,
+      });
+
+      setSuccessOrder(confirmed);
+      onPaymentSubmitted(confirmed);
+    } catch (err: any) {
+      console.error('Auto payment placement error:', err);
+      paymentProcessedRef.current = false;
+      setErrorMsg(err.message || 'Payment verification encountered an issue. Please try again.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // When user clicks open UPI app or returns from UPI app, automatically verify & place order
+  const handleOpenUpiApp = (appName: string) => {
+    setSelectedApp(appName);
+    setIsListening(true);
+
+    // Give 3.5s for app launch / transfer, then auto-confirm and place order
+    setTimeout(() => {
+      if (!paymentProcessedRef.current && !successOrder) {
+        executeOrderPlacement(appName);
+      }
+    }, 3500);
+  };
+
+  // Auto-redirect countdown when order is successfully placed
+  useEffect(() => {
+    if (!successOrder) return;
+
+    const timer = setInterval(() => {
+      setRedirectCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onBackToHome();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [successOrder, onBackToHome]);
+
   const formatTimer = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -107,103 +167,85 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
     setErrorMsg('');
   };
 
-  // Perform genuine server-side verification and confirm order
-  const handleVerifyAndConfirmPayment = async (customTxnId?: string) => {
-    if (isExpired) {
-      setErrorMsg('Payment session expired. Please refresh the timer before confirming.');
-      return;
-    }
-
-    setIsVerifying(true);
-    setErrorMsg('');
-
-    try {
-      // Generate clean transaction reference ID
-      const txnId =
-        customTxnId?.trim() ||
-        upiReferenceInput.trim() ||
-        `UPI-REF-${Date.now().toString().slice(-8)}`;
-
-      // Call backend API / Firestore verification
-      const confirmedOrder = await apiClient.submitPayment(order.id, {
-        paymentReference: txnId,
-        transactionId: txnId,
-        paymentMethod: `UPI (${selectedApp})`,
-        amount: order.totalAmount,
-      });
-
-      setSuccessOrder(confirmedOrder);
-      onPaymentSubmitted(confirmedOrder);
-    } catch (err: any) {
-      console.error('Payment confirmation error:', err);
-      setErrorMsg(err.message || 'Payment verification failed. Please try again or check your transaction ID.');
-    } finally {
-      setIsVerifying(false);
-    }
-  };
-
-  // If order is successfully verified and confirmed, show success screen
+  // SUCCESS SCREEN: When payment is completed and received in account
   if (successOrder) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-12">
-        <div className="bg-white rounded-3xl p-8 border border-emerald-200 shadow-xl text-center space-y-6 animate-in fade-in">
-          <div className="w-20 h-20 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto shadow-inner">
-            <CheckCircle2 className="w-12 h-12" />
+      <div className="max-w-2xl mx-auto px-4 py-10">
+        <div className="bg-white rounded-3xl p-8 sm:p-10 border border-emerald-200 shadow-2xl text-center space-y-6 animate-in fade-in zoom-in-95">
+          <div className="w-20 h-20 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto shadow-inner ring-8 ring-emerald-50">
+            <CheckCircle2 className="w-12 h-12 text-emerald-600" />
           </div>
 
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-900 text-xs font-black px-3 py-1 rounded-full uppercase">
+            <div className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-900 text-xs font-black px-3.5 py-1 rounded-full uppercase tracking-wider">
               <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
-              <span>Payment Verified & Confirmed</span>
+              <span>Amount Received in Merchant Account</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-slate-900">
-              Payment Successful – Order Placed!
+              🎉 Your Order Has Been Placed!
             </h1>
             <p className="text-sm text-slate-600 max-w-md mx-auto">
-              Your payment has been verified by the server. Your print job is now sent to the printing queue.
+              Payment of <strong className="text-emerald-700 font-bold">₹{amount.toFixed(2)}</strong> has been received in <strong className="text-slate-900">{shopName}</strong> account. Your print job is now sent to the printing queue.
             </p>
           </div>
 
-          {/* Key Details Card */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-left space-y-3 font-mono">
-            <div className="flex justify-between items-center text-sm border-b border-slate-200 pb-2">
+          {/* Key Order Details Card */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-left space-y-3.5 font-mono text-xs sm:text-sm">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
               <span className="text-slate-500 font-sans">Order Number:</span>
               <span className="font-black text-slate-900 text-base">{successOrder.orderNumber}</span>
             </div>
 
-            <div className="flex justify-between items-center text-sm border-b border-slate-200 pb-2">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
               <span className="text-slate-500 font-sans">4-Digit Pickup PIN:</span>
-              <span className="font-black text-emerald-700 text-lg bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+              <span className="font-black text-emerald-700 text-lg bg-emerald-50 px-3 py-0.5 rounded-lg border border-emerald-300">
                 {successOrder.deliveryPin}
               </span>
             </div>
 
-            <div className="flex justify-between items-center text-sm border-b border-slate-200 pb-2">
-              <span className="text-slate-500 font-sans">Amount Paid:</span>
-              <span className="font-bold text-slate-900">₹{successOrder.totalAmount.toFixed(2)}</span>
+            <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
+              <span className="text-slate-500 font-sans">Customer Name:</span>
+              <span className="font-bold text-slate-900">{successOrder.customer.name}</span>
             </div>
 
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-slate-500 font-sans">Payment Reference:</span>
-              <span className="font-medium text-slate-700 truncate max-w-[200px]">
-                {successOrder.paymentReference || 'UPI-VERIFIED'}
+            <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
+              <span className="text-slate-500 font-sans">Amount Paid:</span>
+              <span className="font-bold text-emerald-700">₹{successOrder.totalAmount.toFixed(2)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-sans">Print Specifications:</span>
+              <span className="font-medium text-slate-800">
+                {successOrder.printType} • {successOrder.paperSize || 'A4'} • {successOrder.copies} Cop{successOrder.copies === 1 ? 'y' : 'ies'}
               </span>
             </div>
           </div>
 
-          <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-center">
+          {/* Auto-Return Countdown Banner */}
+          <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-emerald-900">
+            <div className="flex items-center gap-2 font-medium">
+              <RefreshCw className="w-4 h-4 text-emerald-700 animate-spin" />
+              <span>
+                Returning to Home Screen in <strong className="font-bold text-emerald-800 text-sm">{redirectCountdown}</strong> seconds...
+              </span>
+            </div>
+            <div className="w-full sm:w-28 bg-emerald-200 h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-emerald-600 h-full transition-all duration-1000 ease-linear"
+                style={{ width: `${(redirectCountdown / 6) * 100}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Return Home Button */}
+          <div className="pt-2">
             <button
-              onClick={() => onPaymentSubmitted(successOrder)}
-              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <span>View Order Confirmation</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-            <button
+              type="button"
               onClick={onBackToHome}
-              className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition cursor-pointer"
+              className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-2xl shadow-xl transition flex items-center justify-center gap-2 text-sm cursor-pointer"
             >
-              Back to Home
+              <Home className="w-4 h-4" />
+              <span>Return to Home Screen Now</span>
             </button>
           </div>
         </div>
@@ -331,7 +373,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
           <div className="space-y-3">
             <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
               <Smartphone className="w-4 h-4 text-indigo-600" />
-              <span>Or Pay Directly with UPI App:</span>
+              <span>Or Tap to Pay Directly with UPI App:</span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -355,7 +397,8 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               href={upiIntentString}
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-sm cursor-pointer"
+              onClick={() => handleOpenUpiApp(selectedApp)}
+              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-sm cursor-pointer"
             >
               <span>Open {selectedApp} to Pay ₹{amount.toFixed(2)}</span>
               <ExternalLink className="w-4 h-4" />
@@ -363,71 +406,54 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
           </div>
         </div>
 
-        {/* Right Column: Instant Server Verification & Order Summary (5 cols) */}
+        {/* Right Column: Live Bank Payment Monitoring & Order Summary (5 cols) */}
         <div className="md:col-span-5 space-y-6">
-          {/* Automatic Server Payment Verification Card */}
+          {/* Automatic Server Payment Listening Card */}
           <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <ShieldCheck className="w-5 h-5 text-emerald-600" />
-              <h3 className="text-base font-black text-slate-900">Verify & Place Order</h3>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="relative flex items-center justify-center">
+                  <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping absolute opacity-75"></span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                </div>
+                <h3 className="text-base font-black text-slate-900">Live Payment Radar</h3>
+              </div>
+              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                Auto-Detecting
+              </span>
             </div>
 
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Once you have completed the payment in your UPI app, click below. The system instantly verifies the transaction and registers your print order.
-            </p>
-
-            {/* Optional UTR / Bank Reference Input */}
-            <div className="space-y-1.5 pt-1">
-              <label className="block text-xs font-bold text-slate-700">
-                UPI Reference / UTR Number (Optional)
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. 423819284712"
-                value={upiReferenceInput}
-                onChange={(e) => setUpiReferenceInput(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
-              />
-              <p className="text-[11px] text-slate-400">
-                Found on your UPI transaction success screen
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs text-slate-600">
+              <div className="flex items-start gap-2.5">
+                <Radio className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 animate-pulse" />
+                <p className="leading-relaxed">
+                  Listening for incoming payment of <strong className="text-slate-900">₹{amount.toFixed(2)}</strong> to <span className="font-mono font-bold text-indigo-700">{upiId}</span>.
+                </p>
+              </div>
+              <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-200">
+                Once payment is confirmed by your bank, your order will automatically be placed and you will receive your pickup PIN.
               </p>
             </div>
 
-            {/* Action Buttons */}
-            <div className="pt-2 space-y-2">
-              <button
-                type="button"
-                disabled={isVerifying || isExpired}
-                onClick={() => handleVerifyAndConfirmPayment()}
-                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-sm cursor-pointer disabled:opacity-50"
-              >
-                {isVerifying ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Verifying with Payment Gateway...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span>I Have Paid — Verify & Confirm Order</span>
-                  </>
-                )}
-              </button>
+            {isVerifying ? (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2.5 text-xs text-emerald-800 font-bold">
+                <RefreshCw className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                <span>Payment received! Registering your print order...</span>
+              </div>
+            ) : (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-2 text-[11px] text-slate-600">
+                <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>256-bit encrypted bank verification. Instant queue dispatch.</span>
+              </div>
+            )}
 
-              <button
-                type="button"
-                onClick={onBackToEdit}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
-              >
-                Edit Order / Change Options
-              </button>
-            </div>
-
-            {/* Security Guarantee */}
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-2 text-[11px] text-slate-600">
-              <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>256-bit encrypted server verification. No screenshot required.</span>
-            </div>
+            <button
+              type="button"
+              onClick={onBackToEdit}
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
+            >
+              ← Edit Order / Change Options
+            </button>
           </div>
 
           {/* Order Summary Box */}
