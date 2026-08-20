@@ -36,7 +36,7 @@ import {
 import { AdminStats, OrderRecord, ShopSettings, SerializableFileItem } from '../types';
 import { apiClient } from '../services/apiClient';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 
 // Web Audio API Multi-Tone Chime for New Order Notification
@@ -137,9 +137,30 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [editSettings, setEditSettings] = useState<ShopSettings>(settings);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+  const [testingWebhook, setTestingWebhook] = useState(false);
+  const [webhookTestResult, setWebhookTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const [orderToDelete, setOrderToDelete] = useState<OrderRecord | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const handleTestWebhook = async () => {
+    setTestingWebhook(true);
+    setWebhookTestResult(null);
+    try {
+      const res = await apiClient.testWebhook(editSettings.webhookUrl);
+      setWebhookTestResult(res);
+      if (res.success) {
+        showToast('✅ Webhook test payload sent successfully to Make.com!');
+      } else {
+        showToast('⚠️ Webhook response: ' + res.message);
+      }
+    } catch (err: any) {
+      setWebhookTestResult({ success: false, message: err?.message || 'Error triggering test' });
+      showToast('❌ Webhook test failed: ' + (err?.message || 'Network error'));
+    } finally {
+      setTestingWebhook(false);
+    }
+  };
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -186,6 +207,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
           snapshot.forEach((docSnap) => {
             const data = docSnap.data() as OrderRecord;
+            // Never show or count legacy seed demo orders
+            if (data.id?.startsWith('ord-seed-') || docSnap.id?.startsWith('ord-seed-')) {
+              try {
+                deleteDoc(docSnap.ref).catch(() => {});
+              } catch {}
+              return;
+            }
             fetchedOrders.push(data);
 
             if (!isInitialSnapshotRef.current && !knownOrderIdsRef.current.has(data.id)) {
@@ -330,13 +358,113 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }
   };
 
-  const handleDownloadSingleFile = (file: SerializableFileItem, orderNumber: string) => {
+  /**
+   * Safely converts any data URL, blob URL, HTTP URL, base64 string, or text into a binary Uint8Array or string for JSZip
+   */
+  const resolveFileBinary = async (
+    urlOrContent?: string
+  ): Promise<{ data: Uint8Array | string; isBinary: boolean } | null> => {
+    if (!urlOrContent || typeof urlOrContent !== 'string') return null;
+
+    // Strategy 1: Browser fetch (handles data: URIs, blob: URIs, http(s) URLs natively)
+    if (
+      urlOrContent.startsWith('data:') ||
+      urlOrContent.startsWith('blob:') ||
+      urlOrContent.startsWith('http://') ||
+      urlOrContent.startsWith('https://')
+    ) {
+      try {
+        const response = await fetch(urlOrContent);
+        if (response.ok) {
+          const arrayBuf = await response.arrayBuffer();
+          return { data: new Uint8Array(arrayBuf), isBinary: true };
+        }
+      } catch {
+        // Continue to fallback decoders
+      }
+    }
+
+    // Strategy 2: Manual Data URI parsing
+    if (urlOrContent.startsWith('data:')) {
+      try {
+        const commaIdx = urlOrContent.indexOf(',');
+        if (commaIdx !== -1) {
+          const metadata = urlOrContent.substring(0, commaIdx);
+          const rawBody = urlOrContent.substring(commaIdx + 1);
+
+          if (metadata.includes(';base64')) {
+            let cleanB64 = rawBody.replace(/[^A-Za-z0-9+/=]/g, '');
+            const mod = cleanB64.length % 4;
+            if (mod === 2) cleanB64 += '==';
+            else if (mod === 3) cleanB64 += '=';
+            else if (mod === 1) cleanB64 = cleanB64.slice(0, -1);
+
+            const binaryString = atob(cleanB64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            return { data: bytes, isBinary: true };
+          } else {
+            const decoded = decodeURIComponent(rawBody);
+            return { data: decoded, isBinary: false };
+          }
+        }
+      } catch (err) {
+        console.warn('Data URI decode error:', err);
+      }
+    }
+
+    // Strategy 3: Raw base64 string
+    try {
+      let cleanB64 = urlOrContent.replace(/[^A-Za-z0-9+/=]/g, '');
+      if (cleanB64.length >= 8) {
+        const mod = cleanB64.length % 4;
+        if (mod === 2) cleanB64 += '==';
+        else if (mod === 3) cleanB64 += '=';
+        else if (mod === 1) cleanB64 = cleanB64.slice(0, -1);
+
+        const binaryString = atob(cleanB64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        return { data: bytes, isBinary: true };
+      }
+    } catch {
+      // Ignore
+    }
+
+    return null;
+  };
+
+  const handleDownloadSingleFile = async (file: SerializableFileItem, orderNumber: string) => {
     if (!file.previewUrl) {
       showToast(`File "${file.name}" has no preview URL attached.`);
       return;
     }
 
     try {
+      const resolved = await resolveFileBinary(file.previewUrl);
+      if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
+        const mimeType = file.type || 'application/octet-stream';
+        const blob = new Blob([resolved.data], { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = file.name || `Order_${orderNumber}_file`;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+          if (document.body.contains(link)) document.body.removeChild(link);
+          URL.revokeObjectURL(blobUrl);
+        }, 3000);
+        showToast(`Downloading "${file.name}"...`);
+        return;
+      }
+
       const link = document.createElement('a');
       link.href = file.previewUrl;
       link.download = file.name || `Order_${orderNumber}_file`;
@@ -347,7 +475,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         if (document.body.contains(link)) document.body.removeChild(link);
       }, 500);
       showToast(`Downloading "${file.name}"...`);
-    } catch (e: any) {
+    } catch {
       window.open(file.previewUrl, '_blank');
     }
   };
@@ -398,61 +526,39 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
 
         let added = false;
         if (file.previewUrl) {
-          if (file.previewUrl.startsWith('data:')) {
-            const commaIdx = file.previewUrl.indexOf(',');
-            if (commaIdx !== -1) {
-              const base64Data = file.previewUrl.substring(commaIdx + 1);
-              zip.file(filename, base64Data, { base64: true });
-              added = true;
-            }
-          } else if (file.previewUrl.startsWith('blob:') || file.previewUrl.startsWith('http')) {
-            try {
-              const res = await fetch(file.previewUrl);
-              if (res.ok) {
-                const blob = await res.blob();
-                const buffer = await blob.arrayBuffer();
-                zip.file(filename, buffer);
-                added = true;
-              }
-            } catch (fetchErr) {
-              console.warn('Could not fetch previewUrl blob:', fetchErr);
-            }
+          const resolved = await resolveFileBinary(file.previewUrl);
+          if (resolved) {
+            zip.file(filename, resolved.data);
+            added = true;
           }
         }
 
         if (!added) {
-          // Add text placeholder if binary file is not directly in data URI
+          // Add informative text placeholder if binary data is not available
           zip.file(
-            filename.endsWith('.pdf') ? filename + '.txt' : filename + '.txt',
-            `File Name: ${file.name}\nPage Count: ${file.pageCount}\nSize: ${file.size} bytes\nOrder: ${order.orderNumber}\nPrint Type: ${order.printType}`
+            filename.endsWith('.pdf') || filename.endsWith('.jpg') || filename.endsWith('.png')
+              ? `${filename}.info.txt`
+              : `${filename}.txt`,
+            `File Name: ${file.name}\nPage Count: ${file.pageCount}\nSize: ${file.size} bytes\nOrder: ${order.orderNumber}\nPrint Type: ${order.printType}\nStatus: Customer uploaded at counter`
           );
         }
       }
 
       // 3. Add Payment Proof Screenshot if attached
       if (order.paymentScreenshot) {
-        if (order.paymentScreenshot.startsWith('data:')) {
-          const commaIdx = order.paymentScreenshot.indexOf(',');
-          if (commaIdx !== -1) {
-            const base64Screenshot = order.paymentScreenshot.substring(commaIdx + 1);
-            zip.file(`PAYMENT_PROOF_${order.paymentScreenshotFilename || 'screenshot.jpg'}`, base64Screenshot, { base64: true });
-          }
-        } else if (order.paymentScreenshot.startsWith('blob:') || order.paymentScreenshot.startsWith('http')) {
-          try {
-            const res = await fetch(order.paymentScreenshot);
-            if (res.ok) {
-              const blob = await res.blob();
-              const buffer = await blob.arrayBuffer();
-              zip.file(`PAYMENT_PROOF_${order.paymentScreenshotFilename || 'screenshot.jpg'}`, buffer);
-            }
-          } catch (e) {
-            console.warn('Failed to fetch payment screenshot blob', e);
-          }
+        const resolvedScreenshot = await resolveFileBinary(order.paymentScreenshot);
+        if (resolvedScreenshot) {
+          const screenshotName = `PAYMENT_PROOF_${(order.paymentScreenshotFilename || 'screenshot.jpg').replace(/[/\\?%*:|"<>]/g, '_')}`;
+          zip.file(screenshotName, resolvedScreenshot.data);
         }
       }
 
       // 4. Generate ZIP & Trigger download reliably
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const zipBlob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      });
       const cleanCustomerName = (order.customer.name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
       const zipFilename = `RSCC_${order.orderNumber}_${cleanCustomerName}_Files.zip`;
 
@@ -1758,6 +1864,77 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                   }
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm"
                 />
+              </div>
+            </div>
+
+            {/* Make.com Webhook Automation & Real-time Sync */}
+            <div className="mt-6 pt-6 border-t border-slate-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700 font-black text-sm">
+                    ⚡
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      Make.com Webhook Integration & Multi-Device Sync
+                      <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        Live Active
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Every order placed on ANY mobile or desktop device is automatically dispatched to this endpoint and synced via Firestore.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <div>
+                  <label className="font-bold text-slate-700 text-xs block mb-1">
+                    Make.com Webhook Endpoint URL
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="url"
+                      value={editSettings.webhookUrl || 'https://hook.eu1.make.com/8pf2rw2l0pk9va2ofhqjjsg0cap9kutr'}
+                      onChange={(e) =>
+                        setEditSettings({ ...editSettings, webhookUrl: e.target.value })
+                      }
+                      placeholder="https://hook.eu1.make.com/..."
+                      className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono text-xs text-slate-900 bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTestWebhook}
+                      disabled={testingWebhook}
+                      className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                    >
+                      {testingWebhook ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Testing Webhook...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>⚡ Test Webhook</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {webhookTestResult && (
+                  <div
+                    className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                      webhookTestResult.success
+                        ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                        : 'bg-amber-50 border border-amber-200 text-amber-800'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    <span>{webhookTestResult.message}</span>
+                  </div>
+                )}
               </div>
             </div>
 

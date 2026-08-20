@@ -65,6 +65,7 @@ export interface ShopSettings {
   pickupTimings: string;
   isAcceptingOrders?: boolean;
   pauseOrderReason?: string;
+  webhookUrl?: string;
   pricing: ShopPricing;
 }
 

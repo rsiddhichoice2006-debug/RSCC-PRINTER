@@ -12,6 +12,9 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
   setDoc,
   getDoc,
@@ -24,6 +27,7 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
+  Firestore,
 } from 'firebase/firestore';
 
 export const firebaseConfig = {
@@ -38,7 +42,26 @@ export const firebaseConfig = {
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Resilient Firestore initialization with long-polling autodetect & multi-tab persistence
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  });
+} catch {
+  try {
+    firestoreInstance = getFirestore(app);
+  } catch (err) {
+    console.warn('Firestore fallback initialization notice:', err);
+    firestoreInstance = getFirestore(app);
+  }
+}
+
+export const db = firestoreInstance;
 export const googleProvider = new GoogleAuthProvider();
 
 export enum OperationType {
@@ -63,8 +86,14 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errStr = error instanceof Error ? error.message : String(error);
+  const isOfflineOrUnavailable =
+    errStr.includes('unavailable') ||
+    errStr.includes('offline') ||
+    errStr.includes('Could not reach Cloud Firestore backend');
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errStr,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -74,5 +103,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.warn('Firestore Operation Info:', errInfo);
+
+  if (isOfflineOrUnavailable) {
+    console.info('Firestore operating in offline / local cached mode:', path);
+  } else {
+    console.warn('Firestore Operation Info:', errInfo);
+  }
 }
+

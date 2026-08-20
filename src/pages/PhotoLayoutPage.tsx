@@ -485,11 +485,13 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                       key={photo.id}
                       className="relative group rounded-lg overflow-hidden border border-slate-300 aspect-square bg-white shadow-2xs"
                     >
-                      <img
-                        src={photo.previewUrl}
-                        alt={photo.name}
-                        className="w-full h-full object-cover"
-                      />
+                      {photo.previewUrl ? (
+                        <img
+                          src={photo.previewUrl}
+                          alt={photo.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : null}
                       <div className="absolute top-1 left-1 bg-slate-900/80 text-white text-[9px] font-bold px-1 rounded">
                         #{idx + 1}
                       </div>

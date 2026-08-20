@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Camera,
   Upload,
@@ -16,7 +16,14 @@ import {
   ShieldAlert,
   Sun,
   Eye,
-  Smile,
+  Sliders,
+  RotateCcw,
+  Maximize2,
+  ZoomIn,
+  ZoomOut,
+  Scissors,
+  Printer,
+  Grid,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -26,6 +33,11 @@ import {
 } from '../types';
 import { DEFAULT_PRICING } from '../utils/pricingCalculator';
 import { useAuth } from '../context/AuthContext';
+import {
+  PASSPORT_BG_COLORS,
+  generatePassportPhoto,
+  generatePrintSheetDataUrl,
+} from '../utils/photoProcessor';
 
 interface PassportPhotoPageProps {
   settings: ShopSettings;
@@ -41,7 +53,27 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
   const { currentUser, customerProfile } = useAuth();
   const [serviceType, setServiceType] = useState<PassportServiceType>('STANDARD_PASSPORT');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string>('');
+  const [originalPreview, setOriginalPreview] = useState<string>('');
+  
+  // Background selection: 'red' | 'blue' | 'white'
+  const [selectedBgColor, setSelectedBgColor] = useState<'red' | 'blue' | 'white'>('white');
+  
+  // Processed passport photo & print sheet data URLs
+  const [processedPhotoUrl, setProcessedPhotoUrl] = useState<string>('');
+  const [printSheetUrl, setPrintSheetUrl] = useState<string>('');
+  
+  // View mode: 'single' (1x passport preview) vs 'sheet' (10x print layout preview)
+  const [previewMode, setPreviewMode] = useState<'single' | 'sheet'>('single');
+  const [showOriginalComparison, setShowOriginalComparison] = useState<boolean>(false);
+  const [showFineTune, setShowFineTune] = useState<boolean>(false);
+  const [isFullscreenSheet, setIsFullscreenSheet] = useState<boolean>(false);
+
+  // Fine-tuning adjustments
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
+  const [verticalOffset, setVerticalOffset] = useState<number>(0);
+  const [edgeFeather, setEdgeFeather] = useState<number>(2);
+  const [removalSensitivity, setRemovalSensitivity] = useState<number>(4);
+
   const [quantity, setQuantity] = useState<number>(1);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string>('');
@@ -54,7 +86,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
     specialInstructions: '',
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     const activeName = loggedInCustomer?.name || customerProfile?.name || currentUser?.displayName || '';
     const activeMobile = loggedInCustomer?.mobile || customerProfile?.mobile || '';
     const activeEmail = loggedInCustomer?.email || currentUser?.email || customerProfile?.email || '';
@@ -66,17 +98,62 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       email: prev.email || activeEmail,
     }));
   }, [loggedInCustomer, currentUser, customerProfile]);
-  const [formErrors, setFormErrors] = useState<{ name?: string; mobile?: string }>({});
 
+  const [formErrors, setFormErrors] = useState<{ name?: string; mobile?: string }>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const pricing = settings.pricing || DEFAULT_PRICING;
   const standardRate = pricing.passportStandard || 50;
   const mixedRate = pricing.passportMixed || 60;
 
-  // Effective rate per set
   const currentRate = serviceType === 'STANDARD_PASSPORT' ? standardRate : mixedRate;
   const totalAmount = currentRate * quantity;
+
+  // Process photo whenever original image, selected background color, or adjustments change
+  useEffect(() => {
+    if (!originalPreview) return;
+
+    let isMounted = true;
+    const processImage = async () => {
+      setIsProcessing(true);
+      try {
+        const bgConfig = PASSPORT_BG_COLORS.find((b) => b.id === selectedBgColor) || PASSPORT_BG_COLORS[0];
+        
+        // 1. Generate 35x45mm chest-level cropped passport photo with removed background
+        const passportDataUrl = await generatePassportPhoto(originalPreview, {
+          bgColor: selectedBgColor,
+          customHex: bgConfig.hex,
+          zoom: zoomLevel,
+          verticalOffset,
+          edgeFeather,
+          removalSensitivity,
+        });
+
+        if (!isMounted) return;
+        setProcessedPhotoUrl(passportDataUrl);
+
+        // 2. Generate 10-photo 4x6 inch high-gloss print sheet
+        const sheetDataUrl = await generatePrintSheetDataUrl(
+          passportDataUrl,
+          serviceType,
+          bgConfig.hex
+        );
+
+        if (!isMounted) return;
+        setPrintSheetUrl(sheetDataUrl);
+      } catch (err: any) {
+        console.error('Error processing passport photo:', err);
+      } finally {
+        if (isMounted) setIsProcessing(false);
+      }
+    };
+
+    processImage();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [originalPreview, selectedBgColor, serviceType, zoomLevel, verticalOffset, edgeFeather, removalSensitivity]);
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,27 +173,36 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       return;
     }
 
-    setIsProcessing(true);
     const reader = new FileReader();
     reader.onload = (event) => {
-      setPhotoPreview(event.target?.result as string);
+      setOriginalPreview(event.target?.result as string);
       setPhotoFile(file);
-      setIsProcessing(false);
+      // Reset adjustments on new photo
+      setZoomLevel(1.0);
+      setVerticalOffset(0);
     };
     reader.onerror = () => {
       setUploadError('Failed to read image file.');
-      setIsProcessing(false);
     };
     reader.readAsDataURL(file);
   };
 
   const handleRemovePhoto = () => {
     setPhotoFile(null);
-    setPhotoPreview('');
+    setOriginalPreview('');
+    setProcessedPhotoUrl('');
+    setPrintSheetUrl('');
     setUploadError('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  const handleResetAdjustments = () => {
+    setZoomLevel(1.0);
+    setVerticalOffset(0);
+    setEdgeFeather(2);
+    setRemovalSensitivity(4);
   };
 
   const validateForm = (): boolean => {
@@ -135,7 +221,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       return;
     }
 
-    if (!photoFile || !photoPreview) {
+    if (!photoFile || !processedPhotoUrl) {
       setUploadError('Please upload your photo to proceed.');
       fileInputRef.current?.click();
       return;
@@ -145,15 +231,18 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       return;
     }
 
+    const bgName = PASSPORT_BG_COLORS.find((b) => b.id === selectedBgColor)?.name || 'White';
     const serviceName =
       serviceType === 'STANDARD_PASSPORT'
-        ? `Standard Passport Photos (10 Photos – ₹${standardRate})`
-        : `Mixed Size Photos (10 Photos – ₹${mixedRate})`;
+        ? `Standard Passport Photos (10 Photos – ₹${standardRate}, ${bgName} BG)`
+        : `Mixed Size Photos (10 Photos – ₹${mixedRate}, ${bgName} BG)`;
 
+    // Use processed photo URL for order so shop admin prints the exact background & chest crop
     const orderPayload = {
       mode: 'PASSPORT_PHOTO',
       paperQuality: '100_GSM',
       passportService: serviceType,
+      passportBgColor: selectedBgColor,
       customer: {
         name: customer.name.trim(),
         mobile: customer.mobile.trim(),
@@ -162,12 +251,12 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       files: [
         {
           id: 'photo-' + Date.now(),
-          name: photoFile.name,
+          name: `Passport_${selectedBgColor.toUpperCase()}_${photoFile.name}`,
           size: photoFile.size,
-          type: photoFile.type,
+          type: 'image/jpeg',
           pageCount: 1,
           moderationStatus: 'SAFE',
-          previewUrl: photoPreview,
+          previewUrl: processedPhotoUrl,
         },
       ],
       totalPages: 1,
@@ -219,17 +308,17 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
             <span>Dedicated Photo Studio</span>
           </div>
           <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-white">
-            Passport Size Photo Printing
+            Passport Size Photo Studio
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-            High-gloss photograph printing on premium photo sheets with 10 photos per set, crisp borders, and studio-grade colour calibration.
+            Studio background removal (Red, Blue, White), automatic chest-level crop, and 10 high-gloss photograph prints per set.
           </p>
         </div>
 
-        <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-4 text-left shrink-0 text-xs text-slate-300 space-y-2 shadow-md min-w-[220px]">
+        <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-4 text-left shrink-0 text-xs text-slate-300 space-y-2 shadow-md min-w-[240px]">
           <div className="font-bold text-amber-400 text-xs uppercase tracking-wide">Official Photo Rates:</div>
           <div className="text-white font-medium flex justify-between items-center gap-4 bg-slate-900/60 p-2 rounded-lg">
-            <span>Standard Passport (10 Photos):</span>
+            <span>Standard (10 Photos):</span>
             <span className="font-black text-emerald-400 text-sm">₹{standardRate}</span>
           </div>
           <div className="text-white font-medium flex justify-between items-center gap-4 bg-slate-900/60 p-2 rounded-lg">
@@ -239,26 +328,101 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
         </div>
       </div>
 
-      {/* Main Grid: Upload & Guide (Left) + Options & Checkout (Right) */}
+      {/* Main Grid: Upload & Live Previews (Left 7 cols) + Options & Checkout (Right 5 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Left Column: Photo Upload, Live Preview & Image Guide (7 cols) */}
+        {/* Left Column (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
-          {/* 1. PHOTO UPLOAD & LIVE PREVIEW BOX */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
-                <Camera className="w-5 h-5 text-slate-700" />
-                Upload Your Photograph
-              </h2>
+          {/* STEP 1: BACKGROUND COLOR SELECTION */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white font-black text-xs flex items-center justify-center">
+                  1
+                </span>
+                <h2 className="text-base font-black text-slate-900">
+                  Select Background Color
+                </h2>
+              </div>
               <span className="text-xs font-bold text-slate-500">
-                Supports JPG, JPEG, PNG, WEBP (Max 20MB)
+                Official Studio Shades
               </span>
             </div>
 
-            {!photoPreview ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              {PASSPORT_BG_COLORS.map((bg) => {
+                const isSelected = selectedBgColor === bg.id;
+                return (
+                  <button
+                    key={bg.id}
+                    type="button"
+                    onClick={() => setSelectedBgColor(bg.id)}
+                    className={`p-4 rounded-2xl border-2 text-left transition relative cursor-pointer flex flex-col justify-between space-y-3 ${
+                      isSelected
+                        ? 'border-indigo-600 bg-indigo-50/40 shadow-sm ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      {/* Color Swatch Circle */}
+                      <div
+                        className="w-8 h-8 rounded-full border shadow-inner flex items-center justify-center shrink-0"
+                        style={{
+                          backgroundColor: bg.hex,
+                          borderColor: bg.id === 'white' ? '#CBD5E1' : bg.hex,
+                        }}
+                      >
+                        {isSelected && (
+                          <Check
+                            className={`w-4 h-4 font-black ${
+                              bg.id === 'white' ? 'text-slate-900' : 'text-white'
+                            }`}
+                          />
+                        )}
+                      </div>
+
+                      {isSelected && (
+                        <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          Selected
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="font-extrabold text-sm text-slate-900">
+                        {bg.name}
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                        {bg.id === 'red' && 'State ID / Exam'}
+                        {bg.id === 'blue' && 'School / Corporate / ID'}
+                        {bg.id === 'white' && 'Passport / Visa Standard'}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* STEP 2: PHOTO UPLOAD & LIVE VISUAL PREVIEW */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white font-black text-xs flex items-center justify-center">
+                  2
+                </span>
+                <h2 className="text-base font-black text-slate-900">
+                  Upload Photo & Live Visual Preview
+                </h2>
+              </div>
+              <span className="text-xs font-bold text-slate-500">
+                Auto Chest Crop & BG Removal
+              </span>
+            </div>
+
+            {!originalPreview ? (
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-300 hover:border-emerald-500 bg-slate-50/70 hover:bg-emerald-50/30 rounded-2xl p-8 text-center cursor-pointer transition space-y-3 group"
+                className="border-2 border-dashed border-slate-300 hover:border-indigo-500 bg-slate-50/70 hover:bg-indigo-50/20 rounded-2xl p-8 text-center cursor-pointer transition space-y-3 group"
               >
                 <input
                   ref={fileInputRef}
@@ -268,57 +432,60 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                   className="hidden"
                 />
 
-                <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto group-hover:scale-110 transition shadow-xs">
-                  <Upload className="w-7 h-7" />
+                <div className="w-16 h-16 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center mx-auto group-hover:scale-105 transition shadow-xs">
+                  <Upload className="w-8 h-8" />
                 </div>
 
                 <div>
                   <div className="text-base font-bold text-slate-900">
-                    Click to Upload Passport Photo
+                    Click to Upload Any Front-Facing Photo
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Select a clear front-facing photograph from your phone or computer.
+                  <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                    Take a selfie or upload any portrait. The system will automatically crop to chest level and replace the background with your chosen color.
                   </p>
                 </div>
 
                 <button
                   type="button"
-                  className="inline-flex items-center gap-2 bg-slate-900 group-hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition"
+                  className="inline-flex items-center gap-2 bg-slate-900 group-hover:bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs"
                 >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>Choose Photo File</span>
+                  <Camera className="w-4 h-4" />
+                  <span>Choose Photograph</span>
                 </button>
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="flex items-center gap-2.5 truncate">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
-                      <ImageIcon className="w-4 h-4" />
+                {/* File Details bar */}
+                <div className="flex items-center justify-between bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <ImageIcon className="w-5 h-5" />
                     </div>
-                    <div className="truncate">
+                    <div className="min-w-0">
                       <div className="text-xs font-bold text-slate-900 truncate">
                         {photoFile?.name || 'Uploaded Photo'}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {photoFile ? `${(photoFile.size / (1024 * 1024)).toFixed(2)} MB` : ''} • Ready for Printing (10 Photos)
+                        {photoFile ? `${(photoFile.size / (1024 * 1024)).toFixed(2)} MB` : ''} • Background: {PASSPORT_BG_COLORS.find(b => b.id === selectedBgColor)?.name}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
+                      type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="text-xs text-slate-700 hover:text-slate-900 font-semibold px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition cursor-pointer"
+                      className="text-xs text-slate-700 hover:text-slate-900 font-bold px-3 py-1.5 bg-white border border-slate-300 rounded-xl hover:bg-slate-100 transition cursor-pointer"
                     >
-                      Change
+                      Change Photo
                     </button>
                     <button
+                      type="button"
                       onClick={handleRemovePhoto}
-                      className="text-xs text-rose-600 hover:text-rose-700 font-semibold px-2.5 py-1.5 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition cursor-pointer flex items-center gap-1"
+                      className="text-xs text-rose-600 hover:text-rose-700 font-bold px-2.5 py-1.5 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition cursor-pointer flex items-center gap-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      Remove
+                      <span>Remove</span>
                     </button>
                     <input
                       ref={fileInputRef}
@@ -330,484 +497,473 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                   </div>
                 </div>
 
-                {/* Live Sheet Layout Preview (10 Photos) */}
-                <div className="bg-slate-900 text-white rounded-2xl p-4 border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-amber-400 flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5" />
-                      Live Sheet Preview (10 Photos on Glossy Paper)
-                    </span>
-                    <span className="text-[11px] text-slate-400 bg-slate-800 px-2.5 py-0.5 rounded font-mono">
-                      {serviceType === 'STANDARD_PASSPORT' ? '10 Standard (35×45mm)' : '6 Passport + 4 Stamp = 10 Pcs'}
-                    </span>
+                {/* VIEW MODE TABS: Single Passport Photo vs 10x Print Sheet */}
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewMode('single')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
+                        previewMode === 'single'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Passport Photo Preview (1x)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPreviewMode('sheet')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
+                        previewMode === 'sheet'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Preview for Printing (10x Sheet)</span>
+                    </button>
                   </div>
 
-                  {/* Render 10 Photo Grid */}
-                  <div className="bg-white p-3.5 rounded-xl shadow-inner flex items-center justify-center min-h-[220px]">
-                    {serviceType === 'STANDARD_PASSPORT' ? (
-                      <div className="w-full max-w-md">
-                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2 text-center">
-                          10 × Standard Passport Photos (35 × 45 mm)
-                        </div>
-                        {/* 5 columns x 2 rows grid for 10 photos */}
-                        <div className="grid grid-cols-5 gap-2">
-                          {Array.from({ length: 10 }).map((_, idx) => (
-                            <div
-                              key={idx}
-                              className="aspect-[3.5/4.5] bg-slate-100 border border-slate-300 rounded overflow-hidden relative shadow-2xs group"
-                            >
-                              <img
-                                src={photoPreview}
-                                alt={`Passport copy ${idx + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-                              <div className="absolute bottom-0 inset-x-0 bg-slate-900/60 text-[7px] text-white text-center py-0.2">
-                                #{idx + 1}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="w-full max-w-md space-y-3">
-                        {/* 6 Passport */}
-                        <div>
-                          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1.5">
-                            6 × Passport Size (35 × 45 mm):
-                          </div>
-                          <div className="grid grid-cols-6 gap-1.5">
-                            {Array.from({ length: 6 }).map((_, idx) => (
-                              <div
-                                key={idx}
-                                className="aspect-[3.5/4.5] bg-slate-100 border border-slate-300 rounded overflow-hidden shadow-2xs relative"
-                              >
-                                <img
-                                  src={photoPreview}
-                                  alt={`Passport ${idx + 1}`}
-                                  className="w-full h-full object-cover"
-                                />
-                                <div className="absolute bottom-0 inset-x-0 bg-slate-900/60 text-[6px] text-white text-center">
-                                  P{idx + 1}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* 4 Stamp */}
-                        <div>
-                          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1.5">
-                            4 × Stamp Size (25 × 30 mm):
-                          </div>
-                          <div className="grid grid-cols-4 gap-2">
-                            {Array.from({ length: 4 }).map((_, idx) => (
-                              <div
-                                key={idx}
-                                className="aspect-[2.5/3] bg-slate-100 border border-slate-300 rounded overflow-hidden shadow-2xs relative"
-                              >
-                                <img
-                                  src={photoPreview}
-                                  alt={`Stamp ${idx + 1}`}
-                                  className="w-full h-full object-cover"
-                                />
-                                <div className="absolute bottom-0 inset-x-0 bg-indigo-900/70 text-[7px] text-white text-center">
-                                  Stamp #{idx + 1}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="text-center text-[10px] text-indigo-700 font-bold bg-indigo-50 py-1 rounded-md border border-indigo-100">
-                          Total: 10 Mixed Photos on Single High-Gloss Sheet
-                        </div>
-                      </div>
+                  <div className="flex items-center gap-2">
+                    {previewMode === 'single' && (
+                      <button
+                        type="button"
+                        onClick={() => setShowFineTune(!showFineTune)}
+                        className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <Sliders className="w-3.5 h-3.5" />
+                        <span>{showFineTune ? 'Hide Adjustments' : 'Fine-Tune Framing'}</span>
+                      </button>
                     )}
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
 
-          {/* 2. VISUAL UPLOAD GUIDE (Do's & Don'ts) */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
-                <HelpCircle className="w-5 h-5 text-amber-500" />
-                Visual Passport Photo Guide
-              </h2>
-              <span className="text-[11px] font-bold text-slate-500">
-                Official Guidelines
-              </span>
-            </div>
-
-            {/* Guide Tabs */}
-            <div className="flex border-b border-slate-200 gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveGuideTab('visual')}
-                className={`pb-2.5 px-3 text-xs font-bold transition border-b-2 cursor-pointer ${
-                  activeGuideTab === 'visual'
-                    ? 'border-slate-900 text-slate-900'
-                    : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Visual Do's & Don'ts
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveGuideTab('specifications')}
-                className={`pb-2.5 px-3 text-xs font-bold transition border-b-2 cursor-pointer ${
-                  activeGuideTab === 'specifications'
-                    ? 'border-slate-900 text-slate-900'
-                    : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Size Specifications
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveGuideTab('checklist')}
-                className={`pb-2.5 px-3 text-xs font-bold transition border-b-2 cursor-pointer ${
-                  activeGuideTab === 'checklist'
-                    ? 'border-slate-900 text-slate-900'
-                    : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Quick Checklist
-              </button>
-            </div>
-
-            {/* TAB 1: VISUAL DO'S & DON'TS */}
-            {activeGuideTab === 'visual' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* DO's Column */}
-                  <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center gap-1.5 text-emerald-900 font-bold text-xs">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>DO's (Accepted Photos)</span>
+                {/* FINE-TUNE FRAMING CONTROLS DRAWER */}
+                {showFineTune && previewMode === 'single' && (
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3 text-xs animate-in fade-in">
+                    <div className="flex items-center justify-between font-bold text-slate-800">
+                      <span>Fine-Tune Chest Alignment & Zoom</span>
+                      <button
+                        type="button"
+                        onClick={handleResetAdjustments}
+                        className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-semibold cursor-pointer text-[11px]"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset</span>
+                      </button>
                     </div>
 
-                    <div className="space-y-2 text-xs text-emerald-950">
-                      <div className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>Front-Facing Pose:</strong> Look straight at the camera with both ears and shoulders visible.
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <div className="flex justify-between text-[11px] text-slate-600 mb-1">
+                          <span>Chest Vertical Level:</span>
+                          <span className="font-mono">{verticalOffset > 0 ? `+${verticalOffset}` : verticalOffset}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-40"
+                          max="40"
+                          step="2"
+                          value={verticalOffset}
+                          onChange={(e) => setVerticalOffset(parseInt(e.target.value))}
+                          className="w-full accent-indigo-600 cursor-pointer"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-[11px] text-slate-600 mb-1">
+                          <span>Zoom / Face Size:</span>
+                          <span className="font-mono">{Math.round(zoomLevel * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.85"
+                          max="1.25"
+                          step="0.02"
+                          value={zoomLevel}
+                          onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
+                          className="w-full accent-indigo-600 cursor-pointer"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-[11px] text-slate-600 mb-1">
+                          <span>Background Cleanliness:</span>
+                          <span className="font-mono">{removalSensitivity === 5 ? 'Max Clean' : removalSensitivity === 4 ? 'Deep Clean' : `Level ${removalSensitivity}`}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1"
+                          max="5"
+                          step="1"
+                          value={removalSensitivity}
+                          onChange={(e) => setRemovalSensitivity(parseInt(e.target.value))}
+                          className="w-full accent-indigo-600 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* PREVIEW CONTAINER */}
+                {isProcessing || !processedPhotoUrl || (previewMode === 'sheet' && !printSheetUrl) ? (
+                  <div className="h-72 bg-slate-900 rounded-2xl flex flex-col items-center justify-center space-y-3 text-white border border-slate-800">
+                    <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                    <div className="text-xs font-bold text-amber-300">
+                      Processing Background & Framing Chest Level...
+                    </div>
+                  </div>
+                ) : previewMode === 'single' ? (
+                  /* SINGLE PASSPORT PHOTO PREVIEW (35mm x 45mm ISO standard) */
+                  <div className="bg-slate-900 text-white rounded-3xl p-6 border border-slate-800 space-y-4">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <span className="font-black text-amber-400 uppercase tracking-wider">
+                          Final Passport Output (35 × 45 mm)
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowOriginalComparison(!showOriginalComparison)}
+                        className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg transition font-medium cursor-pointer"
+                      >
+                        {showOriginalComparison ? 'Show Studio Background' : 'Compare with Original'}
+                      </button>
+                    </div>
+
+                    {/* Passport Card Display with cutting guides and dimensions */}
+                    <div className="flex flex-col items-center justify-center p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3">
+                      <div className="relative">
+                        {/* 35mm x 45mm frame */}
+                        <div className="w-52 h-[267px] sm:w-60 sm:h-[308px] bg-white rounded-md p-1.5 shadow-2xl border border-slate-300 relative overflow-hidden group">
+                          {(showOriginalComparison ? originalPreview : processedPhotoUrl) ? (
+                            <img
+                              src={showOriginalComparison ? originalPreview : processedPhotoUrl}
+                              alt="Passport Photo Preview"
+                              className="w-full h-full object-cover rounded-xs"
+                            />
+                          ) : null}
+
+                          {/* Subtle studio photo gloss overlay */}
+                          <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent pointer-events-none" />
+
+                          {/* Dimension labels */}
+                          <div className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[9px] font-mono px-1.5 py-0.5 rounded">
+                            35×45 mm
+                          </div>
+                        </div>
+
+                        {/* Outer dimension guide markers */}
+                        <div className="absolute -bottom-5 inset-x-0 text-center text-[10px] text-slate-400 font-mono">
+                          Width: 35 mm (3.5 cm)
                         </div>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>Plain Light Background:</strong> Use plain white, off-white, or light blue backdrop.
+                      <div className="pt-3 text-center space-y-1">
+                        <div className="text-xs font-bold text-slate-200">
+                          Framed at chest level with {PASSPORT_BG_COLORS.find(b => b.id === selectedBgColor)?.name} Background
                         </div>
-                      </div>
-
-                      <div className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>Even Lighting:</strong> Natural lighting without shadows on face or background.
-                        </div>
-                      </div>
-
-                      <div className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>Neutral Expression:</strong> Mouth closed, eyes open, looking directly into the camera lens.
+                        <div className="text-[11px] text-emerald-400 font-medium">
+                          ✓ Standard Indian Passport, Visa & Govt Exam Compliant
                         </div>
                       </div>
                     </div>
                   </div>
+                ) : (
+                  /* 10X PRINT SHEET PREVIEW (Realistic 4x6 Glossy Paper) */
+                  <div className="bg-slate-900 text-white rounded-3xl p-6 border border-slate-800 space-y-4">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <Printer className="w-4 h-4 text-emerald-400" />
+                        <span className="font-black text-emerald-400 uppercase tracking-wider">
+                          Full 4×6" Glossy Print Sheet (10 Photos)
+                        </span>
+                      </div>
 
-                  {/* DONT's Column */}
-                  <div className="bg-rose-50/70 border border-rose-200 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center gap-1.5 text-rose-900 font-bold text-xs">
-                      <AlertCircle className="w-4 h-4 text-rose-600" />
-                      <span>DON'Ts (Rejected Photos)</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsFullscreenSheet(true)}
+                        className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg transition font-medium flex items-center gap-1 cursor-pointer"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" />
+                        <span>Zoom Full Sheet</span>
+                      </button>
                     </div>
 
-                    <div className="space-y-2 text-xs text-rose-950">
-                      <div className="flex items-start gap-2">
-                        <X className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>No Side Angles or Selfies:</strong> Tilted head, angular poses, or wide-angle selfie distortions will be rejected.
+                    <div className="bg-slate-950 p-3 sm:p-4 rounded-2xl border border-slate-800 flex items-center justify-center overflow-hidden">
+                      <div className="relative max-w-full rounded-xl overflow-hidden shadow-2xl border border-slate-600 bg-white group cursor-zoom-in" onClick={() => setIsFullscreenSheet(true)}>
+                        {printSheetUrl ? (
+                          <img
+                            src={printSheetUrl}
+                            alt="4x6 Print Sheet"
+                            className="w-full max-h-[340px] object-contain"
+                          />
+                        ) : null}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center opacity-0 group-hover:opacity-100">
+                          <span className="bg-slate-900/90 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-lg flex items-center gap-1.5">
+                            <ZoomIn className="w-4 h-4 text-amber-400" />
+                            Click to Inspect Full Print Resolution
+                          </span>
                         </div>
                       </div>
+                    </div>
 
-                      <div className="flex items-start gap-2">
-                        <X className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>No Busy or Dark Backgrounds:</strong> Outdoor sceneries, wall patterns, or dark rooms are not allowed.
-                        </div>
-                      </div>
-
-                      <div className="flex items-start gap-2">
-                        <X className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>No Caps or Sunglasses:</strong> Hats, caps, sunglasses, or heavy tinted glasses are strictly prohibited.
-                        </div>
-                      </div>
-
-                      <div className="flex items-start gap-2">
-                        <X className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>No Blurry Screenshots:</strong> Avoid low-res phone screenshots, heavy beauty filters, or cropped group pictures.
-                        </div>
-                      </div>
+                    <div className="text-center text-[11px] text-slate-400">
+                      Printed on ultra-glossy 250 GSM photographic stock with micro-perforated cutting border marks.
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
-            {/* TAB 2: SPECIFICATIONS */}
-            {activeGuideTab === 'specifications' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-1.5">
-                  <div className="font-bold text-slate-900 text-sm">Standard Passport Size (10 Photos)</div>
-                  <div className="text-amber-700 font-mono font-bold">35 mm × 45 mm</div>
-                  <p className="text-slate-500 text-[11px] leading-relaxed">
-                    Official format for Indian Passport, Government exams, Aadhaar card, PAN card & driving license.
-                  </p>
-                </div>
-
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-1.5">
-                  <div className="font-bold text-slate-900 text-sm">Stamp Size Photo (in Mixed Set)</div>
-                  <div className="text-indigo-700 font-mono font-bold">25 mm × 30 mm</div>
-                  <p className="text-slate-500 text-[11px] leading-relaxed">
-                    Compact size required for school/college ID cards, library registrations, and official forms.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: CHECKLIST */}
-            {activeGuideTab === 'checklist' && (
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2 text-xs text-slate-700">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Photo taken recently (within the last 6 months).</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Background is solid white, off-white, or light grey.</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Full face visible from top of hair to bottom of chin.</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>High quality photographic paper (100+ GSM Glossy).</span>
-                </div>
+            {uploadError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{uploadError}</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Right Column: Service Selection (Standard 10 / Mixed 10) & Checkout Form (5 cols) */}
+        {/* Right Column: Service Type, Pricing & Checkout Form (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
-          {/* SERVICE SELECTION CARDS */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
-            <div>
-              <h2 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-500" />
-                Select Photo Option
+          {/* Service Configuration Box */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h2 className="text-base font-black text-slate-900">
+                Photo Set Options
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Printed on premium high-gloss photographic paper (10 photos per set)
-              </p>
-            </div>
-
-            {/* Service Option Cards - Only Standard (10 Photos) and Mixed (10 Photos) */}
-            <div className="space-y-3">
-              {/* Option 1: Standard Passport Size Photos - ₹50 (10 Photos) */}
-              <button
-                type="button"
-                onClick={() => setServiceType('STANDARD_PASSPORT')}
-                className={`w-full p-4 rounded-xl border-2 text-left transition relative cursor-pointer ${
-                  serviceType === 'STANDARD_PASSPORT'
-                    ? 'border-emerald-600 bg-emerald-50/60 shadow-md ring-2 ring-emerald-500/20'
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="bg-emerald-100 text-emerald-900 text-[10px] font-black px-2 py-0.5 rounded border border-emerald-300 uppercase">
-                    10 Photos Set
-                  </span>
-                  <span className="text-base font-black text-emerald-700">
-                    ₹{standardRate}
-                  </span>
-                </div>
-                <div className="font-extrabold text-slate-900 text-sm sm:text-base">
-                  Passport Size Photo – ₹{standardRate}
-                </div>
-                <p className="text-xs text-slate-600 mt-1">
-                  10 standard 35×45mm passport photographs printed on high-gloss photographic sheet with cutting guidelines.
-                </p>
-              </button>
-
-              {/* Option 2: Mixed Size Photos - ₹60 (10 Photos) */}
-              <button
-                type="button"
-                onClick={() => setServiceType('MIXED_SIZE')}
-                className={`w-full p-4 rounded-xl border-2 text-left transition relative cursor-pointer ${
-                  serviceType === 'MIXED_SIZE'
-                    ? 'border-indigo-600 bg-indigo-50/60 shadow-md ring-2 ring-indigo-500/20'
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="bg-indigo-100 text-indigo-900 text-[10px] font-black px-2 py-0.5 rounded border border-indigo-300 uppercase">
-                    10 Photos Combo
-                  </span>
-                  <span className="text-base font-black text-indigo-700">
-                    ₹{mixedRate}
-                  </span>
-                </div>
-                <div className="font-extrabold text-slate-900 text-sm sm:text-base">
-                  Mixed Size Photos – ₹{mixedRate}
-                </div>
-                <p className="text-xs text-slate-600 mt-1">
-                  Combined set of 10 photos: 6 standard passport photos (35×45mm) + 4 compact stamp size photos (25×30mm) on glossy photo paper.
-                </p>
-              </button>
-            </div>
-
-            {/* Quantity Selector */}
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-800">
-                Number of Sets (10 Photos each):
+              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                10 Photos Per Set
               </span>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold flex items-center justify-center transition"
+            </div>
+
+            {/* Service Type Switcher */}
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Select Layout Option:
+              </label>
+
+              <div className="grid grid-cols-1 gap-2.5">
+                <div
+                  onClick={() => setServiceType('STANDARD_PASSPORT')}
+                  className={`p-3.5 rounded-2xl border-2 cursor-pointer transition flex items-center justify-between ${
+                    serviceType === 'STANDARD_PASSPORT'
+                      ? 'border-indigo-600 bg-indigo-50/40 shadow-xs'
+                      : 'border-slate-200 hover:bg-slate-50'
+                  }`}
                 >
-                  -
-                </button>
-                <span className="font-black text-sm text-slate-900 min-w-[20px] text-center">
-                  {quantity}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setQuantity((q) => q + 1)}
-                  className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold flex items-center justify-center transition"
+                  <div className="space-y-0.5">
+                    <div className="font-extrabold text-sm text-slate-900">
+                      10 × Standard Passport (35 × 45 mm)
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Standard size for all official government & bank forms
+                    </div>
+                  </div>
+                  <div className="text-base font-black text-emerald-700">
+                    ₹{standardRate}
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setServiceType('MIXED_PASSPORT')}
+                  className={`p-3.5 rounded-2xl border-2 cursor-pointer transition flex items-center justify-between ${
+                    serviceType === 'MIXED_PASSPORT'
+                      ? 'border-indigo-600 bg-indigo-50/40 shadow-xs'
+                      : 'border-slate-200 hover:bg-slate-50'
+                  }`}
                 >
-                  +
-                </button>
+                  <div className="space-y-0.5">
+                    <div className="font-extrabold text-sm text-slate-900">
+                      Mixed Set (6 Passport + 4 Stamp Size)
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      6 Passport (35×45mm) + 4 Stamp (25×30mm)
+                    </div>
+                  </div>
+                  <div className="text-base font-black text-indigo-700">
+                    ₹{mixedRate}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* CUSTOMER DETAILS & CHECKOUT CARD */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <h2 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-600" />
-              Customer Information
-            </h2>
+            {/* Quantity / Sets Selector */}
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Number of Sets (10 Photos / Set):
+              </label>
+              <div className="flex items-center gap-3">
+                {[1, 2, 3, 4].map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => setQuantity(q)}
+                    className={`flex-1 py-2.5 rounded-xl font-extrabold text-xs transition border cursor-pointer ${
+                      quantity === q
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    {q} Set ({q * 10} pcs)
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            <div className="space-y-3 text-xs">
+            {/* Customer Details Form */}
+            <div className="space-y-3 pt-3 border-t border-slate-100">
+              <div className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">
+                Customer Information
+              </div>
+
               <div>
-                <label className="block font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-slate-700 mb-1">
                   Full Name <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Ramesh Sharma"
+                  placeholder="e.g. Rahul Sharma"
                   value={customer.name}
-                  onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-slate-50 text-slate-900 text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 ${
-                    formErrors.name ? 'border-rose-400' : 'border-slate-300'
+                  onChange={(e) => {
+                    setCustomer({ ...customer, name: e.target.value });
+                    if (formErrors.name) setFormErrors({ ...formErrors, name: undefined });
+                  }}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border text-xs font-medium text-slate-900 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition ${
+                    formErrors.name ? 'border-rose-500 bg-rose-50/30' : 'border-slate-300'
                   }`}
                 />
                 {formErrors.name && (
-                  <p className="text-[11px] text-rose-600 mt-1">{formErrors.name}</p>
+                  <p className="text-[11px] text-rose-600 mt-1 font-semibold">{formErrors.name}</p>
                 )}
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  Mobile Number (for pickup SMS & tracking) <span className="text-rose-500">*</span>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Mobile Number <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="tel"
-                  placeholder="10-digit mobile number"
+                  placeholder="e.g. 9876543210"
                   maxLength={10}
                   value={customer.mobile}
-                  onChange={(e) => setCustomer({ ...customer, mobile: e.target.value.replace(/\D/g, '') })}
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-slate-50 text-slate-900 text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 ${
-                    formErrors.mobile ? 'border-rose-400' : 'border-slate-300'
+                  onChange={(e) => {
+                    setCustomer({ ...customer, mobile: e.target.value.replace(/\D/g, '') });
+                    if (formErrors.mobile) setFormErrors({ ...formErrors, mobile: undefined });
+                  }}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border text-xs font-medium font-mono text-slate-900 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition ${
+                    formErrors.mobile ? 'border-rose-500 bg-rose-50/30' : 'border-slate-300'
                   }`}
                 />
                 {formErrors.mobile && (
-                  <p className="text-[11px] text-rose-600 mt-1">{formErrors.mobile}</p>
+                  <p className="text-[11px] text-rose-600 mt-1 font-semibold">{formErrors.mobile}</p>
                 )}
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  Email Address <span className="text-slate-400 text-[10px] font-normal">(Optional)</span>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Special Notes / Instructions (Optional)
                 </label>
                 <input
-                  type="email"
-                  placeholder="name@example.com"
-                  value={customer.email || ''}
-                  onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-900 text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  Special Notes / Background Preference
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Please crop for blue background / urgent pickup"
+                  type="text"
+                  placeholder="e.g. Extra white border, Urgent delivery"
                   value={customer.specialInstructions || ''}
-                  onChange={(e) => setCustomer({ ...customer, specialInstructions: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-slate-50 text-slate-900 text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 resize-none"
+                  onChange={(e) =>
+                    setCustomer({ ...customer, specialInstructions: e.target.value })
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs text-slate-900 bg-slate-50 focus:bg-white"
                 />
               </div>
             </div>
 
-            {/* Pricing Summary Box */}
-            <div className="bg-slate-900 text-white p-4 rounded-xl space-y-2 text-xs">
-              <div className="flex justify-between text-slate-300">
-                <span>Selected Service:</span>
-                <span className="font-bold text-white">
-                  {serviceType === 'STANDARD_PASSPORT' ? 'Standard 10 Photos' : 'Mixed 10 Photos'}
+            {/* Price Summary & Checkout Action */}
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+              <div className="flex justify-between items-center text-xs text-slate-600">
+                <span>Selected Background:</span>
+                <span className="font-bold text-slate-900">
+                  {PASSPORT_BG_COLORS.find((b) => b.id === selectedBgColor)?.name}
                 </span>
               </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Rate per Set:</span>
-                <span className="font-mono text-amber-400">₹{currentRate}</span>
+              <div className="flex justify-between items-center text-xs text-slate-600">
+                <span>Rate per Set (10 Photos):</span>
+                <span className="font-bold text-slate-900">₹{currentRate}</span>
               </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Sets ({quantity}):</span>
-                <span className="font-mono text-white">× {quantity}</span>
+              <div className="flex justify-between items-center text-xs text-slate-600">
+                <span>Total Photos:</span>
+                <span className="font-bold text-slate-900">{quantity * 10} Photos</span>
               </div>
-              <div className="pt-2 border-t border-slate-800 flex justify-between items-center text-sm font-black">
-                <span className="text-amber-400">Total Payable:</span>
-                <span className="text-xl text-emerald-400">₹{totalAmount}</span>
+
+              <div className="border-t border-slate-200 pt-2.5 flex justify-between items-center text-sm font-black text-slate-900">
+                <span>Total Amount:</span>
+                <span className="text-emerald-700 text-lg">₹{totalAmount}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleProceed}
+                disabled={settings.isAcceptingOrders === false || isProcessing}
+                className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-sm rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>Proceed to Payment (₹{totalAmount})</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 pt-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>PIN-protected counter pickup at {settings.shopName}</span>
               </div>
             </div>
-
-            {/* Proceed to Payment Button */}
-            <button
-              onClick={handleProceed}
-              disabled={isProcessing || !photoPreview}
-              className="w-full py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-extrabold text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
-            >
-              <span>PROCEED TO UPI PAYMENT • ₹{totalAmount}</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
           </div>
         </div>
       </div>
+
+      {/* FULLSCREEN PRINT SHEET INSPECTION MODAL */}
+      {isFullscreenSheet && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 rounded-3xl max-w-4xl w-full p-6 border border-slate-800 space-y-4 relative text-white">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 font-bold text-sm text-emerald-400">
+                <Printer className="w-4 h-4" />
+                <span>High-Resolution 4×6" Print Sheet Inspection (300 DPI)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsFullscreenSheet(false)}
+                className="text-slate-400 hover:text-white font-bold p-1 text-sm cursor-pointer"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <div className="bg-slate-950 p-4 rounded-2xl flex items-center justify-center border border-slate-800 max-h-[75vh] overflow-auto">
+              {printSheetUrl ? (
+                <img
+                  src={printSheetUrl}
+                  alt="4x6 Print Sheet High Resolution"
+                  className="max-h-[68vh] object-contain rounded-lg shadow-2xl"
+                />
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
+              <span>Layout: {serviceType === 'STANDARD_PASSPORT' ? '10 Standard Passport (35×45mm)' : '6 Passport + 4 Stamp'}</span>
+              <button
+                type="button"
+                onClick={() => setIsFullscreenSheet(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl"
+              >
+                Back to Customizer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

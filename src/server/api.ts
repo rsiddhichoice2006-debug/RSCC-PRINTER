@@ -157,126 +157,7 @@ const defaultSettings: ShopSettings = {
 
 let settings: ShopSettings = { ...defaultSettings };
 
-let orders: OrderItem[] = [
-  {
-    id: 'ord-seed-001',
-    orderNumber: 'RSCC-20260816-0001',
-    deliveryPin: '5821',
-    customer: {
-      name: 'Amit Sharma',
-      mobile: '9876543210',
-      email: 'amit.sharma@example.com',
-    },
-    mode: 'DOCUMENT',
-    files: [
-      {
-        id: 'file-1',
-        name: 'Project_Report_Final.pdf',
-        size: 1420000,
-        type: 'application/pdf',
-        pageCount: 6,
-        moderationStatus: 'SAFE',
-      },
-    ],
-    totalPages: 6,
-    copies: 1,
-    printType: 'BW',
-    printingSide: 'BOTH',
-    ratePerPage: 4,
-    totalAmount: 24, // 6 * 1 * 4 = 24
-    paymentStatus: 'PAYMENT_VERIFIED',
-    orderStatus: 'PRINTING',
-    paymentReference: 'UPI-AXIS-99827181',
-    paymentMethod: 'UPI (9967842065@OKBIZAXIS)',
-    paymentScreenshot: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500"><rect width="400" height="500" fill="%23047857"/><rect x="20" y="20" width="360" height="460" rx="16" fill="%23ffffff"/><text x="200" y="80" text-anchor="middle" font-family="sans-serif" font-size="20" font-weight="bold" fill="%23047857">Payment Successful</text><text x="200" y="140" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="bold" fill="%230f172a">₹24.00</text><text x="200" y="180" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2364748b">Paid to: 9967842065@OKBIZAXIS</text><text x="200" y="210" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">Riddhi Siddhi Choice Centre</text><text x="200" y="260" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="bold" fill="%230f172a">UPI Ref: UPI-AXIS-99827181</text></svg>',
-    paymentScreenshotFilename: 'upi_receipt_001.svg',
-    paymentScreenshotTime: new Date(Date.now() - 3600000 * 2).toISOString(),
-    specialInstructions: 'Please staple on top-left corner.',
-    internalNotes: ['Verified via UPI Axis bank SMS alert.', 'Queued to Printer #1 (HP LaserJet).'],
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000).toISOString(),
-    verifiedAt: new Date(Date.now() - 3600000).toISOString(),
-  },
-  {
-    id: 'ord-seed-002',
-    orderNumber: 'RSCC-20260816-0002',
-    deliveryPin: '9143',
-    customer: {
-      name: 'Priya Patel',
-      mobile: '9822012345',
-      email: 'priya.p@example.com',
-    },
-    mode: 'DOCUMENT',
-    files: [
-      {
-        id: 'file-2',
-        name: 'Chemistry_Notes.pdf',
-        size: 850000,
-        type: 'application/pdf',
-        pageCount: 10,
-        moderationStatus: 'SAFE',
-      },
-    ],
-    totalPages: 10,
-    copies: 2,
-    printType: 'COLOUR',
-    printingSide: 'BOTH',
-    ratePerPage: 7.5,
-    totalAmount: 150, // 10 * 2 * 7.5 = 150
-    paymentStatus: 'PAYMENT_VERIFIED',
-    orderStatus: 'READY_FOR_PICKUP',
-    paymentReference: 'GPay-REF-4491028',
-    paymentMethod: 'UPI (GPay)',
-    paymentScreenshot: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500"><rect width="400" height="500" fill="%232563eb"/><rect x="20" y="20" width="360" height="460" rx="16" fill="%23ffffff"/><text x="200" y="80" text-anchor="middle" font-family="sans-serif" font-size="20" font-weight="bold" fill="%232563eb">Payment Successful</text><text x="200" y="140" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="bold" fill="%230f172a">₹150.00</text><text x="200" y="180" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2364748b">Paid to: 9967842065@OKBIZAXIS</text><text x="200" y="210" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">Riddhi Siddhi Choice Centre</text><text x="200" y="260" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="bold" fill="%230f172a">UPI Ref: GPay-REF-4491028</text></svg>',
-    paymentScreenshotFilename: 'gpay_receipt_002.svg',
-    paymentScreenshotTime: new Date(Date.now() - 3600000 * 5).toISOString(),
-    specialInstructions: 'Glossy paper if possible.',
-    internalNotes: ['Printed on Konica Minolta Colour Press. Kept in Shelf B.'],
-    createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-    updatedAt: new Date(Date.now() - 1800000).toISOString(),
-    verifiedAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-  },
-  {
-    id: 'ord-seed-003',
-    orderNumber: 'RSCC-20260816-0003',
-    deliveryPin: '3720',
-    customer: {
-      name: 'Rahul Deshmukh',
-      mobile: '9765432109',
-      email: 'rahul.d@example.com',
-    },
-    mode: 'PHOTO',
-    photoLayout: '4_PHOTOS',
-    files: [
-      {
-        id: 'file-3',
-        name: 'Family_Trip_Photos_4x.jpg',
-        size: 3200000,
-        type: 'image/jpeg',
-        pageCount: 1,
-        moderationStatus: 'SAFE',
-      },
-    ],
-    totalPages: 1,
-    totalSheets: 1,
-    copies: 2,
-    printType: 'COLOUR',
-    printingSide: 'SINGLE',
-    ratePerPage: 15,
-    totalAmount: 30, // 1 sheet * 2 copies * 15 = 30
-    paymentStatus: 'PAYMENT_VERIFICATION_REQUIRED',
-    orderStatus: 'PLACED',
-    paymentReference: 'UPI-UTR-9918237190',
-    paymentMethod: 'UPI (PhonePe)',
-    paymentScreenshot: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500"><rect width="400" height="500" fill="%23673ab7"/><rect x="20" y="20" width="360" height="460" rx="16" fill="%23ffffff"/><text x="200" y="80" text-anchor="middle" font-family="sans-serif" font-size="20" font-weight="bold" fill="%23673ab7">Transfer Successful</text><text x="200" y="140" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="bold" fill="%230f172a">₹30.00</text><text x="200" y="180" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%2364748b">Paid to: 9967842065@OKBIZAXIS</text><text x="200" y="210" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">Riddhi Siddhi Choice Centre</text><text x="200" y="260" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="bold" fill="%230f172a">UPI Ref: UPI-UTR-9918237190</text></svg>',
-    paymentScreenshotFilename: 'phonepe_receipt_003.svg',
-    paymentScreenshotTime: new Date(Date.now() - 1800000).toISOString(),
-    specialInstructions: 'High gloss photo paper.',
-    internalNotes: ['Awaiting UPI statement verification from shop owner.'],
-    createdAt: new Date(Date.now() - 1800000).toISOString(),
-    updatedAt: new Date(Date.now() - 1800000).toISOString(),
-  },
-];
+let orders: OrderItem[] = [];
 
 // Persistent storage handlers to sync across all devices
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -297,7 +178,8 @@ function initDataStore() {
       if (data) {
         const loaded = JSON.parse(data);
         if (Array.isArray(loaded)) {
-          orders = loaded;
+          // Filter out any obsolete seed demo orders
+          orders = loaded.filter((o: any) => !o.id?.startsWith('ord-seed-'));
         }
       }
     } else {
@@ -332,63 +214,10 @@ export function saveSettingsToDisk() {
 
 initDataStore();
 
-let auditLogs: AuditLog[] = [
-  {
-    id: 'log-1',
-    timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
-    action: 'ORDER_VERIFIED',
-    actor: 'Admin (System)',
-    orderNumber: 'RSCC-20260816-0002',
-    details: 'Payment of ₹150 verified via UPI Ref GPay-REF-4491028',
-  },
-  {
-    id: 'log-2',
-    timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-    action: 'ORDER_VERIFIED',
-    actor: 'Admin',
-    orderNumber: 'RSCC-20260816-0001',
-    details: 'Payment of ₹24 verified.',
-  },
-  {
-    id: 'log-3',
-    timestamp: new Date(Date.now() - 3600000).toISOString(),
-    action: 'STATUS_CHANGED',
-    actor: 'Admin',
-    orderNumber: 'RSCC-20260816-0001',
-    details: 'Status updated from CONFIRMED to PRINTING',
-  },
-];
+let auditLogs: AuditLog[] = [];
 
 // Registered Customers Database
-let customers: CustomerUserRecord[] = [
-  {
-    id: 'cust-seed-001',
-    name: 'Amit Sharma',
-    mobile: '9876543210',
-    email: 'amit.sharma@example.com',
-    address: 'Near Main Bus Stand, Sector 4',
-    passwordHash: 'pass123',
-    createdAt: new Date(Date.now() - 3600000 * 48).toISOString(),
-  },
-  {
-    id: 'cust-seed-002',
-    name: 'Priya Patel',
-    mobile: '9822012345',
-    email: 'priya.p@example.com',
-    address: 'College Road, Opp. Library',
-    passwordHash: 'pass123',
-    createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-  },
-  {
-    id: 'cust-seed-003',
-    name: 'Rahul Deshmukh',
-    mobile: '9765432109',
-    email: 'rahul.d@example.com',
-    address: 'Civil Lines, Block B',
-    passwordHash: 'pass123',
-    createdAt: new Date(Date.now() - 3600000 * 12).toISOString(),
-  },
-];
+let customers: CustomerUserRecord[] = [];
 
 // In-memory OTP store for customer phone/email verification
 const otpStore = new Map<string, { code: string; expiresAt: number }>();

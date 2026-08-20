@@ -1,5 +1,6 @@
 import { AdminStats, CustomerUser, OrderRecord, ShopSettings } from '../types';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { triggerMakeWebhook, DEFAULT_MAKE_WEBHOOK_URL } from './webhookService';
 import {
   collection,
   doc,
@@ -28,6 +29,7 @@ const DEFAULT_SETTINGS: ShopSettings = {
   pickupTimings: '9:00 AM - 9:00 PM (Monday - Saturday)',
   isAcceptingOrders: true,
   pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
+  webhookUrl: DEFAULT_MAKE_WEBHOOK_URL,
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 4,
@@ -51,62 +53,35 @@ const DEFAULT_SETTINGS: ShopSettings = {
   },
 };
 
-// Seed Orders for initial demo if local storage is empty
-const INITIAL_SEED_ORDERS: OrderRecord[] = [
-  {
-    id: 'ord-seed-001',
-    orderNumber: 'RSCC-20260816-0001',
-    deliveryPin: '5821',
-    customer: {
-      name: 'Amit Sharma',
-      mobile: '9876543210',
-      email: 'amit.sharma@example.com',
-    },
-    mode: 'DOCUMENT',
-    files: [
-      {
-        id: 'file-1',
-        name: 'Project_Report_Final.pdf',
-        size: 1420000,
-        type: 'application/pdf',
-        pageCount: 6,
-        moderationStatus: 'SAFE',
-      },
-    ],
-    totalPages: 6,
-    copies: 1,
-    printType: 'BW',
-    printingSide: 'BOTH',
-    ratePerPage: 4,
-    totalAmount: 24,
-    paymentStatus: 'PAYMENT_VERIFIED',
-    orderStatus: 'PRINTING',
-    paymentReference: 'UPI-AXIS-99827181',
-    paymentMethod: 'UPI (9967842065@OKBIZAXIS)',
-    paymentScreenshotTime: new Date(Date.now() - 3600000 * 2).toISOString(),
-    specialInstructions: 'Please staple on top-left corner.',
-    internalNotes: ['Verified via UPI Axis bank SMS alert.', 'Queued to Printer #1 (HP LaserJet).'],
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000).toISOString(),
-    verifiedAt: new Date(Date.now() - 3600000).toISOString(),
-  },
-];
+// No hardcoded seed orders - real orders only
+const INITIAL_SEED_ORDERS: OrderRecord[] = [];
 
 // Helper to access LocalStorage safely
 const Storage = {
   getOrders(): OrderRecord[] {
     try {
       const data = localStorage.getItem('rscc_orders_v2');
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+          // Filter out any legacy seed demo orders
+          const realOrders = parsed.filter((o) => !o.id?.startsWith('ord-seed-'));
+          if (realOrders.length !== parsed.length) {
+            localStorage.setItem('rscc_orders_v2', JSON.stringify(realOrders));
+          }
+          return realOrders;
+        }
+      }
     } catch (e) {
       console.warn('Storage read error:', e);
     }
-    return INITIAL_SEED_ORDERS;
+    return [];
   },
 
   saveOrders(orders: OrderRecord[]) {
     try {
-      localStorage.setItem('rscc_orders_v2', JSON.stringify(orders));
+      const realOnly = orders.filter((o) => !o.id?.startsWith('ord-seed-'));
+      localStorage.setItem('rscc_orders_v2', JSON.stringify(realOnly));
     } catch (e) {
       console.warn('Storage save error:', e);
     }
@@ -492,10 +467,15 @@ export const apiClient = {
 
     // Save to Firestore
     try {
-      await setDoc(doc(db, 'orders', finalOrder.id), finalOrder);
+      await setDoc(doc(db, 'orders', finalOrder.id), finalOrder, { merge: true });
     } catch (fsErr) {
       console.warn('Firestore setDoc warning:', fsErr);
     }
+
+    // Trigger Make.com Webhook Notification for instant order capture
+    triggerMakeWebhook(finalOrder, 'ORDER_PLACED', undefined, Storage.getSettings()).catch((whErr) => {
+      console.warn('Make.com webhook notification notice:', whErr);
+    });
 
     // Try backend if server is active
     safeFetchJson('/api/orders', {
@@ -606,10 +586,13 @@ export const apiClient = {
 
     // Persist in Firestore
     try {
-      await setDoc(doc(db, 'orders', localOrder.id), localOrder);
+      await setDoc(doc(db, 'orders', localOrder.id), localOrder, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.WRITE, `orders/${localOrder.id}`);
     }
+
+    // Trigger Make.com Webhook Notification
+    triggerMakeWebhook(localOrder, 'ORDER_CREATED', undefined, Storage.getSettings()).catch(() => {});
 
     return localOrder;
   },
@@ -622,7 +605,10 @@ export const apiClient = {
       if (!snap.empty) {
         const fsOrders: OrderRecord[] = [];
         snap.forEach((d) => {
-          fsOrders.push(d.data() as OrderRecord);
+          const ord = d.data() as OrderRecord;
+          if (!ord.id?.startsWith('ord-seed-') && !d.id.startsWith('ord-seed-')) {
+            fsOrders.push(ord);
+          }
         });
         fsOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
         Storage.saveOrders(fsOrders);
@@ -819,6 +805,9 @@ export const apiClient = {
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${updated.id}`);
     }
+
+    // Trigger Make.com Webhook Notification
+    triggerMakeWebhook(updated, 'PAYMENT_VERIFIED', undefined, Storage.getSettings()).catch(() => {});
 
     return updated;
   },
@@ -1037,6 +1026,7 @@ export const apiClient = {
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
       }
+      triggerMakeWebhook(backendData.order, 'STATUS_UPDATED', undefined, Storage.getSettings()).catch(() => {});
       return backendData.order;
     }
 
@@ -1062,6 +1052,7 @@ export const apiClient = {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }
 
+    triggerMakeWebhook(updated, 'STATUS_UPDATED', undefined, Storage.getSettings()).catch(() => {});
     return updated;
   },
 
@@ -1252,6 +1243,48 @@ export const apiClient = {
         role: 'SUPER_ADMIN',
       },
     };
+  },
+
+  // Test Webhook Dispatch to Make.com
+  async testWebhook(customUrl?: string): Promise<{ success: boolean; message: string }> {
+    const dummyOrder: OrderRecord = {
+      id: 'ord-test-' + Date.now(),
+      orderNumber: 'RSCC-TEST-' + Math.floor(1000 + Math.random() * 9000),
+      deliveryPin: '9999',
+      customer: {
+        name: 'Test Customer (Make.com Integration)',
+        mobile: '9967842065',
+        email: 'rsiddhi.choice.2006@gmail.com',
+      },
+      mode: 'DOCUMENT',
+      paperSize: 'A4',
+      paperQuality: '75_GSM',
+      files: [
+        {
+          id: 'test-f1',
+          name: 'Sample_Print_Document.pdf',
+          size: 245000,
+          type: 'application/pdf',
+          pageCount: 2,
+          moderationStatus: 'SAFE',
+        },
+      ],
+      totalPages: 2,
+      copies: 1,
+      printType: 'BW',
+      printingSide: 'SINGLE',
+      ratePerPage: 5,
+      totalAmount: 10,
+      paymentStatus: 'PAYMENT_VERIFIED',
+      orderStatus: 'PLACED',
+      paymentMethod: 'UPI Test',
+      paymentReference: 'UPI-TEST-998822',
+      specialInstructions: 'Webhook connectivity test payload from RSCC Web Portal to Make.com',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    return triggerMakeWebhook(dummyOrder, 'TEST_PING', customUrl, Storage.getSettings());
   },
 };
 

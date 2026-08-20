@@ -172,26 +172,27 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {/* Card 0: Passport & Photo Printing - Featured (Non-clickable card) */}
+            {/* Card 0: Passport & Photo Printing - Featured */}
             <div
-              className="bg-gradient-to-br from-amber-500/10 via-amber-50/50 to-white rounded-2xl p-6 border-2 border-amber-400 shadow-sm transition flex flex-col justify-between select-none"
+              onClick={() => onNavigate('passport-photo')}
+              className="bg-gradient-to-br from-amber-500/10 via-amber-50/50 to-white rounded-2xl p-6 border-2 border-amber-400 shadow-sm hover:shadow-md transition flex flex-col justify-between cursor-pointer group"
             >
               <div className="space-y-3">
-                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs">
+                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition">
                   <Camera className="w-6 h-6" />
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <h3 className="font-bold text-slate-900 text-lg">Passport Photos</h3>
+                  <h3 className="font-bold text-slate-900 text-lg group-hover:text-amber-700 transition">Passport Photos</h3>
                   <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.5 rounded">NEW</span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  10 Passport photos (₹50) or 10 mixed sizes (₹60) printed on glossy photo paper with visual upload guide.
+                  Studio background removal (Red, Blue, White), chest-level auto framing & 10 glossy photo print sheet.
                 </p>
               </div>
 
               <div className="mt-5 pt-4 border-t border-amber-200 flex items-center justify-between">
-                <span className="text-xs text-amber-900 font-bold">Standard Set</span>
-                <span className="text-base font-black text-slate-950">₹50 (10 Pcs)</span>
+                <span className="text-xs text-amber-900 font-bold">10 Photos on Glossy Paper</span>
+                <span className="text-base font-black text-slate-950">From ₹50</span>
               </div>
             </div>
 
