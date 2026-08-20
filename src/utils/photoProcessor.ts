@@ -1,12 +1,12 @@
 /**
  * Studio-Grade Portrait & Passport Background Replacement & Framing Engine
  * 
- * Capabilities:
- * 1. Neural Portrait Segmentation via local MediaPipe SelfieSegmentation (with WebAssembly & TFLite)
- * 2. Adaptive Multi-Pass Flood-Fill & Silhouette Fallback
- * 3. 100% Solid Uniform Background Replacement (Vivid Red #D50000, Royal Blue #00008B, Studio White #FFFFFF)
- * 4. 100% Protection for Person, Hair, Face, Shirt/Suit/Saree/Collars & Skin Tone
- * 5. Auto Chest-Level Framing to ISO/ICAO 35mm x 45mm (826 x 1062 px @ 300 DPI)
+ * Pipeline:
+ * 1. Neural Portrait Segmentation via MediaPipe & Ultra-Reliable Adaptive Algorithmic Fallback
+ * 2. 100% Background Extraction converting background to true alpha (A = 0)
+ * 3. 100% Solid Uniform Studio Background Replacement (Vivid Red #D50000, Royal Blue #00008B, Studio White #FFFFFF)
+ * 4. Complete Protection for Subject, Skin, Hair, Shirt/Suit/Saree Collars & Accessories
+ * 5. ISO/ICAO 35mm x 45mm Auto Chest-Level Framing (826 x 1062 px @ 300 DPI)
  * 6. Instant Zero-Latency Background Color Swapping with Cached Cutouts
  */
 
@@ -61,35 +61,39 @@ export const loadImage = (src: string): Promise<HTMLImageElement> => {
 
 // Singleton MediaPipe SelfieSegmentation instance
 let segmenterInstance: SelfieSegmentation | null = null;
-let segmenterInitPromise: Promise<SelfieSegmentation> | null = null;
+let segmenterInitPromise: Promise<SelfieSegmentation | null> | null = null;
 
-const getSegmenter = async (): Promise<SelfieSegmentation> => {
+const getSegmenter = async (): Promise<SelfieSegmentation | null> => {
   if (segmenterInstance) return segmenterInstance;
   if (segmenterInitPromise) return segmenterInitPromise;
 
   segmenterInitPromise = (async () => {
-    const segmenter = new SelfieSegmentation({
-      locateFile: (file) => {
-        // First try local vite public assets, fallback to CDN if needed
-        return `/mediapipe/${file}`;
-      },
-    });
+    try {
+      const segmenter = new SelfieSegmentation({
+        locateFile: (file) => {
+          return `/mediapipe/${file}`;
+        },
+      });
 
-    segmenter.setOptions({
-      modelSelection: 1, // 1 = landscape/full general model (best quality for portraits)
-      selfieMode: false,
-    });
+      segmenter.setOptions({
+        modelSelection: 1, // 1 = landscape/full portrait model
+        selfieMode: false,
+      });
 
-    await segmenter.initialize();
-    segmenterInstance = segmenter;
-    return segmenter;
+      await segmenter.initialize();
+      segmenterInstance = segmenter;
+      return segmenter;
+    } catch (e) {
+      console.warn('Failed to initialize MediaPipe SelfieSegmentation, using adaptive algorithm:', e);
+      return null;
+    }
   })();
 
   return segmenterInitPromise;
 };
 
 interface SegmentedPersonResult {
-  // Transparent cutout canvas of the isolated subject in standard 826x1062 resolution
+  // Transparent cutout canvas of the isolated subject (826 x 1062 px)
   cutoutCanvas: HTMLCanvasElement;
   sourceKey: string;
 }
@@ -101,23 +105,22 @@ export const clearPassportCache = () => {
 };
 
 /**
- * Executes Neural Segmentation on an image using MediaPipe
+ * Attempts Neural Segmentation using MediaPipe.
+ * Returns Float32Array mask (0.0 = background, 1.0 = person) or null on failure.
  */
 const runNeuralSegmentation = async (
-  img: HTMLImageElement
-): Promise<HTMLCanvasElement | null> => {
+  img: HTMLImageElement,
+  w: number,
+  h: number
+): Promise<Float32Array | null> => {
   try {
     const segmenter = await Promise.race([
       getSegmenter(),
-      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('MediaPipe timeout')), 7000)),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('MediaPipe timeout')), 4000)),
     ]);
 
     if (!segmenter) return null;
 
-    const w = img.naturalWidth || img.width;
-    const h = img.naturalHeight || img.height;
-
-    // Create intermediate canvas for input
     const inputCanvas = document.createElement('canvas');
     inputCanvas.width = w;
     inputCanvas.height = h;
@@ -140,7 +143,15 @@ const runNeuralSegmentation = async (
             return;
           }
           maskCtx.drawImage(results.segmentationMask, 0, 0, w, h);
-          resolve(maskCanvas);
+          const maskData = maskCtx.getImageData(0, 0, w, h).data;
+          const floatMask = new Float32Array(w * h);
+
+          for (let i = 0; i < w * h; i++) {
+            // MediaPipe segmentation output has confidence in R channel (or luminance)
+            const val = maskData[i * 4];
+            floatMask[i] = val / 255.0;
+          }
+          resolve(floatMask);
         } catch {
           resolve(null);
         }
@@ -148,7 +159,7 @@ const runNeuralSegmentation = async (
 
       timeoutId = setTimeout(() => {
         resolve(null);
-      }, 8000);
+      }, 5000);
 
       segmenter.send({ image: inputCanvas }).catch(() => {
         if (timeoutId) clearTimeout(timeoutId);
@@ -162,38 +173,35 @@ const runNeuralSegmentation = async (
 };
 
 /**
- * High-accuracy fallback segmentation mask using smart flood fill + skin-color protection + edge boundary detection
+ * High-accuracy algorithmic portrait segmentation mask.
+ * Accurately detects subject silhouette from perimeter flood-fill & skin/clothing boundary protection.
  */
 const generateAdaptiveFallbackMask = (
-  imgCanvas: HTMLCanvasElement
-): HTMLCanvasElement => {
-  const w = imgCanvas.width;
-  const h = imgCanvas.height;
-  const ctx = imgCanvas.getContext('2d', { willReadFrequently: true });
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = w;
-  maskCanvas.height = h;
-  const mCtx = maskCanvas.getContext('2d');
-  if (!ctx || !mCtx) return maskCanvas;
+  srcCanvas: HTMLCanvasElement,
+  w: number,
+  h: number
+): Float32Array => {
+  const ctx = srcCanvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return new Float32Array(w * h).fill(1.0);
 
-  const srcData = ctx.getImageData(0, 0, w, h);
-  const src = srcData.data;
-  const maskImgData = mCtx.createImageData(w, h);
-  const maskPixels = maskImgData.data;
+  const srcData = ctx.getImageData(0, 0, w, h).data;
+  const floatMask = new Float32Array(w * h);
 
-  // Initialize mask: 255 = person, 0 = background
-  // First, mark skin and high-contrast facial/body interior as definitely person
-  const isBackground = new Uint8Array(w * h); // 0 = unknown, 1 = background, 2 = foreground
-
-  // Sample corner background colors (top-left, top-right, top-center)
+  // 1. Sample perimeter background colors (top, top-left, top-right, left, right)
   const bgSamples: { r: number; g: number; b: number }[] = [];
   const addSample = (x: number, y: number) => {
     const idx = (y * w + x) * 4;
-    bgSamples.push({ r: src[idx], g: src[idx + 1], b: src[idx + 2] });
+    bgSamples.push({ r: srcData[idx], g: srcData[idx + 1], b: srcData[idx + 2] });
   };
 
-  for (let x = 0; x < w; x += 10) addSample(x, 2);
-  for (let y = 0; y < Math.min(h, 40); y += 6) {
+  const sampleStepX = Math.max(4, Math.floor(w / 40));
+  const sampleStepY = Math.max(4, Math.floor(h / 40));
+
+  for (let x = 0; x < w; x += sampleStepX) {
+    addSample(x, 2);
+    addSample(x, Math.min(h - 1, 8));
+  }
+  for (let y = 0; y < Math.min(h, Math.floor(h * 0.45)); y += sampleStepY) {
     addSample(2, y);
     addSample(w - 3, y);
   }
@@ -202,146 +210,178 @@ const generateAdaptiveFallbackMask = (
   const avgBgG = bgSamples.reduce((s, c) => s + c.g, 0) / (bgSamples.length || 1);
   const avgBgB = bgSamples.reduce((s, c) => s + c.b, 0) / (bgSamples.length || 1);
 
-  // BFS Flood-fill from outer perimeter to identify background
-  const queue: number[] = [];
-  const visited = new Uint8Array(w * h);
+  // 2. Identify Skin and Person Interior
+  let totalSkinWeight = 0;
+  let weightedFaceX = 0;
+  let weightedFaceY = 0;
+  let minFaceX = w, maxFaceX = 0, minFaceY = h, maxFaceY = 0;
+
+  const isSkinPixel = new Uint8Array(w * h);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const r = srcData[idx];
+      const g = srcData[idx + 1];
+      const b = srcData[idx + 2];
+
+      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+
+      const isSkin =
+        r > 42 &&
+        g > 28 &&
+        b > 18 &&
+        r > g &&
+        r > b &&
+        Math.abs(r - g) > 6 &&
+        cb >= 72 &&
+        cb <= 136 &&
+        cr >= 128 &&
+        cr <= 180;
+
+      if (isSkin) {
+        isSkinPixel[y * w + x] = 1;
+        const distFromCenter = Math.abs(x - w / 2) / (w / 2);
+        const yWeight = y < h * 0.65 ? 1.5 : 0.4;
+        const weight = Math.max(0.1, 1.0 - distFromCenter) * yWeight;
+
+        totalSkinWeight += weight;
+        weightedFaceX += x * weight;
+        weightedFaceY += y * weight;
+
+        if (x < minFaceX) minFaceX = x;
+        if (x > maxFaceX) maxFaceX = x;
+        if (y < minFaceY) minFaceY = y;
+        if (y > maxFaceY) maxFaceY = y;
+      }
+    }
+  }
+
+  const faceCenterX = totalSkinWeight > 50 ? weightedFaceX / totalSkinWeight : w * 0.5;
+  const faceCenterY = totalSkinWeight > 50 ? weightedFaceY / totalSkinWeight : h * 0.38;
+  const faceW = totalSkinWeight > 50 ? Math.max(w * 0.3, (maxFaceX - minFaceX) * 1.3) : w * 0.42;
+
+  // 3. BFS Flood-Fill from Borders to Identify Background
+  const isBackground = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let qHead = 0;
+  let qTail = 0;
 
   const pushSeed = (x: number, y: number) => {
     const idx = y * w + x;
-    if (!visited[idx]) {
-      visited[idx] = 1;
-      queue.push(idx);
+    if (!isBackground[idx]) {
+      isBackground[idx] = 1;
+      queue[qTail++] = idx;
     }
   };
 
-  // Enqueue top row, left edge, right edge
+  // Seed top, left, right borders
   for (let x = 0; x < w; x++) pushSeed(x, 0);
   for (let y = 0; y < h; y++) {
     pushSeed(0, y);
     pushSeed(w - 1, y);
   }
 
-  let head = 0;
-  const colorTolerance = 45;
+  const colorThreshold = 42;
 
-  while (head < queue.length) {
-    const curr = queue[head++];
+  while (qHead < qTail) {
+    const curr = queue[qHead++];
     const cx = curr % w;
     const cy = Math.floor(curr / w);
     const pIdx = curr * 4;
 
-    const r = src[pIdx];
-    const g = src[pIdx + 1];
-    const b = src[pIdx + 2];
+    const r = srcData[pIdx];
+    const g = srcData[pIdx + 1];
+    const b = srcData[pIdx + 2];
 
-    // Check if this pixel is skin tone (must protect person)
-    const isSkin = r > 45 && g > 30 && b > 20 && r > g && r > b && (r - g) > 6;
-    if (isSkin && cy > h * 0.15) {
-      // Stop flood fill at skin
+    // Protect skin and head/chest interior
+    if (isSkinPixel[curr] && cy > minFaceY - 10) {
       continue;
     }
 
-    // Check distance to average background
+    // Distance from face center (protect inner torso core)
+    const distToFaceX = Math.abs(cx - faceCenterX);
+    if (cy > faceCenterY && distToFaceX < faceW * 0.45 && cy < h * 0.9) {
+      // Core torso/clothing region - do not let background flood penetrate
+      const distToBg = Math.sqrt((r - avgBgR) ** 2 + (g - avgBgG) ** 2 + (b - avgBgB) ** 2);
+      if (distToBg > 22) continue;
+    }
+
     const distToBg = Math.sqrt((r - avgBgR) ** 2 + (g - avgBgG) ** 2 + (b - avgBgB) ** 2);
-    if (distToBg > colorTolerance && cy > h * 0.25) {
-      // Potential clothing edge, do not cross deeply
+    if (distToBg > colorThreshold && cy > h * 0.25) {
+      // Edge of person or clothes reached
       continue;
     }
 
-    isBackground[curr] = 1;
-
-    // Spread to 4 neighbors
-    const neighbors = [
-      cx > 0 ? curr - 1 : -1,
-      cx < w - 1 ? curr + 1 : -1,
-      cy > 0 ? curr - w : -1,
-      cy < h - 1 ? curr + w : -1,
-    ];
-
-    for (const n of neighbors) {
-      if (n !== -1 && !visited[n]) {
-        visited[n] = 1;
-        queue.push(n);
-      }
+    // 4-way neighbor spread
+    if (cx > 0) {
+      const n = curr - 1;
+      if (!isBackground[n]) { isBackground[n] = 1; queue[qTail++] = n; }
+    }
+    if (cx < w - 1) {
+      const n = curr + 1;
+      if (!isBackground[n]) { isBackground[n] = 1; queue[qTail++] = n; }
+    }
+    if (cy > 0) {
+      const n = curr - w;
+      if (!isBackground[n]) { isBackground[n] = 1; queue[qTail++] = n; }
+    }
+    if (cy < h - 1) {
+      const n = curr + w;
+      if (!isBackground[n]) { isBackground[n] = 1; queue[qTail++] = n; }
     }
   }
 
-  // Populate mask: white (255) for person, black (0) for background
+  // Populate float mask (1.0 = person, 0.0 = background)
   for (let i = 0; i < w * h; i++) {
-    const pIdx = i * 4;
-    const val = isBackground[i] === 1 ? 0 : 255;
-    maskPixels[pIdx] = val;
-    maskPixels[pIdx + 1] = val;
-    maskPixels[pIdx + 2] = val;
-    maskPixels[pIdx + 3] = 255;
+    floatMask[i] = isBackground[i] === 1 ? 0.0 : 1.0;
   }
 
-  mCtx.putImageData(maskImgData, 0, 0);
-  return maskCanvas;
+  return floatMask;
 };
 
 /**
  * Calculates optimal chest-level passport framing bounding box (35:45 ratio)
  */
 const calculatePassportFraming = (
-  maskCanvas: HTMLCanvasElement,
+  mask: Float32Array,
   srcW: number,
   srcH: number
 ) => {
-  const mCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
-  if (!mCtx) {
-    return {
-      cropX: 0,
-      cropY: 0,
-      cropW: srcW,
-      cropH: srcH,
-    };
-  }
-
-  const maskData = mCtx.getImageData(0, 0, srcW, srcH).data;
-
-  // Find person bounding box
   let minX = srcW, maxX = 0, minY = srcH, maxY = 0;
-  let weightedX = 0, weightedY = 0, totalWeight = 0;
+  let weightedX = 0, totalWeight = 0;
 
   for (let y = 0; y < srcH; y++) {
     for (let x = 0; x < srcW; x++) {
-      const idx = (y * srcW + x) * 4;
-      const alpha = maskData[idx]; // white = person
-
-      if (alpha > 80) {
+      const val = mask[y * srcW + x];
+      if (val > 0.4) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
 
-        // Weight towards upper third (head region)
-        const weight = y < srcH * 0.5 ? 2.0 : 0.8;
-        weightedX += x * weight;
-        weightedY += y * weight;
-        totalWeight += weight;
+        const wgt = y < srcH * 0.5 ? 2.0 : 0.8;
+        weightedX += x * wgt;
+        totalWeight += wgt;
       }
     }
   }
 
-  const hasPerson = totalWeight > 200 && maxX > minX && maxY > minY;
+  const hasPerson = totalWeight > 100 && maxX > minX && maxY > minY;
   const centerX = hasPerson ? weightedX / totalWeight : srcW * 0.5;
-  const crownY = hasPerson ? minY : srcH * 0.15;
+  const crownY = hasPerson ? minY : srcH * 0.12;
   const personH = hasPerson ? maxY - minY : srcH * 0.7;
 
-  // ISO/ICAO Passport Framing Rule:
+  // ISO/ICAO Passport Framing Standard (35mm x 45mm):
   // Headroom: ~8-10% of total height above hair crown
-  // Head + Face: ~60-68% of total height
-  // Neck + Chest: remaining ~25%
-  // Aspect ratio is 35mm / 45mm = 7 / 9
+  // Head: ~60-65%
+  // Chest: ~25-30%
   const targetAspect = 35 / 45;
-
-  // Estimate head height as ~50-60% of person bounding height
   const estimatedHeadH = Math.max(srcH * 0.25, personH * 0.55);
   let cropH = estimatedHeadH * 1.62;
   let cropW = cropH * targetAspect;
 
-  // If crop dimensions exceed source bounds, scale down preserving aspect ratio
   if (cropW > srcW) {
     cropW = srcW;
     cropH = cropW / targetAspect;
@@ -363,7 +403,8 @@ const calculatePassportFraming = (
 };
 
 /**
- * Main Entry Point: Generate Passport Photo with 100% Clean Background Replacement
+ * Main Entry Point: Generates Passport Photo with 100% Clean Background Replacement
+ * & ISO 35mm x 45mm Chest-Level Framing (826 x 1062 px at 300 DPI)
  */
 export const generatePassportPhoto = async (
   imageSrc: string,
@@ -379,7 +420,7 @@ export const generatePassportPhoto = async (
 
   let cutoutCanvas: HTMLCanvasElement;
 
-  // Check if we already have the isolated subject cached for this image
+  // Check if isolated subject is already cached for instant zero-latency background switching
   if (cachedSegmentedPerson && cachedSegmentedPerson.sourceKey === sourceKey) {
     cutoutCanvas = cachedSegmentedPerson.cutoutCanvas;
   } else {
@@ -395,57 +436,78 @@ export const generatePassportPhoto = async (
     if (!srcCtx) throw new Error('Canvas not supported');
     srcCtx.drawImage(img, 0, 0);
 
-    // 2. Perform Neural Segmentation (MediaPipe)
-    let maskCanvas = await runNeuralSegmentation(img);
-
-    // If neural segmentation is unavailable, use adaptive fallback mask
-    if (!maskCanvas) {
-      maskCanvas = generateAdaptiveFallbackMask(srcCanvas);
+    // 2. Perform Neural Segmentation (MediaPipe) or Adaptive Algorithmic Mask
+    let fullMask = await runNeuralSegmentation(img, srcW, srcH);
+    if (!fullMask) {
+      fullMask = generateAdaptiveFallbackMask(srcCanvas, srcW, srcH);
     }
 
     // 3. Calculate Precision Chest-Level Passport Framing
-    const { cropX, cropY, cropW, cropH } = calculatePassportFraming(maskCanvas, srcW, srcH);
+    const { cropX, cropY, cropW, cropH } = calculatePassportFraming(fullMask, srcW, srcH);
 
-    // 4. Crop image and mask to target 826x1062 dimensions
+    // 4. Crop image and mask onto target 826x1062 canvas
     const croppedSrcCanvas = document.createElement('canvas');
     croppedSrcCanvas.width = targetW;
     croppedSrcCanvas.height = targetH;
-    const croppedSrcCtx = croppedSrcCanvas.getContext('2d');
+    const croppedSrcCtx = croppedSrcCanvas.getContext('2d', { willReadFrequently: true });
     if (!croppedSrcCtx) throw new Error('Canvas context error');
     croppedSrcCtx.drawImage(srcCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH);
+    const croppedSrcData = croppedSrcCtx.getImageData(0, 0, targetW, targetH).data;
 
-    const croppedMaskCanvas = document.createElement('canvas');
-    croppedMaskCanvas.width = targetW;
-    croppedMaskCanvas.height = targetH;
-    const croppedMaskCtx = croppedMaskCanvas.getContext('2d');
-    if (!croppedMaskCtx) throw new Error('Canvas context error');
-    croppedMaskCtx.drawImage(maskCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH);
+    // Resample mask to target dimensions (826 x 1062)
+    const targetMask = new Float32Array(targetW * targetH);
+    const scaleX = cropW / targetW;
+    const scaleY = cropH / targetH;
 
-    // 5. Create transparent cutout of person (100% original clothing, hair, skin)
+    for (let ty = 0; ty < targetH; ty++) {
+      const sy = Math.min(srcH - 1, Math.floor(cropY + ty * scaleY));
+      for (let tx = 0; tx < targetW; tx++) {
+        const sx = Math.min(srcW - 1, Math.floor(cropX + tx * scaleX));
+        targetMask[ty * targetW + tx] = fullMask[sy * srcW + sx];
+      }
+    }
+
+    // 5. Create Isolated Transparent Subject Canvas (True Alpha cutout: Background A=0, Person A=255)
     cutoutCanvas = document.createElement('canvas');
     cutoutCanvas.width = targetW;
     cutoutCanvas.height = targetH;
     const cutoutCtx = cutoutCanvas.getContext('2d', { willReadFrequently: true });
     if (!cutoutCtx) throw new Error('Canvas context error');
 
-    // Draw the cropped original photo
-    cutoutCtx.drawImage(croppedSrcCanvas, 0, 0);
+    const personImgData = cutoutCtx.createImageData(targetW, targetH);
+    const personPx = personImgData.data;
 
-    // Apply the segmentation mask as alpha channel (destination-in)
-    cutoutCtx.globalCompositeOperation = 'destination-in';
-    cutoutCtx.drawImage(croppedMaskCanvas, 0, 0);
+    for (let i = 0; i < targetW * targetH; i++) {
+      const pIdx = i * 4;
+      const confidence = targetMask[i]; // 0.0 to 1.0
 
-    // Restore composite operation
-    cutoutCtx.globalCompositeOperation = 'source-over';
+      // Smooth step for clean studio edges
+      let alphaVal: number;
+      if (confidence <= 0.25) {
+        alphaVal = 0;
+      } else if (confidence >= 0.75) {
+        alphaVal = 255;
+      } else {
+        alphaVal = Math.round(((confidence - 0.25) / 0.5) * 255);
+      }
 
-    // Store in cache for instant color switching
+      // Preserve original colors of person, hair, skin, shirt, suit, collar, and accessories
+      personPx[pIdx] = croppedSrcData[pIdx];
+      personPx[pIdx + 1] = croppedSrcData[pIdx + 1];
+      personPx[pIdx + 2] = croppedSrcData[pIdx + 2];
+      personPx[pIdx + 3] = alphaVal; // TRUE ALPHA ISOLATION
+    }
+
+    cutoutCtx.putImageData(personImgData, 0, 0);
+
+    // Save cutout into cache for instant background color switching
     cachedSegmentedPerson = {
       sourceKey,
       cutoutCanvas,
     };
   }
 
-  // 6. Composite 100% Solid Background with Isolated Person
+  // 6. Render 100% Solid Uniform Studio Background with Person Composite
   const finalCanvas = document.createElement('canvas');
   finalCanvas.width = targetW;
   finalCanvas.height = targetH;
@@ -456,7 +518,7 @@ export const generatePassportPhoto = async (
   finalCtx.fillStyle = targetBgHex;
   finalCtx.fillRect(0, 0, targetW, targetH);
 
-  // Draw the isolated person on top of the solid background
+  // Composite the isolated transparent subject on top of the solid background
   finalCtx.drawImage(cutoutCanvas, 0, 0);
 
   return finalCanvas.toDataURL('image/jpeg', 0.96);
