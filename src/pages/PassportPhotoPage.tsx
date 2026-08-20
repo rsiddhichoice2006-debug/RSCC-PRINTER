@@ -37,6 +37,7 @@ import {
   PASSPORT_BG_COLORS,
   generatePassportPhoto,
   generatePrintSheetDataUrl,
+  clearPassportCache,
 } from '../utils/photoProcessor';
 
 interface PassportPhotoPageProps {
@@ -65,14 +66,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
   // View mode: 'single' (1x passport preview) vs 'sheet' (10x print layout preview)
   const [previewMode, setPreviewMode] = useState<'single' | 'sheet'>('single');
   const [showOriginalComparison, setShowOriginalComparison] = useState<boolean>(false);
-  const [showFineTune, setShowFineTune] = useState<boolean>(false);
   const [isFullscreenSheet, setIsFullscreenSheet] = useState<boolean>(false);
-
-  // Fine-tuning adjustments
-  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
-  const [verticalOffset, setVerticalOffset] = useState<number>(0);
-  const [edgeFeather, setEdgeFeather] = useState<number>(2);
-  const [removalSensitivity, setRemovalSensitivity] = useState<number>(4);
 
   const [quantity, setQuantity] = useState<number>(1);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -109,7 +103,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
   const currentRate = serviceType === 'STANDARD_PASSPORT' ? standardRate : mixedRate;
   const totalAmount = currentRate * quantity;
 
-  // Process photo whenever original image, selected background color, or adjustments change
+  // Process photo whenever original image or selected background color changes
   useEffect(() => {
     if (!originalPreview) return;
 
@@ -123,10 +117,6 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
         const passportDataUrl = await generatePassportPhoto(originalPreview, {
           bgColor: selectedBgColor,
           customHex: bgConfig.hex,
-          zoom: zoomLevel,
-          verticalOffset,
-          edgeFeather,
-          removalSensitivity,
         });
 
         if (!isMounted) return;
@@ -153,7 +143,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [originalPreview, selectedBgColor, serviceType, zoomLevel, verticalOffset, edgeFeather, removalSensitivity]);
+  }, [originalPreview, selectedBgColor, serviceType]);
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -175,11 +165,9 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
 
     const reader = new FileReader();
     reader.onload = (event) => {
+      clearPassportCache();
       setOriginalPreview(event.target?.result as string);
       setPhotoFile(file);
-      // Reset adjustments on new photo
-      setZoomLevel(1.0);
-      setVerticalOffset(0);
     };
     reader.onerror = () => {
       setUploadError('Failed to read image file.');
@@ -188,6 +176,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
   };
 
   const handleRemovePhoto = () => {
+    clearPassportCache();
     setPhotoFile(null);
     setOriginalPreview('');
     setProcessedPhotoUrl('');
@@ -196,13 +185,6 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  };
-
-  const handleResetAdjustments = () => {
-    setZoomLevel(1.0);
-    setVerticalOffset(0);
-    setEdgeFeather(2);
-    setRemovalSensitivity(4);
   };
 
   const validateForm = (): boolean => {
@@ -526,87 +508,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                       <span>Preview for Printing (10x Sheet)</span>
                     </button>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    {previewMode === 'single' && (
-                      <button
-                        type="button"
-                        onClick={() => setShowFineTune(!showFineTune)}
-                        className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <Sliders className="w-3.5 h-3.5" />
-                        <span>{showFineTune ? 'Hide Adjustments' : 'Fine-Tune Framing'}</span>
-                      </button>
-                    )}
-                  </div>
                 </div>
-
-                {/* FINE-TUNE FRAMING CONTROLS DRAWER */}
-                {showFineTune && previewMode === 'single' && (
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3 text-xs animate-in fade-in">
-                    <div className="flex items-center justify-between font-bold text-slate-800">
-                      <span>Fine-Tune Chest Alignment & Zoom</span>
-                      <button
-                        type="button"
-                        onClick={handleResetAdjustments}
-                        className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-semibold cursor-pointer text-[11px]"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Reset</span>
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <div>
-                        <div className="flex justify-between text-[11px] text-slate-600 mb-1">
-                          <span>Chest Vertical Level:</span>
-                          <span className="font-mono">{verticalOffset > 0 ? `+${verticalOffset}` : verticalOffset}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="-40"
-                          max="40"
-                          step="2"
-                          value={verticalOffset}
-                          onChange={(e) => setVerticalOffset(parseInt(e.target.value))}
-                          className="w-full accent-indigo-600 cursor-pointer"
-                        />
-                      </div>
-
-                      <div>
-                        <div className="flex justify-between text-[11px] text-slate-600 mb-1">
-                          <span>Zoom / Face Size:</span>
-                          <span className="font-mono">{Math.round(zoomLevel * 100)}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.85"
-                          max="1.25"
-                          step="0.02"
-                          value={zoomLevel}
-                          onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
-                          className="w-full accent-indigo-600 cursor-pointer"
-                        />
-                      </div>
-
-                      <div>
-                        <div className="flex justify-between text-[11px] text-slate-600 mb-1">
-                          <span>Background Cleanliness:</span>
-                          <span className="font-mono">{removalSensitivity === 5 ? 'Max Clean' : removalSensitivity === 4 ? 'Deep Clean' : `Level ${removalSensitivity}`}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="1"
-                          max="5"
-                          step="1"
-                          value={removalSensitivity}
-                          onChange={(e) => setRemovalSensitivity(parseInt(e.target.value))}
-                          className="w-full accent-indigo-600 cursor-pointer"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* PREVIEW CONTAINER */}
                 {isProcessing || !processedPhotoUrl || (previewMode === 'sheet' && !printSheetUrl) ? (
