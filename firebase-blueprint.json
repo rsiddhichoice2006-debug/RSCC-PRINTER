@@ -41,6 +41,28 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "orderNumber", "customer", "mode", "totalAmount", "status", "paymentStatus"]
+    },
+    "ShopSettings": {
+      "title": "ShopSettings",
+      "description": "Global shop configuration, pricing rates, UPI settings, and operational status",
+      "type": "object",
+      "properties": {
+        "shopName": { "type": "string" },
+        "shortName": { "type": "string" },
+        "tagline": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "upiId": { "type": "string" },
+        "maxFileSizeMb": { "type": "number" },
+        "retentionDays": { "type": "number" },
+        "pickupTimings": { "type": "string" },
+        "isAcceptingOrders": { "type": "boolean" },
+        "pauseOrderReason": { "type": "string" },
+        "webhookUrl": { "type": "string" },
+        "pricing": { "type": "object" }
+      }
     }
   },
   "firestore": {
@@ -51,6 +73,10 @@
     "/orders/{orderId}": {
       "schema": "Order",
       "description": "Order records and bookings placed by customers"
+    },
+    "/settings/{settingId}": {
+      "schema": "ShopSettings",
+      "description": "Global shop settings and pricing configuration across devices"
     }
   }
 }

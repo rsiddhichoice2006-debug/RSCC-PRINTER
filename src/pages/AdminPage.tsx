@@ -633,8 +633,9 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
     try {
       const saved = await apiClient.updateSettings(editSettings);
       onUpdateSettings(saved);
-      setSaveSuccessMsg('Shop settings and pricing updated successfully!');
-      setTimeout(() => setSaveSuccessMsg(''), 3000);
+      setSaveSuccessMsg('Prices and settings saved to cloud! Synced in real-time to all devices.');
+      showToast('✅ Prices & settings saved and synced across all devices!');
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
     } catch (err: any) {
       alert('Error saving settings: ' + err.message);
     } finally {

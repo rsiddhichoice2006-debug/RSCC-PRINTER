@@ -67,8 +67,9 @@ function MainApp() {
     }
   }, [currentUser]);
 
-  // Load shop settings on start
+  // Load & subscribe to live shop settings & pricing across all devices in real-time
   useEffect(() => {
+    // 1. Initial cached/stored load
     apiClient
       .getSettings()
       .then((data) => {
@@ -77,6 +78,19 @@ function MainApp() {
       .catch((err) => {
         console.warn('Using default settings fallback:', err);
       });
+
+    // 2. Real-time Firestore onSnapshot subscription so all devices update instantly
+    const unsubscribe = apiClient.subscribeSettings((liveSettings) => {
+      if (liveSettings) {
+        setSettings(liveSettings);
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
   }, []);
 
   const handleNavigate = (page: string, params?: any) => {

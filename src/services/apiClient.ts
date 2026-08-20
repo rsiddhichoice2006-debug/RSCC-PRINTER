@@ -12,6 +12,7 @@ import {
   orderBy,
   updateDoc,
   deleteDoc,
+  onSnapshot,
 } from 'firebase/firestore';
 
 // Default Shop Settings
@@ -237,17 +238,74 @@ function calculateOrderPrice(params: {
 }
 
 export const apiClient = {
-  // Fetch Shop Settings & Pricing
+  // Fetch Shop Settings & Pricing from Firestore (Real-time synced across all devices)
   async getSettings(): Promise<ShopSettings> {
-    const data = await safeFetchJson<{ success: boolean; settings: ShopSettings }>('/api/settings');
-    if (data?.settings) {
-      Storage.saveSettings(data.settings);
-      return data.settings;
+    try {
+      const docRef = doc(db, 'settings', 'shop_config');
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const firestoreData = snap.data() as Partial<ShopSettings>;
+        const merged: ShopSettings = {
+          ...DEFAULT_SETTINGS,
+          ...firestoreData,
+          pricing: {
+            ...DEFAULT_SETTINGS.pricing,
+            ...(firestoreData.pricing || {}),
+          },
+        };
+        Storage.saveSettings(merged);
+        return merged;
+      } else {
+        // First-time initialization in Firestore if empty
+        const initial = Storage.getSettings();
+        setDoc(docRef, initial, { merge: true }).catch(() => {});
+        return initial;
+      }
+    } catch (err) {
+      console.warn('Firestore getSettings fallback to local cache:', err);
     }
     return Storage.getSettings();
   },
 
-  // Update Shop Settings (Admin)
+  // Real-time listener for Settings & Pricing updates across all devices
+  subscribeSettings(callback: (settings: ShopSettings) => void): () => void {
+    try {
+      const docRef = doc(db, 'settings', 'shop_config');
+      const unsubscribe = onSnapshot(
+        docRef,
+        (snap) => {
+          if (snap.exists()) {
+            const firestoreData = snap.data() as Partial<ShopSettings>;
+            const merged: ShopSettings = {
+              ...DEFAULT_SETTINGS,
+              ...firestoreData,
+              pricing: {
+                ...DEFAULT_SETTINGS.pricing,
+                ...(firestoreData.pricing || {}),
+              },
+            };
+            Storage.saveSettings(merged);
+            callback(merged);
+          } else {
+            // Seed Firestore with current settings
+            const current = Storage.getSettings();
+            setDoc(docRef, current, { merge: true }).catch(() => {});
+            callback(current);
+          }
+        },
+        (error) => {
+          console.warn('Firestore settings snapshot subscription notice:', error);
+          handleFirestoreError(error, OperationType.GET, 'settings/shop_config');
+        }
+      );
+      return unsubscribe;
+    } catch (err) {
+      console.warn('Could not establish settings subscription:', err);
+      return () => {};
+    }
+  },
+
+  // Update Shop Settings & Pricing (Admin) - Immediately saved to Firestore & synced across all devices
   async updateSettings(newSettings: Partial<ShopSettings>): Promise<ShopSettings> {
     const current = Storage.getSettings();
     const merged: ShopSettings = {
@@ -256,16 +314,34 @@ export const apiClient = {
       pricing: {
         ...current.pricing,
         ...(newSettings.pricing || {}),
+        // Ensure legacy price fallbacks are synchronized
+        bwSingle: newSettings.pricing?.a4Bw75Single ?? newSettings.pricing?.bwSingle ?? current.pricing?.a4Bw75Single ?? current.pricing?.bwSingle ?? 5,
+        bwBoth: newSettings.pricing?.a4Bw75Both ?? newSettings.pricing?.bwBoth ?? current.pricing?.a4Bw75Both ?? current.pricing?.bwBoth ?? 4,
+        colorSingle: newSettings.pricing?.a4Color100Single ?? newSettings.pricing?.colorSingle ?? current.pricing?.a4Color100Single ?? current.pricing?.colorSingle ?? 10,
+        colorBoth: newSettings.pricing?.a4Color100Both ?? newSettings.pricing?.colorBoth ?? current.pricing?.a4Color100Both ?? current.pricing?.colorBoth ?? 15,
+        photoSheet: newSettings.pricing?.photoSheet ?? current.pricing?.photoSheet ?? 15,
       },
     };
+
+    // 1. Save to local storage for immediate UI responsiveness
     Storage.saveSettings(merged);
 
-    // Sync to backend if possible
+    // 2. Persist to Firestore document so all devices instantly receive the update
+    try {
+      const docRef = doc(db, 'settings', 'shop_config');
+      await setDoc(docRef, merged, { merge: true });
+    } catch (fsErr) {
+      console.error('Failed to sync settings to Firestore:', fsErr);
+      handleFirestoreError(fsErr, OperationType.WRITE, 'settings/shop_config');
+      throw new Error('Failed to synchronize pricing to cloud database. Check internet connection.');
+    }
+
+    // 3. Sync to optional server endpoint if present
     safeFetchJson('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ settings: merged }),
-    });
+    }).catch(() => {});
 
     return merged;
   },
