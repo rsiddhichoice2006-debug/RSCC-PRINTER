@@ -505,10 +505,19 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
                 type="button"
                 onClick={handleQuickVerifyPayment}
                 disabled={isVerifying}
-                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed shadow-xs"
               >
-                <Zap className="w-3.5 h-3.5 text-amber-400" />
-                <span>I have completed payment in my UPI app</span>
+                {isVerifying ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+                    <span>Processing Payment & Placing Order...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <span>I have completed payment in my UPI app</span>
+                  </>
+                )}
               </button>
             </form>
 

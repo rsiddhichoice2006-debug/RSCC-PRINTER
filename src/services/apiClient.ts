@@ -82,7 +82,9 @@ const Storage = {
   saveOrders(orders: OrderRecord[]) {
     try {
       const realOnly = orders.filter((o) => !o.id?.startsWith('ord-seed-'));
-      localStorage.setItem('rscc_orders_v2', JSON.stringify(realOnly));
+      // Clean large preview data URLs from storage to avoid localStorage quota limits
+      const sanitized = realOnly.map((ord) => sanitizeOrderForStorage(ord));
+      localStorage.setItem('rscc_orders_v2', JSON.stringify(sanitized));
     } catch (e) {
       console.warn('Storage save error:', e);
     }
@@ -125,10 +127,39 @@ const Storage = {
   },
 };
 
-// Safe fetch wrapper that handles unexpected JSON or empty responses
-async function safeFetchJson<T>(url: string, options?: RequestInit): Promise<T | null> {
+// Sanitize order payload to prevent localStorage and Firestore payload quota issues
+export function sanitizeOrderForStorage(order: OrderRecord): OrderRecord {
+  if (!order) return order;
+  return {
+    ...order,
+    files: (order.files || []).map((f) => ({
+      id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
+      name: f.name || 'Document',
+      size: f.size || 0,
+      type: f.type || 'application/pdf',
+      pageCount: f.pageCount || 1,
+      pageSelectionMode: f.pageSelectionMode,
+      customPageRange: f.customPageRange,
+      selectedPageCount: f.selectedPageCount,
+      moderationStatus: f.moderationStatus || 'SAFE',
+      moderationReason: f.moderationReason,
+      // Only keep small preview URLs (e.g. <= 1024 chars), omit oversized base64 data to prevent payload quota errors
+      previewUrl: f.previewUrl && f.previewUrl.length <= 1024 ? f.previewUrl : undefined,
+    })),
+  };
+}
+
+// Safe fetch wrapper that handles unexpected JSON, empty responses, and has timeout protection
+async function safeFetchJson<T>(url: string, options?: RequestInit, timeoutMs = 3500): Promise<T | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const res = await fetch(url, options);
+    const res = await fetch(url, {
+      ...options,
+      signal: options?.signal || controller.signal,
+    });
+    clearTimeout(timeoutId);
     const text = await res.text();
     if (!text || text.trim() === '') {
       return null;
@@ -140,7 +171,8 @@ async function safeFetchJson<T>(url: string, options?: RequestInit): Promise<T |
       return null;
     }
   } catch (err) {
-    console.warn(`Fetch error for ${url}:`, err);
+    clearTimeout(timeoutId);
+    console.warn(`Fetch error or timeout for ${url}:`, err);
     return null;
   }
 }
@@ -538,76 +570,81 @@ export const apiClient = {
     }
   ): Promise<OrderRecord> {
     const now = new Date().toISOString();
-    const refId = paymentDetails.transactionId?.trim() || `UPI-TXN-${Date.now()}`;
+    const refId = paymentDetails.transactionId?.trim() || `UPI-${Date.now().toString().slice(-8)}`;
 
-    // 1. Try server-side authoritative payment confirmation
-    const serverResult = await safeFetchJson<{ success: boolean; order?: OrderRecord; message?: string; error?: string }>(
-      `/api/orders/${draftOrder.id}/confirm-payment`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderId: draftOrder.id,
-          paymentReference: refId,
-          transactionId: refId,
-          paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
-          amount: paymentDetails.amount || draftOrder.totalAmount,
-          order: {
-            ...draftOrder,
-            paymentStatus: 'PAYMENT_VERIFIED',
-            orderStatus: 'CONFIRMED',
+    const lightweightDraft = sanitizeOrderForStorage({
+      ...draftOrder,
+      id: draftOrder.id || 'ord-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+      orderNumber: draftOrder.orderNumber || generateOrderNumber(),
+      deliveryPin: draftOrder.deliveryPin || generateDeliveryPin(),
+      userId: auth.currentUser?.uid || draftOrder.userId || undefined,
+      paymentStatus: 'PAYMENT_VERIFIED',
+      orderStatus: 'CONFIRMED',
+      paymentReference: refId,
+      paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
+      verifiedAt: now,
+      updatedAt: now,
+    });
+
+    let finalOrder: OrderRecord = lightweightDraft;
+
+    // 1. Attempt server-side authoritative order confirmation (with 3.5s timeout)
+    try {
+      const serverResult = await safeFetchJson<{ success: boolean; order?: OrderRecord; message?: string; error?: string }>(
+        `/api/orders/${lightweightDraft.id}/confirm-payment`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId: lightweightDraft.id,
             paymentReference: refId,
+            transactionId: refId,
             paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
-            verifiedAt: now,
-            updatedAt: now,
-          },
-        }),
+            amount: paymentDetails.amount || lightweightDraft.totalAmount,
+            order: lightweightDraft,
+          }),
+        },
+        3500
+      );
+
+      if (serverResult?.order) {
+        finalOrder = sanitizeOrderForStorage(serverResult.order);
       }
-    );
-
-    let finalOrder: OrderRecord;
-
-    if (serverResult?.order) {
-      finalOrder = serverResult.order;
-    } else {
-      finalOrder = {
-        ...draftOrder,
-        userId: auth.currentUser?.uid || draftOrder.userId,
-        paymentStatus: 'PAYMENT_VERIFIED',
-        orderStatus: 'CONFIRMED',
-        paymentReference: refId,
-        paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
-        paymentScreenshot: paymentDetails.paymentScreenshot,
-        paymentScreenshotFilename: paymentDetails.paymentScreenshotFilename,
-        verifiedAt: now,
-        createdAt: draftOrder.createdAt || now,
-        updatedAt: now,
-      };
+    } catch (serverErr) {
+      console.warn('Server payment confirmation notice, using robust local & firestore pipeline:', serverErr);
     }
 
-    // Save to local storage
-    const currentOrders = Storage.getOrders();
-    const existingIdx = currentOrders.findIndex((o) => o.id === finalOrder.id || o.orderNumber === finalOrder.orderNumber);
-    if (existingIdx >= 0) {
-      currentOrders[existingIdx] = finalOrder;
-    } else {
-      currentOrders.unshift(finalOrder);
+    // 2. Save directly to local storage (sanitized against quota issues)
+    try {
+      const currentOrders = Storage.getOrders();
+      const existingIdx = currentOrders.findIndex((o) => o.id === finalOrder.id || o.orderNumber === finalOrder.orderNumber);
+      if (existingIdx >= 0) {
+        currentOrders[existingIdx] = finalOrder;
+      } else {
+        currentOrders.unshift(finalOrder);
+      }
+      Storage.saveOrders(currentOrders);
+    } catch (storageErr) {
+      console.warn('Storage save orders notice:', storageErr);
     }
-    Storage.saveOrders(currentOrders);
 
-    // Save to Firestore with clean sanitization (guaranteeing no undefined fields)
+    // 3. Save to Cloud Firestore in background with clean sanitization (guaranteeing no undefined fields)
     try {
       const sanitized = sanitizeForFirestore(finalOrder);
-      await setDoc(doc(db, 'orders', finalOrder.id), sanitized, { merge: true });
-    } catch (fsErr) {
-      console.warn('Firestore setDoc warning:', fsErr);
-      handleFirestoreError(fsErr, OperationType.WRITE, `orders/${finalOrder.id}`);
+      setDoc(doc(db, 'orders', finalOrder.id), sanitized, { merge: true }).catch((fsErr) => {
+        console.warn('Firestore setDoc notice:', fsErr);
+        handleFirestoreError(fsErr, OperationType.WRITE, `orders/${finalOrder.id}`);
+      });
+    } catch (fsPrepErr) {
+      console.warn('Firestore preparation notice:', fsPrepErr);
     }
 
-    // Trigger Make.com Webhook Notification for instant order capture
-    triggerMakeWebhook(finalOrder, 'PAYMENT_VERIFIED', undefined, Storage.getSettings()).catch((whErr) => {
-      console.warn('Make.com webhook notification notice:', whErr);
-    });
+    // 4. Trigger Make.com Webhook Notification for instant order capture in background
+    try {
+      triggerMakeWebhook(finalOrder, 'PAYMENT_VERIFIED', undefined, Storage.getSettings()).catch((whErr) => {
+        console.warn('Make.com webhook notification notice:', whErr);
+      });
+    } catch {}
 
     return finalOrder;
   },

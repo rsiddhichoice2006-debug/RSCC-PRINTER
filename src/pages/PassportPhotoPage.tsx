@@ -720,13 +720,13 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                       </div>
                       <div className="space-y-1">
                         <div className="text-[11px] font-bold text-slate-200 tracking-wide flex items-center gap-2">
-                          <span>Quality & Print Notice</span>
+                          <span>Quality & Resolution Assurance</span>
                           <span className="text-[9px] bg-indigo-500/20 text-indigo-300 font-semibold px-1.5 py-0.5 rounded border border-indigo-500/30">
                             Physical Hard Copy
                           </span>
                         </div>
                         <p className="text-[11px] leading-relaxed text-slate-400">
-                          <strong className="text-slate-300 font-medium">Please Note:</strong> The digital preview displayed above is intended solely for layout, framing, and composition verification. Your final physical copy will be processed and printed in professional, studio-quality resolution with a high-definition laboratory finish on 250 GSM photographic stock.
+                          <strong className="text-slate-300 font-medium">Please Note:</strong> The digital preview displayed above is for layout visualization and alignment purposes only. Your final physical hard copy will be precision-printed in high-definition, professional studio-quality resolution with vibrant, archival laboratory finish on 250 GSM photographic stock.
                         </p>
                       </div>
                     </div>
@@ -781,13 +781,13 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                       </div>
                       <div className="space-y-1">
                         <div className="text-[11px] font-bold text-slate-200 tracking-wide flex items-center gap-2">
-                          <span>Quality & Print Notice</span>
+                          <span>Quality & Resolution Assurance</span>
                           <span className="text-[9px] bg-indigo-500/20 text-indigo-300 font-semibold px-1.5 py-0.5 rounded border border-indigo-500/30">
                             Physical Hard Copy
                           </span>
                         </div>
                         <p className="text-[11px] leading-relaxed text-slate-400">
-                          <strong className="text-slate-300 font-medium">Please Note:</strong> The digital preview displayed above is intended solely for layout, framing, and composition verification. Your final physical copy will be processed and printed in professional, studio-quality resolution with a high-definition laboratory finish on 250 GSM photographic stock.
+                          <strong className="text-slate-300 font-medium">Please Note:</strong> The digital preview displayed above is for layout visualization and alignment purposes only. Your final physical hard copy will be precision-printed in high-definition, professional studio-quality resolution with vibrant, archival laboratory finish on 250 GSM photographic stock.
                         </p>
                       </div>
                     </div>
