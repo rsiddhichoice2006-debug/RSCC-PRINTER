@@ -189,74 +189,53 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setEditSettings(settings);
   }, [settings]);
 
-  // Real-time Firestore Snapshot Listener for Live Order Notifications
+  // Real-time Multi-Device Snapshot & Backend Listener for Live Order Notifications
   useEffect(() => {
     if (!isAdminLoggedIn) return;
 
     loadDashboardData();
 
-    // Attach Firestore real-time onSnapshot listener
-    let unsubscribe: (() => void) | undefined;
-    try {
-      const ordersCol = collection(db, 'orders');
-      unsubscribe = onSnapshot(
-        ordersCol,
-        (snapshot) => {
-          const fetchedOrders: OrderRecord[] = [];
-          const freshlyAdded: OrderRecord[] = [];
+    // Attach dual-engine real-time subscription (Firestore + Server Backend Heartbeat)
+    const unsubscribe = apiClient.subscribeOrders((fetchedOrders) => {
+      const freshlyAdded: OrderRecord[] = [];
 
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data() as OrderRecord;
-            // Never show or count legacy seed demo orders
-            if (data.id?.startsWith('ord-seed-') || docSnap.id?.startsWith('ord-seed-')) {
-              try {
-                deleteDoc(docSnap.ref).catch(() => {});
-              } catch {}
-              return;
-            }
-            fetchedOrders.push(data);
-
-            if (!isInitialSnapshotRef.current && !knownOrderIdsRef.current.has(data.id)) {
-              freshlyAdded.push(data);
-            }
-          });
-
-          // Sort orders by date descending
-          fetchedOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-          setOrders(fetchedOrders);
-
-          // If new orders detected
-          if (!isInitialSnapshotRef.current && freshlyAdded.length > 0) {
-            freshlyAdded.forEach((newOrd) => {
-              knownOrderIdsRef.current.add(newOrd.id);
-            });
-
-            if (soundEnabled) {
-              playOrderChime();
-            }
-
-            setNewOrderAlerts((prev) => [...freshlyAdded, ...prev].slice(0, 5));
-            showToast(`🔔 ${freshlyAdded.length} New Order(s) Received!`);
-          } else if (isInitialSnapshotRef.current) {
-            fetchedOrders.forEach((o) => knownOrderIdsRef.current.add(o.id));
-            isInitialSnapshotRef.current = false;
-          }
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'orders');
+      fetchedOrders.forEach((data) => {
+        if (!isInitialSnapshotRef.current && !knownOrderIdsRef.current.has(data.id)) {
+          freshlyAdded.push(data);
         }
-      );
-    } catch (e) {
-      console.warn('Firestore snapshot setup warning:', e);
-    }
+      });
 
-    // Secondary fallback sync timer
+      // Update state with sorted orders
+      setOrders(fetchedOrders);
+
+      // If new orders detected from any device
+      if (!isInitialSnapshotRef.current && freshlyAdded.length > 0) {
+        freshlyAdded.forEach((newOrd) => {
+          knownOrderIdsRef.current.add(newOrd.id);
+        });
+
+        if (soundEnabled) {
+          playOrderChime();
+        }
+
+        setNewOrderAlerts((prev) => [...freshlyAdded, ...prev].slice(0, 5));
+        showToast(`🔔 ${freshlyAdded.length} New Order(s) Received!`);
+      } else if (isInitialSnapshotRef.current) {
+        fetchedOrders.forEach((o) => knownOrderIdsRef.current.add(o.id));
+        isInitialSnapshotRef.current = false;
+      }
+    });
+
+    // Secondary fallback sync timer for stats & audit logs
     const syncTimer = setInterval(() => {
-      apiClient.getAdminStats().then((statsData) => {
-        if (statsData?.stats) setStats(statsData.stats);
-        if (statsData?.recentAuditLogs) setAuditLogs(statsData.recentAuditLogs);
-      }).catch(() => {});
-    }, 5000);
+      apiClient
+        .getAdminStats()
+        .then((statsData) => {
+          if (statsData?.stats) setStats(statsData.stats);
+          if (statsData?.recentAuditLogs) setAuditLogs(statsData.recentAuditLogs);
+        })
+        .catch(() => {});
+    }, 4000);
 
     return () => {
       if (unsubscribe) unsubscribe();

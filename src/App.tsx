@@ -108,48 +108,17 @@ function MainApp() {
     });
   };
 
-  // Called when user clicks "Proceed to Payment" from Document or Photo page
+  // Called when user clicks "Proceed to Payment" from Document, Photo, or Passport page
   const handleProceedToPayment = async (orderPayload: any) => {
-    // If user is not authenticated yet, require sign-in or sign-up before taking order
-    if (!currentUser) {
-      openAuthModal(
-        'signup',
-        'Create Account / Sign In to Place Order & Save Booking',
-        async () => {
-          // Callback after successful authentication
-          try {
-            const user = auth.currentUser;
-            const enhancedPayload = {
-              ...orderPayload,
-              userId: user?.uid || orderPayload.userId,
-              customer: {
-                ...orderPayload.customer,
-                name: orderPayload.customer?.name || user?.displayName || user?.email?.split('@')[0] || 'Customer',
-                email: orderPayload.customer?.email || user?.email || '',
-                mobile: orderPayload.customer?.mobile || '',
-              },
-            };
-            const draftOrder = apiClient.createDraftOrder(enhancedPayload);
-            setActiveOrder(draftOrder);
-            setCurrentPage('payment');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          } catch (err: any) {
-            alert('Could not initiate checkout: ' + (err.message || 'Server error'));
-          }
-        }
-      );
-      return;
-    }
-
     try {
-      // In-memory draft creation (Order is placed to Firestore ONLY after payment is completed)
+      const user = auth.currentUser || currentUser;
       const enhancedPayload = {
         ...orderPayload,
-        userId: currentUser.uid,
+        userId: user?.uid || orderPayload.userId || undefined,
         customer: {
           ...orderPayload.customer,
-          name: orderPayload.customer?.name || currentUser.displayName || customerProfile?.name || 'Customer',
-          email: orderPayload.customer?.email || currentUser.email || '',
+          name: orderPayload.customer?.name || user?.displayName || customerProfile?.name || 'Customer',
+          email: orderPayload.customer?.email || user?.email || '',
           mobile: orderPayload.customer?.mobile || customerProfile?.mobile || '',
         },
       };

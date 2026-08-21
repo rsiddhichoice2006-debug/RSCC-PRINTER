@@ -724,64 +724,75 @@ export const apiClient = {
     return localOrder;
   },
 
-  // List Orders for Admin / Filter
+  // List Orders for Admin / Filter - Aggregates Central Server Backend + Firestore + Local Storage
   async getOrders(params?: { search?: string; status?: string; paymentStatus?: string }): Promise<OrderRecord[]> {
-    // Try fetching from Firestore first for real-time consistency
+    const ordersMap = new Map<string, OrderRecord>();
+
+    // 1. Fetch from authoritative Central Server Backend (shared across all devices)
+    try {
+      const queryParams = new URLSearchParams();
+      if (params?.search) queryParams.set('search', params.search);
+      if (params?.status) queryParams.set('status', params.status);
+      if (params?.paymentStatus) queryParams.set('paymentStatus', params.paymentStatus);
+
+      const backendData = await safeFetchJson<{ success: boolean; orders: OrderRecord[] }>(
+        `/api/orders?${queryParams.toString()}`
+      );
+      if (backendData?.orders && Array.isArray(backendData.orders)) {
+        backendData.orders.forEach((o) => {
+          if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
+            ordersMap.set(o.id, o);
+          }
+        });
+      }
+    } catch (serverErr) {
+      console.warn('Server getOrders fetch notice:', serverErr);
+    }
+
+    // 2. Fetch from Cloud Firestore
     try {
       const snap = await getDocs(collection(db, 'orders'));
       if (!snap.empty) {
-        const fsOrders: OrderRecord[] = [];
         snap.forEach((d) => {
           const ord = d.data() as OrderRecord;
-          if (!ord.id?.startsWith('ord-seed-') && !d.id.startsWith('ord-seed-')) {
-            fsOrders.push(ord);
+          if (!ord.id?.startsWith('ord-seed-') && !d.id.startsWith('ord-seed-') && !ord.orderNumber?.startsWith('SEED-')) {
+            const existing = ordersMap.get(ord.id);
+            if (
+              !existing ||
+              new Date(ord.updatedAt || ord.createdAt || 0).getTime() >=
+                new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+            ) {
+              ordersMap.set(ord.id, ord);
+            }
           }
         });
-        fsOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-        Storage.saveOrders(fsOrders);
-
-        let filtered = fsOrders;
-        if (params?.search) {
-          const q = params.search.toLowerCase();
-          filtered = filtered.filter(
-            (o) =>
-              o.orderNumber.toLowerCase().includes(q) ||
-              o.deliveryPin.toLowerCase().includes(q) ||
-              o.customer.name.toLowerCase().includes(q) ||
-              o.customer.mobile.includes(q)
-          );
-        }
-        if (params?.status && params.status !== 'ALL') {
-          filtered = filtered.filter((o) => o.orderStatus === params.status);
-        }
-        if (params?.paymentStatus && params.paymentStatus !== 'ALL') {
-          filtered = filtered.filter((o) => o.paymentStatus === params.paymentStatus);
-        }
-        return filtered;
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, 'orders');
     }
 
-    const queryParams = new URLSearchParams();
-    if (params?.search) queryParams.set('search', params.search);
-    if (params?.status) queryParams.set('status', params.status);
-    if (params?.paymentStatus) queryParams.set('paymentStatus', params.paymentStatus);
+    // 3. Merge Local Storage cache
+    const local = Storage.getOrders();
+    local.forEach((o) => {
+      if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
+        if (!ordersMap.has(o.id)) {
+          ordersMap.set(o.id, o);
+        }
+      }
+    });
 
-    const backendData = await safeFetchJson<{ success: boolean; orders: OrderRecord[] }>(
-      `/api/orders?${queryParams.toString()}`
+    // Deduplicate and sort newest first
+    const uniqueOrders = Array.from(ordersMap.values());
+    uniqueOrders.sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
 
-    if (backendData?.orders) {
-      Storage.saveOrders(backendData.orders);
-      return backendData.orders;
-    }
+    Storage.saveOrders(uniqueOrders);
 
-    let local = Storage.getOrders();
-
+    let filtered = uniqueOrders;
     if (params?.search) {
       const q = params.search.toLowerCase();
-      local = local.filter(
+      filtered = filtered.filter(
         (o) =>
           o.orderNumber.toLowerCase().includes(q) ||
           o.deliveryPin.toLowerCase().includes(q) ||
@@ -790,13 +801,111 @@ export const apiClient = {
       );
     }
     if (params?.status && params.status !== 'ALL') {
-      local = local.filter((o) => o.orderStatus === params.status);
+      filtered = filtered.filter((o) => o.orderStatus === params.status);
     }
     if (params?.paymentStatus && params.paymentStatus !== 'ALL') {
-      local = local.filter((o) => o.paymentStatus === params.paymentStatus);
+      filtered = filtered.filter((o) => o.paymentStatus === params.paymentStatus);
     }
 
-    return local;
+    return filtered;
+  },
+
+  // Real-time multi-device order subscription for Admin Portal
+  subscribeOrders(callback: (orders: OrderRecord[]) => void): () => void {
+    let isSubscribed = true;
+    const knownOrdersMap = new Map<string, OrderRecord>();
+
+    const emitMergedOrders = () => {
+      if (!isSubscribed) return;
+      const sorted = Array.from(knownOrdersMap.values()).sort(
+        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+      callback(sorted);
+    };
+
+    // 1. Initial hydration from local & server
+    const initialLocal = Storage.getOrders();
+    initialLocal.forEach((o) => {
+      if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
+        knownOrdersMap.set(o.id, o);
+      }
+    });
+    emitMergedOrders();
+
+    // 2. Attach Firestore onSnapshot Listener
+    let unsubscribeFirestore: (() => void) | undefined;
+    try {
+      const ordersCol = collection(db, 'orders');
+      unsubscribeFirestore = onSnapshot(
+        ordersCol,
+        (snapshot) => {
+          let hasChanges = false;
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as OrderRecord;
+            if (data.id?.startsWith('ord-seed-') || docSnap.id?.startsWith('ord-seed-')) {
+              try {
+                deleteDoc(docSnap.ref).catch(() => {});
+              } catch {}
+              return;
+            }
+            const existing = knownOrdersMap.get(data.id);
+            if (
+              !existing ||
+              new Date(data.updatedAt || data.createdAt || 0).getTime() >=
+                new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+            ) {
+              knownOrdersMap.set(data.id, data);
+              hasChanges = true;
+            }
+          });
+          if (hasChanges) {
+            emitMergedOrders();
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'orders');
+        }
+      );
+    } catch (e) {
+      console.warn('Firestore snapshot setup warning:', e);
+    }
+
+    // 3. Central Server Heartbeat Polling (every 3 seconds) to guarantee cross-device sync
+    const serverPollInterval = setInterval(async () => {
+      if (!isSubscribed) return;
+      try {
+        const backendData = await safeFetchJson<{ success: boolean; orders: OrderRecord[] }>('/api/orders');
+        if (backendData?.orders && Array.isArray(backendData.orders)) {
+          let hasNewOrUpdated = false;
+          backendData.orders.forEach((serverOrd) => {
+            if (!serverOrd.id?.startsWith('ord-seed-') && !serverOrd.orderNumber?.startsWith('SEED-')) {
+              const current = knownOrdersMap.get(serverOrd.id);
+              if (
+                !current ||
+                new Date(serverOrd.updatedAt || serverOrd.createdAt || 0).getTime() >
+                  new Date(current.updatedAt || current.createdAt || 0).getTime() ||
+                serverOrd.orderStatus !== current.orderStatus ||
+                serverOrd.paymentStatus !== current.paymentStatus
+              ) {
+                knownOrdersMap.set(serverOrd.id, serverOrd);
+                hasNewOrUpdated = true;
+              }
+            }
+          });
+          if (hasNewOrUpdated) {
+            emitMergedOrders();
+          }
+        }
+      } catch (err) {
+        // Non-blocking poll notice
+      }
+    }, 3000);
+
+    return () => {
+      isSubscribed = false;
+      if (unsubscribeFirestore) unsubscribeFirestore();
+      clearInterval(serverPollInterval);
+    };
   },
 
   // Track Order with verified Mobile or Email
