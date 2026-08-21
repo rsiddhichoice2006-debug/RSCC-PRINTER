@@ -684,8 +684,10 @@ export const apiClient = {
 
     // Persist in Firestore
     try {
-      await setDoc(doc(db, 'orders', localOrder.id), localOrder, { merge: true });
+      const sanitized = sanitizeForFirestore(localOrder);
+      await setDoc(doc(db, 'orders', localOrder.id), sanitized, { merge: true });
     } catch (fsErr) {
+      console.warn('Firestore setDoc order creation error:', fsErr);
       handleFirestoreError(fsErr, OperationType.WRITE, `orders/${localOrder.id}`);
     }
 
@@ -864,7 +866,8 @@ export const apiClient = {
 
       // Sync confirmed state to Firestore
       try {
-        await setDoc(doc(db, 'orders', backendData.order.id), backendData.order, { merge: true });
+        const sanitized = sanitizeForFirestore(backendData.order);
+        await setDoc(doc(db, 'orders', backendData.order.id), sanitized, { merge: true });
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${backendData.order.id}`);
       }
@@ -899,7 +902,8 @@ export const apiClient = {
 
     // Sync update to Firestore
     try {
-      await setDoc(doc(db, 'orders', updated.id), updated, { merge: true });
+      const sanitized = sanitizeForFirestore(updated);
+      await setDoc(doc(db, 'orders', updated.id), sanitized, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${updated.id}`);
     }
@@ -1066,7 +1070,8 @@ export const apiClient = {
       }
       // Firestore sync
       try {
-        await setDoc(doc(db, 'orders', orderId), backendData.order, { merge: true });
+        const sanitized = sanitizeForFirestore(backendData.order);
+        await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
       }
@@ -1093,7 +1098,8 @@ export const apiClient = {
 
     // Sync update to Firestore
     try {
-      await setDoc(doc(db, 'orders', orderId), updated, { merge: true });
+      const sanitized = sanitizeForFirestore(updated);
+      await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -1120,7 +1126,8 @@ export const apiClient = {
         Storage.saveOrders(orders);
       }
       try {
-        await setDoc(doc(db, 'orders', orderId), backendData.order, { merge: true });
+        const sanitized = sanitizeForFirestore(backendData.order);
+        await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
       }
@@ -1145,7 +1152,8 @@ export const apiClient = {
     Storage.saveOrders(orders);
 
     try {
-      await setDoc(doc(db, 'orders', orderId), updated, { merge: true });
+      const sanitized = sanitizeForFirestore(updated);
+      await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -1167,7 +1175,8 @@ export const apiClient = {
 
     if (backendData?.order) {
       try {
-        await setDoc(doc(db, 'orders', orderId), backendData.order, { merge: true });
+        const sanitized = sanitizeForFirestore(backendData.order);
+        await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
       } catch (e) {}
       return backendData.order;
     }
@@ -1186,7 +1195,8 @@ export const apiClient = {
     Storage.saveOrders(orders);
 
     try {
-      await setDoc(doc(db, 'orders', orderId), updated, { merge: true });
+      const sanitized = sanitizeForFirestore(updated);
+      await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }

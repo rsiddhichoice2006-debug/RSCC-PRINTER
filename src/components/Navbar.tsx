@@ -60,9 +60,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-4">
             {settings.isAcceptingOrders === false ? (
-              <span className="flex items-center gap-1.5 text-rose-400 font-bold bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">
-                <span className="w-2 h-2 rounded-full bg-rose-400 animate-ping"></span>
-                Currently Not Accepting Orders (High Demand)
+              <span className="flex items-center gap-1.5 text-rose-400 font-bold bg-rose-950/90 px-2.5 py-0.5 rounded-full border border-rose-700 text-[11px] animate-pulse">
+                <Ban className="w-3.5 h-3.5 text-rose-400" />
+                <span>Orders Paused: {settings.pauseOrderReason || 'High Demand'}</span>
               </span>
             ) : (
               <span className="flex items-center gap-1 text-emerald-400 font-medium">
@@ -91,6 +91,16 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Global High-Visibility Alert when Not Accepting Orders */}
+      {settings.isAcceptingOrders === false && (
+        <div className="bg-gradient-to-r from-rose-700 via-rose-600 to-rose-700 text-white px-4 py-2.5 shadow-md border-b border-rose-800 text-center font-bold text-xs sm:text-sm flex items-center justify-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0 animate-bounce" />
+          <span>
+            ⚠️ <strong>NOTICE:</strong> {settings.pauseOrderReason || 'Currently Not Accepting New Orders Due to High Demand'}. Online orders are temporarily paused.
+          </span>
+        </div>
+      )}
 
       {/* Main Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
