@@ -666,13 +666,28 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
 
   // Filtered orders list
   const filteredOrders = orders.filter((o) => {
+    const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer.mobile.includes(searchQuery);
+      !q ||
+      o.orderNumber?.toLowerCase().includes(q) ||
+      o.customer?.name?.toLowerCase().includes(q) ||
+      o.customer?.mobile?.includes(q) ||
+      o.deliveryPin?.includes(q) ||
+      o.paymentReference?.toLowerCase().includes(q);
 
-    const matchesStatus = statusFilter === 'ALL' || o.orderStatus === statusFilter;
-    const matchesPayment = paymentFilter === 'ALL' || o.paymentStatus === paymentFilter;
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      o.orderStatus === statusFilter ||
+      (statusFilter === 'PLACED' && (o.orderStatus === 'CONFIRMED' || o.orderStatus === 'PLACED' || o.orderStatus === 'PENDING'));
+
+    const matchesPayment =
+      paymentFilter === 'ALL' ||
+      o.paymentStatus === paymentFilter ||
+      (paymentFilter === 'VERIFIED' && (o.paymentStatus === 'PAYMENT_VERIFIED' || o.paymentStatus === 'VERIFIED')) ||
+      (paymentFilter === 'PAYMENT_VERIFICATION_REQUIRED' &&
+        (o.paymentStatus === 'PAYMENT_VERIFICATION_REQUIRED' || o.paymentStatus === 'PAYMENT_PENDING')) ||
+      (paymentFilter === 'PAYMENT_PENDING' &&
+        (o.paymentStatus === 'PAYMENT_PENDING' || o.paymentStatus === 'PAYMENT_VERIFICATION_REQUIRED'));
 
     return matchesSearch && matchesStatus && matchesPayment;
   });

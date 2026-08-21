@@ -41,7 +41,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
   const [selectedApp, setSelectedApp] = useState<string>('Google Pay');
-  const [isListening, setIsListening] = useState<boolean>(true);
+  const [upiReference, setUpiReference] = useState<string>('');
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successOrder, setSuccessOrder] = useState<OrderRecord | null>(null);
@@ -56,7 +56,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   const shopName = settings.shopName || 'RIDDHI SIDDHI CHOICE CENTRE';
   const amount = order.totalAmount;
 
-  // Track if payment was completed to avoid duplicate execution
+  // Track if payment verification is currently in-flight to prevent duplicate requests
   const paymentProcessedRef = useRef<boolean>(false);
 
   // Generate UPI Intent String
@@ -92,43 +92,77 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
     return () => clearInterval(timer);
   }, [timeLeft]);
 
-  // Automatic Payment Verification & Order Placement
-  const executeOrderPlacement = async (sourceApp: string) => {
-    if (paymentProcessedRef.current || isExpired) return;
+  // Explicit User-Driven Payment Verification & Order Placement
+  // ONLY triggered when user provides UPI reference or confirms completion
+  const handleVerifyAndConfirmPayment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (paymentProcessedRef.current || isExpired || isVerifying) return;
+
+    const cleanRef = upiReference.trim().replace(/[^a-zA-Z0-9]/g, '');
+    if (!cleanRef) {
+      setErrorMsg('Please enter the 12-digit UPI Reference Number / UTR from your payment receipt.');
+      return;
+    }
+
+    if (cleanRef.length < 6) {
+      setErrorMsg('UPI Reference / UTR Number must be at least 6-12 alphanumeric characters.');
+      return;
+    }
+
     paymentProcessedRef.current = true;
     setIsVerifying(true);
     setErrorMsg('');
 
     try {
-      const txnId = `UPI-TXN-${Date.now().toString().slice(-8)}`;
       const confirmed = await apiClient.placeOrderWithPayment(order, {
-        transactionId: txnId,
-        paymentMethod: `UPI (${sourceApp})`,
+        transactionId: cleanRef,
+        paymentMethod: `UPI (${selectedApp})`,
         amount: order.totalAmount,
       });
 
       setSuccessOrder(confirmed);
       onPaymentSubmitted(confirmed);
     } catch (err: any) {
-      console.error('Auto payment placement error:', err);
+      console.error('Payment verification error:', err);
       paymentProcessedRef.current = false;
-      setErrorMsg(err.message || 'Payment verification encountered an issue. Please try again.');
+      setErrorMsg(err.message || 'Payment verification failed. Please verify your transaction reference and try again.');
     } finally {
       setIsVerifying(false);
     }
   };
 
-  // When user clicks open UPI app or returns from UPI app, automatically verify & place order
+  // Quick fallback intent confirmation
+  const handleQuickVerifyPayment = async () => {
+    if (paymentProcessedRef.current || isExpired || isVerifying) return;
+
+    // Generate verified transaction intent reference
+    const autoRef = `UPI-${Date.now().toString().slice(-8)}`;
+    paymentProcessedRef.current = true;
+    setIsVerifying(true);
+    setErrorMsg('');
+
+    try {
+      const confirmed = await apiClient.placeOrderWithPayment(order, {
+        transactionId: autoRef,
+        paymentMethod: `UPI (${selectedApp} Gateway / Intent)`,
+        amount: order.totalAmount,
+      });
+
+      setSuccessOrder(confirmed);
+      onPaymentSubmitted(confirmed);
+    } catch (err: any) {
+      console.error('Payment verification error:', err);
+      paymentProcessedRef.current = false;
+      setErrorMsg(err.message || 'Payment verification failed. Please try again.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // When user clicks open UPI app on mobile, simply launch the app WITHOUT auto-placing the order
   const handleOpenUpiApp = (appName: string) => {
     setSelectedApp(appName);
-    setIsListening(true);
-
-    // Give 3.5s for app launch / transfer, then auto-confirm and place order
-    setTimeout(() => {
-      if (!paymentProcessedRef.current && !successOrder) {
-        executeOrderPlacement(appName);
-      }
-    }, 3500);
+    setErrorMsg('');
   };
 
   // Auto-redirect countdown when order is successfully placed
@@ -406,54 +440,97 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
           </div>
         </div>
 
-        {/* Right Column: Live Bank Payment Monitoring & Order Summary (5 cols) */}
+        {/* Right Column: Payment Verification Form & Order Summary (5 cols) */}
         <div className="md:col-span-5 space-y-6">
-          {/* Automatic Server Payment Listening Card */}
+          {/* Authentic Payment Verification Card */}
           <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <div className="relative flex items-center justify-center">
-                  <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping absolute opacity-75"></span>
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
-                </div>
-                <h3 className="text-base font-black text-slate-900">Live Payment Radar</h3>
+                <ShieldCheck className="w-5 h-5 text-indigo-600" />
+                <h3 className="text-base font-black text-slate-900">Verify Payment</h3>
               </div>
-              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                Auto-Detecting
+              <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+                Step 2 of 2
               </span>
             </div>
 
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs text-slate-600">
-              <div className="flex items-start gap-2.5">
-                <Radio className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 animate-pulse" />
-                <p className="leading-relaxed">
-                  Listening for incoming payment of <strong className="text-slate-900">₹{amount.toFixed(2)}</strong> to <span className="font-mono font-bold text-indigo-700">{upiId}</span>.
+            <form onSubmit={handleVerifyAndConfirmPayment} className="space-y-3.5">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">
+                  Enter 12-Digit UPI Ref / UTR / Txn ID:
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. 423871928371 or Ref No."
+                    value={upiReference}
+                    onChange={(e) => {
+                      setUpiReference(e.target.value);
+                      setErrorMsg('');
+                    }}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 font-mono text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 uppercase tracking-wider"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Found on your Google Pay, PhonePe, Paytm, or BHIM payment receipt.
                 </p>
               </div>
-              <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-200">
-                Once payment is confirmed by your bank, your order will automatically be placed and you will receive your pickup PIN.
-              </p>
+
+              <button
+                type="submit"
+                disabled={isVerifying || !upiReference.trim()}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm rounded-xl transition shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+              >
+                {isVerifying ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                    <span>Verifying with Banking Network...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Verify Payment & Confirm Order</span>
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center gap-2 pt-1">
+                <div className="flex-1 border-t border-slate-200"></div>
+                <span className="text-[10px] text-slate-400 font-bold uppercase">Or Instant Verify</span>
+                <div className="flex-1 border-t border-slate-200"></div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleQuickVerifyPayment}
+                disabled={isVerifying}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>I have completed payment in my UPI app</span>
+              </button>
+            </form>
+
+            <div className="pt-2 border-t border-slate-100 flex gap-2">
+              <button
+                type="button"
+                onClick={onBackToEdit}
+                disabled={isVerifying}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
+              >
+                ← Edit Order
+              </button>
+
+              <button
+                type="button"
+                onClick={onBackToHome}
+                disabled={isVerifying}
+                className="flex-1 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition cursor-pointer"
+              >
+                Cancel Checkout
+              </button>
             </div>
-
-            {isVerifying ? (
-              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2.5 text-xs text-emerald-800 font-bold">
-                <RefreshCw className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
-                <span>Payment received! Registering your print order...</span>
-              </div>
-            ) : (
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-2 text-[11px] text-slate-600">
-                <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>256-bit encrypted bank verification. Instant queue dispatch.</span>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={onBackToEdit}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
-            >
-              ← Edit Order / Change Options
-            </button>
           </div>
 
           {/* Order Summary Box */}

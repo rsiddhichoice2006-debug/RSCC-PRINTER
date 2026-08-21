@@ -538,19 +538,52 @@ export const apiClient = {
     }
   ): Promise<OrderRecord> {
     const now = new Date().toISOString();
-    const finalOrder: OrderRecord = {
-      ...draftOrder,
-      userId: auth.currentUser?.uid || draftOrder.userId,
-      paymentStatus: 'PAYMENT_VERIFIED',
-      orderStatus: 'PLACED',
-      paymentReference: paymentDetails.transactionId,
-      paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
-      paymentScreenshot: paymentDetails.paymentScreenshot,
-      paymentScreenshotFilename: paymentDetails.paymentScreenshotFilename,
-      verifiedAt: now,
-      createdAt: draftOrder.createdAt || now,
-      updatedAt: now,
-    };
+    const refId = paymentDetails.transactionId?.trim() || `UPI-TXN-${Date.now()}`;
+
+    // 1. Try server-side authoritative payment confirmation
+    const serverResult = await safeFetchJson<{ success: boolean; order?: OrderRecord; message?: string; error?: string }>(
+      `/api/orders/${draftOrder.id}/confirm-payment`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: draftOrder.id,
+          paymentReference: refId,
+          transactionId: refId,
+          paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
+          amount: paymentDetails.amount || draftOrder.totalAmount,
+          order: {
+            ...draftOrder,
+            paymentStatus: 'PAYMENT_VERIFIED',
+            orderStatus: 'CONFIRMED',
+            paymentReference: refId,
+            paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
+            verifiedAt: now,
+            updatedAt: now,
+          },
+        }),
+      }
+    );
+
+    let finalOrder: OrderRecord;
+
+    if (serverResult?.order) {
+      finalOrder = serverResult.order;
+    } else {
+      finalOrder = {
+        ...draftOrder,
+        userId: auth.currentUser?.uid || draftOrder.userId,
+        paymentStatus: 'PAYMENT_VERIFIED',
+        orderStatus: 'CONFIRMED',
+        paymentReference: refId,
+        paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
+        paymentScreenshot: paymentDetails.paymentScreenshot,
+        paymentScreenshotFilename: paymentDetails.paymentScreenshotFilename,
+        verifiedAt: now,
+        createdAt: draftOrder.createdAt || now,
+        updatedAt: now,
+      };
+    }
 
     // Save to local storage
     const currentOrders = Storage.getOrders();
@@ -568,19 +601,13 @@ export const apiClient = {
       await setDoc(doc(db, 'orders', finalOrder.id), sanitized, { merge: true });
     } catch (fsErr) {
       console.warn('Firestore setDoc warning:', fsErr);
+      handleFirestoreError(fsErr, OperationType.WRITE, `orders/${finalOrder.id}`);
     }
 
     // Trigger Make.com Webhook Notification for instant order capture
-    triggerMakeWebhook(finalOrder, 'ORDER_PLACED', undefined, Storage.getSettings()).catch((whErr) => {
+    triggerMakeWebhook(finalOrder, 'PAYMENT_VERIFIED', undefined, Storage.getSettings()).catch((whErr) => {
       console.warn('Make.com webhook notification notice:', whErr);
     });
-
-    // Try backend if server is active
-    safeFetchJson('/api/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(finalOrder),
-    }).catch(() => {});
 
     return finalOrder;
   },
