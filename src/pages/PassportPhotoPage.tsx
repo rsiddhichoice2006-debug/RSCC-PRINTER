@@ -26,6 +26,8 @@ import {
   Grid,
   RefreshCw,
   Lock,
+  Info,
+  Crop,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -303,7 +305,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
             Passport Size Photo Studio
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-            100% clean solid studio background replacement with zero leftover patches, zero color bleeding onto face or clothes, automatic chest-level framing, and 10 high-gloss photograph prints.
+            Upload any uncropped photo — our studio engine automatically crops, centers, and frames at official ISO/ICAO chest level with seamless studio background replacement and zero color bleeding.
           </p>
         </div>
 
@@ -417,6 +419,35 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
               </span>
             </div>
 
+            {/* Photo Guidelines & Uncropped Image Instruction Notice */}
+            <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 space-y-2.5 text-left">
+              <div className="flex items-center gap-2 text-amber-950 font-bold text-xs uppercase tracking-wide">
+                <Crop className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>Important Photo Guidelines — Please Read Before Uploading</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px] text-amber-950">
+                <div className="flex items-start gap-2 bg-white/70 p-2.5 rounded-xl border border-amber-200/60 shadow-2xs">
+                  <div className="w-5 h-5 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center shrink-0 mt-0.5 text-[10px]">
+                    1
+                  </div>
+                  <div>
+                    <strong className="font-bold text-amber-950 block">Upload Uncropped Photo:</strong>
+                    <span className="text-amber-900">Please upload the full, uncropped original picture showing the person with breathing space above the head and beside shoulders.</span>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 bg-white/70 p-2.5 rounded-xl border border-amber-200/60 shadow-2xs">
+                  <div className="w-5 h-5 rounded-full bg-emerald-200 text-emerald-900 font-bold flex items-center justify-center shrink-0 mt-0.5 text-[10px]">
+                    2
+                  </div>
+                  <div>
+                    <strong className="font-bold text-emerald-950 block">We Crop It Automatically:</strong>
+                    <span className="text-emerald-900">Do not crop the photo yourself. Our studio system automatically detects facial landmarks and crops it to official ISO/ICAO (35×45mm) chest-level standard.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {!originalPreview ? (
               <div
                 onClick={() => fileInputRef.current?.click()}
@@ -436,10 +467,10 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
 
                 <div>
                   <div className="text-base font-bold text-slate-900">
-                    Click to Upload Any Portrait / Front-Facing Photo
+                    Click to Upload Uncropped Portrait / Original Photo
                   </div>
-                  <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                    Upload any photo taken on phone or camera. The studio engine automatically frames at chest level and replaces the background cleanly.
+                  <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                    Please upload the raw, uncropped photograph. We will automatically crop, align, and frame the photo to official passport specifications.
                   </p>
                 </div>
 
@@ -448,7 +479,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                   className="inline-flex items-center gap-2 bg-slate-900 group-hover:bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs"
                 >
                   <Camera className="w-4 h-4" />
-                  <span>Choose Photograph</span>
+                  <span>Choose Uncropped Photo</span>
                 </button>
               </div>
             ) : (
@@ -681,6 +712,24 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    {/* Formal Studio Quality & Hard-Copy Notice */}
+                    <div className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-2xl flex items-start gap-3 text-left">
+                      <div className="p-1.5 bg-indigo-950 text-indigo-400 rounded-lg shrink-0 mt-0.5 border border-indigo-800/50">
+                        <Info className="w-4 h-4" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-bold text-slate-200 tracking-wide flex items-center gap-2">
+                          <span>Quality & Print Notice</span>
+                          <span className="text-[9px] bg-indigo-500/20 text-indigo-300 font-semibold px-1.5 py-0.5 rounded border border-indigo-500/30">
+                            Physical Hard Copy
+                          </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-slate-400">
+                          <strong className="text-slate-300 font-medium">Please Note:</strong> The digital preview displayed above is intended solely for layout, framing, and composition verification. Your final physical copy will be processed and printed in professional, studio-quality resolution with a high-definition laboratory finish on 250 GSM photographic stock.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   /* 10X PRINT SHEET PREVIEW (Realistic 4x6 Glossy Paper) */
@@ -723,6 +772,24 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
 
                     <div className="text-center text-[11px] text-slate-400">
                       Printed on ultra-glossy 250 GSM photographic stock with micro-perforated cutting border marks.
+                    </div>
+
+                    {/* Formal Studio Quality & Hard-Copy Notice */}
+                    <div className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-2xl flex items-start gap-3 text-left">
+                      <div className="p-1.5 bg-indigo-950 text-indigo-400 rounded-lg shrink-0 mt-0.5 border border-indigo-800/50">
+                        <Info className="w-4 h-4" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-bold text-slate-200 tracking-wide flex items-center gap-2">
+                          <span>Quality & Print Notice</span>
+                          <span className="text-[9px] bg-indigo-500/20 text-indigo-300 font-semibold px-1.5 py-0.5 rounded border border-indigo-500/30">
+                            Physical Hard Copy
+                          </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-slate-400">
+                          <strong className="text-slate-300 font-medium">Please Note:</strong> The digital preview displayed above is intended solely for layout, framing, and composition verification. Your final physical copy will be processed and printed in professional, studio-quality resolution with a high-definition laboratory finish on 250 GSM photographic stock.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
