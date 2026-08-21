@@ -15,6 +15,8 @@ import {
   LogOut,
   LogIn,
   UserPlus,
+  Ban,
+  AlertTriangle,
 } from 'lucide-react';
 import { ShopSettings } from '../types';
 import { RsccLogo } from './RsccLogo';

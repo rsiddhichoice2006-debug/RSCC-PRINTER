@@ -649,11 +649,16 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
         ...settings,
         ...editSettings,
         isAcceptingOrders: accepting,
-        pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
+        pauseOrderReason: editSettings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand',
       };
       setEditSettings(updatedSettings);
       const saved = await apiClient.updateSettings(updatedSettings);
       onUpdateSettings(saved);
+      showToast(
+        accepting
+          ? '✅ Store OPEN: Now accepting incoming customer orders.'
+          : '⛔ Store PAUSED: "Do Not Accept Orders" activated & synced across all customer devices.'
+      );
     } catch (err: any) {
       alert('Error updating order status: ' + err.message);
     }
@@ -1756,7 +1761,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setEditSettings({ ...editSettings, isAcceptingOrders: true })}
+                  onClick={() => handleToggleAcceptingOrders(true)}
                   className={`px-4 py-2 rounded-xl font-black text-xs transition cursor-pointer flex items-center gap-1.5 ${
                     editSettings.isAcceptingOrders !== false
                       ? 'bg-emerald-600 text-white shadow-md'
@@ -1768,11 +1773,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditSettings({
-                    ...editSettings,
-                    isAcceptingOrders: false,
-                    pauseOrderReason: editSettings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand',
-                  })}
+                  onClick={() => handleToggleAcceptingOrders(false)}
                   className={`px-4 py-2 rounded-xl font-black text-xs transition cursor-pointer flex items-center gap-1.5 ${
                     editSettings.isAcceptingOrders === false
                       ? 'bg-rose-600 text-white shadow-md'

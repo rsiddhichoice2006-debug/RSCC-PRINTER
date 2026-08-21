@@ -237,6 +237,26 @@ function calculateOrderPrice(params: {
   };
 }
 
+// Clean any object to ensure no `undefined` values are passed to Firestore
+export function sanitizeForFirestore<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return null as any;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => sanitizeForFirestore(item)) as any;
+  }
+  if (typeof obj === 'object') {
+    const result: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        result[key] = sanitizeForFirestore(value);
+      }
+    }
+    return result as any;
+  }
+  return obj;
+}
+
 export const apiClient = {
   // Fetch Shop Settings & Pricing from Firestore (Real-time synced across all devices)
   async getSettings(): Promise<ShopSettings> {
@@ -329,7 +349,8 @@ export const apiClient = {
     // 2. Persist to Firestore document so all devices instantly receive the update
     try {
       const docRef = doc(db, 'settings', 'shop_config');
-      await setDoc(docRef, merged, { merge: true });
+      const sanitized = sanitizeForFirestore(merged);
+      await setDoc(docRef, sanitized, { merge: true });
     } catch (fsErr) {
       console.error('Failed to sync settings to Firestore:', fsErr);
       handleFirestoreError(fsErr, OperationType.WRITE, 'settings/shop_config');
@@ -541,9 +562,10 @@ export const apiClient = {
     }
     Storage.saveOrders(currentOrders);
 
-    // Save to Firestore
+    // Save to Firestore with clean sanitization (guaranteeing no undefined fields)
     try {
-      await setDoc(doc(db, 'orders', finalOrder.id), finalOrder, { merge: true });
+      const sanitized = sanitizeForFirestore(finalOrder);
+      await setDoc(doc(db, 'orders', finalOrder.id), sanitized, { merge: true });
     } catch (fsErr) {
       console.warn('Firestore setDoc warning:', fsErr);
     }
