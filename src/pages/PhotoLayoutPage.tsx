@@ -712,6 +712,24 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Formal Studio Quality & Hard-Copy Notice */}
+              <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl flex items-start gap-3 text-left">
+                <div className="p-1.5 bg-indigo-950 text-indigo-400 rounded-lg shrink-0 mt-0.5 border border-indigo-800/50">
+                  <Info className="w-4 h-4" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-slate-200 tracking-wide flex items-center gap-2">
+                    <span>Studio Print Quality & Resolution Guarantee</span>
+                    <span className="text-[9px] bg-indigo-500/20 text-indigo-300 font-semibold px-1.5 py-0.5 rounded border border-indigo-500/30">
+                      Physical Hard Copy
+                    </span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-300">
+                    <strong>Please Note:</strong> The digital preview displayed above is for layout visualization and framing reference only. Your final physical hard copy will be precision-printed in high-definition, professional studio-quality resolution with vibrant, archival laboratory finish on 250 GSM photographic stock.
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Price Calculation & Checkout Box */}

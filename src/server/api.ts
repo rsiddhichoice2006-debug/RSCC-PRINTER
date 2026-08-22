@@ -1196,21 +1196,21 @@ Return your judgment strictly in JSON format:
     // 10. GET /api/admin/stats - Admin Dashboard Metrics
     if (pathname === '/api/admin/stats' && method === 'GET') {
       const todayStr = new Date().toISOString().slice(0, 10);
-      const todayOrders = orders.filter((o) => o.createdAt.startsWith(todayStr));
+      const todayOrders = orders.filter((o) => (o.createdAt || '').startsWith(todayStr));
 
-      const pendingOrders = orders.filter((o) => o.orderStatus === 'PENDING');
+      const pendingOrders = orders.filter((o) => o.orderStatus === 'PENDING' || o.orderStatus === 'PLACED' || o.orderStatus === 'CONFIRMED');
       const printingOrders = orders.filter((o) => o.orderStatus === 'PRINTING');
       const readyOrders = orders.filter((o) => o.orderStatus === 'READY_FOR_PICKUP');
       const completedOrders = orders.filter((o) => o.orderStatus === 'COMPLETED');
-      const pendingPayments = orders.filter((o) => o.paymentStatus === 'PAYMENT_VERIFICATION_REQUIRED');
+      const pendingPayments = orders.filter((o) => o.paymentStatus === 'PAYMENT_VERIFICATION_REQUIRED' || o.paymentStatus === 'PAYMENT_PENDING');
 
       const todayRevenue = todayOrders
-        .filter((o) => o.paymentStatus === 'PAYMENT_VERIFIED')
-        .reduce((sum, o) => sum + o.totalAmount, 0);
+        .filter((o) => o.paymentStatus === 'PAYMENT_VERIFIED' || (o.paymentStatus as string) === 'VERIFIED')
+        .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
 
       const totalRevenue = orders
-        .filter((o) => o.paymentStatus === 'PAYMENT_VERIFIED')
-        .reduce((sum, o) => sum + o.totalAmount, 0);
+        .filter((o) => o.paymentStatus === 'PAYMENT_VERIFIED' || (o.paymentStatus as string) === 'VERIFIED')
+        .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
 
       sendJson(res, 200, {
         success: true,
@@ -1224,6 +1224,10 @@ Return your judgment strictly in JSON format:
           todayRevenue,
           totalRevenue,
           totalOrdersCount: orders.length,
+          totalOrders: orders.length,
+          todayOrders: todayOrders.length,
+          pendingVerification: pendingPayments.length,
+          pendingOrders: pendingOrders.length,
         },
         recentAuditLogs: auditLogs.slice(0, 15),
       });

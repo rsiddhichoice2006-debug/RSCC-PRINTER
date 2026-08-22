@@ -180,4 +180,9 @@ export interface AdminStats {
   todayRevenue: number;
   totalRevenue: number;
   totalOrdersCount: number;
+  // Aliases for seamless UI rendering
+  totalOrders?: number;
+  todayOrders?: number;
+  pendingVerification?: number;
+  pendingOrders?: number;
 }

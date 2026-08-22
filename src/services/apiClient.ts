@@ -869,6 +869,23 @@ export const apiClient = {
     });
     emitMergedOrders();
 
+    // Immediate server fetch on mount to sync cross-browser orders instantly
+    safeFetchJson<{ success: boolean; orders: OrderRecord[] }>('/api/orders', {}, 4000).then((backendData) => {
+      if (!isSubscribed) return;
+      if (backendData?.orders && Array.isArray(backendData.orders)) {
+        let hasNew = false;
+        backendData.orders.forEach((serverOrd) => {
+          if (!serverOrd.id?.startsWith('ord-seed-') && !serverOrd.orderNumber?.startsWith('SEED-')) {
+            knownOrdersMap.set(serverOrd.id, serverOrd);
+            hasNew = true;
+          }
+        });
+        if (hasNew) {
+          emitMergedOrders();
+        }
+      }
+    }).catch(() => {});
+
     // 2. Attach Firestore onSnapshot Listener
     let unsubscribeFirestore: (() => void) | undefined;
     try {
@@ -889,7 +906,9 @@ export const apiClient = {
             if (
               !existing ||
               new Date(data.updatedAt || data.createdAt || 0).getTime() >=
-                new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+                new Date(existing.updatedAt || existing.createdAt || 0).getTime() ||
+              data.orderStatus !== existing.orderStatus ||
+              data.paymentStatus !== existing.paymentStatus
             ) {
               knownOrdersMap.set(data.id, data);
               hasChanges = true;
@@ -907,11 +926,11 @@ export const apiClient = {
       console.warn('Firestore snapshot setup warning:', e);
     }
 
-    // 3. Central Server Heartbeat Polling (every 3 seconds) to guarantee cross-device sync
+    // 3. Central Server Heartbeat Polling (every 2.5 seconds) to guarantee cross-device sync
     const serverPollInterval = setInterval(async () => {
       if (!isSubscribed) return;
       try {
-        const backendData = await safeFetchJson<{ success: boolean; orders: OrderRecord[] }>('/api/orders');
+        const backendData = await safeFetchJson<{ success: boolean; orders: OrderRecord[] }>('/api/orders', {}, 3000);
         if (backendData?.orders && Array.isArray(backendData.orders)) {
           let hasNewOrUpdated = false;
           backendData.orders.forEach((serverOrd) => {
@@ -919,7 +938,7 @@ export const apiClient = {
               const current = knownOrdersMap.get(serverOrd.id);
               if (
                 !current ||
-                new Date(serverOrd.updatedAt || serverOrd.createdAt || 0).getTime() >
+                new Date(serverOrd.updatedAt || serverOrd.createdAt || 0).getTime() >=
                   new Date(current.updatedAt || current.createdAt || 0).getTime() ||
                 serverOrd.orderStatus !== current.orderStatus ||
                 serverOrd.paymentStatus !== current.paymentStatus
@@ -936,7 +955,7 @@ export const apiClient = {
       } catch (err) {
         // Non-blocking poll notice
       }
-    }, 3000);
+    }, 2500);
 
     return () => {
       isSubscribed = false;
