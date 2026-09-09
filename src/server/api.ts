@@ -409,6 +409,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
   }
 
   try {
+    // Health Check
+    if (pathname === '/api/health' && method === 'GET') {
+      sendJson(res, 200, { success: true, status: 'ok', timestamp: new Date().toISOString() });
+      return true;
+    }
+
     // 1. GET & PUT /api/settings
     if (pathname === '/api/settings') {
       if (method === 'GET') {
@@ -548,6 +554,10 @@ Return your judgment strictly in JSON format:
       }
 
       const body = await parseJsonBody<{
+        id?: string;
+        orderNumber?: string;
+        deliveryPin?: string;
+        userId?: string;
         customer: { name: string; mobile: string; email?: string };
         mode: 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
         paperSize?: 'A4' | 'A3';
@@ -600,13 +610,14 @@ Return your judgment strictly in JSON format:
         customPricing: settings.pricing,
       });
 
-      const orderNumber = generateOrderNumber();
-      const deliveryPin = generateDeliveryPin();
+      const orderNumber = body.orderNumber || generateOrderNumber();
+      const deliveryPin = body.deliveryPin || generateDeliveryPin();
       const paymentWindowExpiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
       const newOrder: OrderItem = {
-        id: 'ord-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
+        id: body.id || 'ord-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
         orderNumber,
+        userId: body.userId || undefined,
         deliveryPin,
         customer: {
           name: body.customer.name.trim(),
@@ -628,7 +639,7 @@ Return your judgment strictly in JSON format:
         ratePerPage: calculated.ratePerPage,
         totalAmount: calculated.totalAmount,
         paymentStatus: 'PAYMENT_PENDING',
-        orderStatus: 'PENDING',
+        orderStatus: 'PLACED',
         paymentWindowExpiresAt,
         specialInstructions: body.specialInstructions?.trim() || undefined,
         internalNotes: [],
@@ -636,7 +647,12 @@ Return your judgment strictly in JSON format:
         updatedAt: new Date().toISOString(),
       };
 
-      orders.unshift(newOrder);
+      const existingIdx = orders.findIndex((o) => o.id === newOrder.id || o.orderNumber === newOrder.orderNumber);
+      if (existingIdx >= 0) {
+        orders[existingIdx] = newOrder;
+      } else {
+        orders.unshift(newOrder);
+      }
       saveOrdersToDisk();
 
       auditLogs.unshift({
@@ -700,6 +716,9 @@ Return your judgment strictly in JSON format:
       const cleanEmail = identifier.toLowerCase();
 
       const customerOrders = orders.filter((o) => {
+        if (o.userId && o.userId === identifier) {
+          return true;
+        }
         if (isEmail && o.customer.email) {
           return o.customer.email.toLowerCase() === cleanEmail;
         }
@@ -935,6 +954,8 @@ Return your judgment strictly in JSON format:
         currency?: string;
         status?: string;
         event?: string;
+        paymentScreenshot?: string;
+        paymentScreenshotFilename?: string;
         order?: OrderItem;
       }>(req);
 
@@ -981,6 +1002,9 @@ Return your judgment strictly in JSON format:
             paymentStatus: 'PAYMENT_VERIFIED',
             paymentReference: refId,
             paymentMethod: body.paymentMethod || 'UPI Online Payment',
+            paymentScreenshot: body.paymentScreenshot || body.order.paymentScreenshot,
+            paymentScreenshotFilename: body.paymentScreenshotFilename || body.order.paymentScreenshotFilename,
+            paymentScreenshotTime: (body.paymentScreenshot || body.order.paymentScreenshot) ? new Date().toISOString() : undefined,
             verifiedAt: new Date().toISOString(),
             createdAt: body.order.createdAt || new Date().toISOString(),
             updatedAt: new Date().toISOString(),
@@ -1025,6 +1049,11 @@ Return your judgment strictly in JSON format:
       verifiedOrder.paymentStatus = 'PAYMENT_VERIFIED';
       verifiedOrder.paymentReference = refId;
       verifiedOrder.paymentMethod = body.paymentMethod || verifiedOrder.paymentMethod || 'UPI Online Payment';
+      if (body.paymentScreenshot) {
+        verifiedOrder.paymentScreenshot = body.paymentScreenshot;
+        verifiedOrder.paymentScreenshotFilename = body.paymentScreenshotFilename;
+        verifiedOrder.paymentScreenshotTime = new Date().toISOString();
+      }
       verifiedOrder.verifiedAt = new Date().toISOString();
       verifiedOrder.updatedAt = new Date().toISOString();
 

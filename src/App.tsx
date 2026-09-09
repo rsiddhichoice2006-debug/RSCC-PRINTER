@@ -122,8 +122,9 @@ function MainApp() {
           mobile: orderPayload.customer?.mobile || customerProfile?.mobile || '',
         },
       };
-      const draftOrder = apiClient.createDraftOrder(enhancedPayload);
-      setActiveOrder(draftOrder);
+      // Immediately register the order on central server & Firestore so Admin Portal on other devices reflects it right away
+      const createdOrder = await apiClient.createOrder(enhancedPayload);
+      setActiveOrder(createdOrder);
       setCurrentPage('payment');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err: any) {

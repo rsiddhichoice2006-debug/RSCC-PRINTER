@@ -150,7 +150,7 @@ export function sanitizeOrderForStorage(order: OrderRecord): OrderRecord {
 }
 
 // Safe fetch wrapper that handles unexpected JSON, empty responses, and has timeout protection
-async function safeFetchJson<T>(url: string, options?: RequestInit, timeoutMs = 3500): Promise<T | null> {
+async function safeFetchJson<T>(url: string, options?: RequestInit, timeoutMs = 8000): Promise<T | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -588,7 +588,7 @@ export const apiClient = {
 
     let finalOrder: OrderRecord = lightweightDraft;
 
-    // 1. Attempt server-side authoritative order confirmation (with 3.5s timeout)
+    // 1. Attempt server-side authoritative order confirmation
     try {
       const serverResult = await safeFetchJson<{ success: boolean; order?: OrderRecord; message?: string; error?: string }>(
         `/api/orders/${lightweightDraft.id}/confirm-payment`,
@@ -601,10 +601,12 @@ export const apiClient = {
             transactionId: refId,
             paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
             amount: paymentDetails.amount || lightweightDraft.totalAmount,
+            paymentScreenshot: paymentDetails.paymentScreenshot,
+            paymentScreenshotFilename: paymentDetails.paymentScreenshotFilename,
             order: lightweightDraft,
           }),
         },
-        3500
+        8000
       );
 
       if (serverResult?.order) {
