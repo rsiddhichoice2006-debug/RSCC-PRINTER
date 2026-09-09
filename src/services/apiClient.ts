@@ -447,25 +447,54 @@ export const apiClient = {
 
   // Customer: Login
   async loginCustomer(payload: {
-    mobile: string;
+    mobile?: string;
+    email?: string;
+    identifier?: string;
     password?: string;
   }): Promise<{ customer: CustomerUser; message: string }> {
+    const rawIdentifier = (payload.identifier || payload.mobile || payload.email || '').trim();
+    const isEmail = rawIdentifier.includes('@');
+    const cleanMobile = rawIdentifier.replace(/\D/g, '').slice(-10);
+
     const backendData = await safeFetchJson<{ success: boolean; customer: CustomerUser; message: string; error?: string }>(
       '/api/customer/login',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          identifier: rawIdentifier,
+          mobile: cleanMobile || undefined,
+          email: isEmail ? rawIdentifier : undefined,
+          password: payload.password,
+        }),
       }
     );
 
     if (backendData?.customer) {
+      // Also sync to local storage
+      const customers = Storage.getCustomers();
+      const existingIdx = customers.findIndex(
+        (c) => c.id === backendData.customer.id || (cleanMobile && c.mobile === cleanMobile)
+      );
+      if (existingIdx >= 0) {
+        customers[existingIdx] = { ...customers[existingIdx], ...backendData.customer };
+      } else {
+        customers.push(backendData.customer);
+      }
+      Storage.saveCustomers(customers);
       return backendData;
     }
 
-    const cleanMobile = payload.mobile.replace(/\D/g, '').slice(-10);
+    if (backendData?.error) {
+      throw new Error(backendData.error);
+    }
+
     const customers = Storage.getCustomers();
-    const existing = customers.find((c) => c.mobile === cleanMobile);
+    const existing = customers.find((c) => {
+      if (isEmail && c.email) return c.email.toLowerCase() === rawIdentifier.toLowerCase();
+      if (cleanMobile.length >= 10) return c.mobile === cleanMobile;
+      return false;
+    });
 
     if (existing) {
       return {
@@ -474,20 +503,25 @@ export const apiClient = {
       };
     }
 
-    // Auto-create basic profile
-    const guestCustomer: CustomerUser = {
-      id: 'cust-' + Date.now(),
-      name: 'Customer ' + cleanMobile.slice(-4),
-      mobile: cleanMobile,
-      createdAt: new Date().toISOString(),
-    };
-    customers.push(guestCustomer);
-    Storage.saveCustomers(customers);
+    // Auto-create basic profile if mobile number was provided
+    if (cleanMobile.length >= 10) {
+      const guestCustomer: CustomerUser = {
+        id: 'cust-' + Date.now(),
+        name: 'Customer ' + cleanMobile.slice(-4),
+        mobile: cleanMobile,
+        email: `${cleanMobile}@customer.rscc.in`,
+        createdAt: new Date().toISOString(),
+      };
+      customers.push(guestCustomer);
+      Storage.saveCustomers(customers);
 
-    return {
-      customer: guestCustomer,
-      message: 'Signed in successfully',
-    };
+      return {
+        customer: guestCustomer,
+        message: 'Signed in successfully',
+      };
+    }
+
+    throw new Error('No account found. Please check your credentials or create a new account.');
   },
 
   // Create Draft Order in memory (Amazon/Flipkart model: not placed to database until payment is done)

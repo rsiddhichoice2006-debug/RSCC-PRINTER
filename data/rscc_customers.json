@@ -1,0 +1,18 @@
+[
+  {
+    "id": "cust-default-001",
+    "name": "RSCC Valued Customer",
+    "mobile": "9967842065",
+    "email": "rsiddhi.choice.2006@gmail.com",
+    "passwordHash": "pass123",
+    "createdAt": "2026-09-09T06:59:04.082Z"
+  },
+  {
+    "id": "cust-1788937163967-q662d",
+    "name": "Test User",
+    "mobile": "9876543219",
+    "email": "test@example.com",
+    "passwordHash": "testpassword",
+    "createdAt": "2026-09-09T06:59:23.967Z"
+  }
+]

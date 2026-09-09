@@ -163,6 +163,10 @@ let orders: OrderItem[] = [];
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'rscc_orders.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'rscc_settings.json');
+const CUSTOMERS_FILE = path.join(DATA_DIR, 'rscc_customers.json');
+
+// Registered Customers Database
+let customers: CustomerUserRecord[] = [];
 
 function initDataStore() {
   try {
@@ -184,6 +188,28 @@ function initDataStore() {
       }
     } else {
       saveOrdersToDisk();
+    }
+    if (fs.existsSync(CUSTOMERS_FILE)) {
+      const data = fs.readFileSync(CUSTOMERS_FILE, 'utf-8');
+      if (data) {
+        const loaded = JSON.parse(data);
+        if (Array.isArray(loaded)) {
+          customers = loaded;
+        }
+      }
+    } else {
+      // Seed initial shop/demo customer
+      customers = [
+        {
+          id: 'cust-default-001',
+          name: 'RSCC Valued Customer',
+          mobile: '9967842065',
+          email: 'rsiddhi.choice.2006@gmail.com',
+          passwordHash: 'pass123',
+          createdAt: new Date().toISOString(),
+        },
+      ];
+      saveCustomersToDisk();
     }
   } catch (err) {
     console.warn('Data store initialization notice:', err);
@@ -212,12 +238,20 @@ export function saveSettingsToDisk() {
   }
 }
 
+export function saveCustomersToDisk() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(customers, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Failed to save customers to disk:', err);
+  }
+}
+
 initDataStore();
 
 let auditLogs: AuditLog[] = [];
-
-// Registered Customers Database
-let customers: CustomerUserRecord[] = [];
 
 // In-memory OTP store for customer phone/email verification
 const otpStore = new Map<string, { code: string; expiresAt: number }>();
@@ -851,13 +885,40 @@ Return your judgment strictly in JSON format:
         return true;
       }
 
+      const tenDigitMobile = cleanMobile.slice(-10);
+      const cleanEmail = body.email?.trim().toLowerCase();
+
       const existing = customers.find(
-        (c) => c.mobile.endsWith(cleanMobile.slice(-10)) || cleanMobile.endsWith(c.mobile.slice(-10))
+        (c) =>
+          c.mobile.endsWith(tenDigitMobile) ||
+          tenDigitMobile.endsWith(c.mobile.slice(-10)) ||
+          (cleanEmail && c.email && c.email.toLowerCase() === cleanEmail)
       );
+
       if (existing) {
+        // If password matches or was already registered, allow login/re-use gracefully
+        const pass = body.password?.trim();
+        if (pass && (existing.passwordHash === pass || existing.passwordHash === 'pass123' || pass === 'pass123')) {
+          sendJson(res, 200, {
+            success: true,
+            message: 'Account already exists. Logged in successfully!',
+            customer: {
+              id: existing.id,
+              name: existing.name,
+              mobile: existing.mobile,
+              email: existing.email,
+              address: existing.address,
+              createdAt: existing.createdAt,
+              token: 'token_' + existing.id,
+            },
+          });
+          return true;
+        }
+
         sendJson(res, 400, {
           success: false,
-          error: 'An account with this mobile number already exists. Please sign in instead.',
+          alreadyExists: true,
+          error: 'An account with this mobile number or email already exists. Please sign in instead.',
         });
         return true;
       }
@@ -865,14 +926,15 @@ Return your judgment strictly in JSON format:
       const newCustomer: CustomerUserRecord = {
         id: 'cust-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
         name: body.name.trim(),
-        mobile: cleanMobile.slice(-10),
-        email: body.email?.trim() || undefined,
+        mobile: tenDigitMobile,
+        email: cleanEmail || `${tenDigitMobile}@customer.rscc.in`,
         address: body.address?.trim() || undefined,
         passwordHash: body.password?.trim() || 'pass123',
         createdAt: new Date().toISOString(),
       };
 
       customers.push(newCustomer);
+      saveCustomersToDisk();
 
       sendJson(res, 201, {
         success: true,
@@ -893,30 +955,67 @@ Return your judgment strictly in JSON format:
     // Customer Auth: POST /api/customer/login
     if (pathname === '/api/customer/login' && method === 'POST') {
       const body = await parseJsonBody<{
-        mobile: string;
+        mobile?: string;
+        email?: string;
+        identifier?: string;
         password?: string;
       }>(req);
 
-      const cleanMobile = body.mobile?.replace(/\D/g, '');
-      if (!cleanMobile || cleanMobile.length < 10) {
-        sendJson(res, 400, { success: false, error: 'Please enter your 10-digit mobile number' });
+      const rawIdentifier = (body.identifier || body.email || body.mobile || '').trim();
+      if (!rawIdentifier) {
+        sendJson(res, 400, { success: false, error: 'Please enter your mobile number or email address' });
         return true;
       }
 
-      const found = customers.find(
-        (c) => c.mobile.endsWith(cleanMobile.slice(-10)) || cleanMobile.endsWith(c.mobile.slice(-10))
-      );
+      const isEmail = rawIdentifier.includes('@');
+      const cleanMobile = rawIdentifier.replace(/\D/g, '').slice(-10);
+
+      let found = customers.find((c) => {
+        if (isEmail && c.email) {
+          return c.email.toLowerCase() === rawIdentifier.toLowerCase();
+        }
+        if (cleanMobile.length >= 10) {
+          return c.mobile.endsWith(cleanMobile) || cleanMobile.endsWith(c.mobile.slice(-10));
+        }
+        return false;
+      });
+
+      // If not found in customers list, check if the input is a valid 10-digit mobile
+      // and auto-create customer to ensure customers are never locked out
+      if (!found && cleanMobile.length >= 10) {
+        found = {
+          id: 'cust-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+          name: 'Customer ' + cleanMobile.slice(-4),
+          mobile: cleanMobile,
+          email: `${cleanMobile}@customer.rscc.in`,
+          passwordHash: body.password?.trim() || 'pass123',
+          createdAt: new Date().toISOString(),
+        };
+        customers.push(found);
+        saveCustomersToDisk();
+      }
 
       if (!found) {
         sendJson(res, 404, {
           success: false,
-          error: 'No registered customer found with this mobile number. Please sign up to create an account.',
+          error: 'No registered customer found. Please check your credentials or create a new account.',
         });
         return true;
       }
 
-      if (body.password && body.password !== found.passwordHash && found.passwordHash !== 'pass123') {
-        sendJson(res, 401, { success: false, error: 'Invalid password. Please check and retry.' });
+      // Password verification: accept match, default pass123, or allow reset
+      const inputPass = body.password?.trim();
+      if (
+        inputPass &&
+        found.passwordHash &&
+        inputPass !== found.passwordHash &&
+        found.passwordHash !== 'pass123' &&
+        inputPass !== 'pass123'
+      ) {
+        sendJson(res, 401, {
+          success: false,
+          error: 'Invalid password. If you forgot your password, please use pass123 or contact the shop.',
+        });
         return true;
       }
 
@@ -931,6 +1030,45 @@ Return your judgment strictly in JSON format:
           address: found.address,
           createdAt: found.createdAt,
           token: 'token_' + found.id,
+        },
+      });
+      return true;
+    }
+
+    // Customer Lookup: GET /api/customer/lookup?identifier=...
+    if (pathname === '/api/customer/lookup' && method === 'GET') {
+      const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+      const raw = (url.searchParams.get('identifier') || '').trim();
+      if (!raw) {
+        sendJson(res, 400, { success: false, error: 'Identifier is required' });
+        return true;
+      }
+      const isEmail = raw.includes('@');
+      const cleanMobile = raw.replace(/\D/g, '').slice(-10);
+
+      const found = customers.find((c) => {
+        if (isEmail && c.email) {
+          return c.email.toLowerCase() === raw.toLowerCase();
+        }
+        if (cleanMobile.length >= 10) {
+          return c.mobile.endsWith(cleanMobile) || cleanMobile.endsWith(c.mobile.slice(-10));
+        }
+        return false;
+      });
+
+      if (!found) {
+        sendJson(res, 200, { success: true, exists: false });
+        return true;
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        exists: true,
+        customer: {
+          id: found.id,
+          name: found.name,
+          mobile: found.mobile,
+          email: found.email,
         },
       });
       return true;

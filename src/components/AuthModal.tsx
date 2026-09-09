@@ -13,6 +13,8 @@ import {
   LogIn,
   UserPlus,
   RefreshCw,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { RsccLogo } from './RsccLogo';
@@ -36,8 +38,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     isAuthModalOpen: contextIsOpen,
     closeAuthModal: contextCloseModal,
     authModalMode: contextMode,
-    signInWithEmail,
-    signUpWithEmail,
+    signIn,
+    signUp,
     signInWithGoogle,
   } = useAuth();
 
@@ -46,11 +48,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const initialMode = propsInitialMode || contextMode || 'login';
 
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
+  const [identifier, setIdentifier] = useState(''); // Mobile number or email
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [errorType, setErrorType] = useState<'already-registered' | 'not-found' | 'general'>('general');
   const [loading, setLoading] = useState(false);
 
   // Sync mode when modal opens or initialMode changes
@@ -58,6 +63,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     if (isVisible) {
       setMode(propsInitialMode || contextMode || 'login');
       setErrorMsg('');
+      setErrorType('general');
+      setShowPassword(false);
     }
   }, [isVisible, propsInitialMode, contextMode]);
 
@@ -71,9 +78,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     contextCloseModal();
   };
 
+  const handleQuickDemo = () => {
+    if (mode === 'login') {
+      setIdentifier('9967842065');
+      setPassword('pass123');
+    } else {
+      setName('Demo Customer');
+      setMobile('9967842065');
+      setEmail('demo@customer.rscc.in');
+      setPassword('pass123');
+    }
+    setErrorMsg('');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setErrorType('general');
     setLoading(true);
 
     try {
@@ -81,15 +102,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         if (!name.trim()) throw new Error('Please enter your full name');
         const cleanMobile = mobile.replace(/\D/g, '');
         if (cleanMobile.length < 10) throw new Error('Please enter a valid 10-digit mobile number');
-        if (!email.trim() || !email.includes('@')) throw new Error('Please enter a valid email address');
         if (password.length < 6) throw new Error('Password must be at least 6 characters');
 
-        await signUpWithEmail(name, cleanMobile, email, password);
+        await signUp(name, cleanMobile, email.trim() || undefined, password);
       } else {
-        if (!email.trim() || !email.includes('@')) throw new Error('Please enter your valid email address');
+        if (!identifier.trim()) throw new Error('Please enter your mobile number or email address');
         if (!password) throw new Error('Please enter your password');
 
-        await signInWithEmail(email, password);
+        await signIn(identifier.trim(), password);
       }
 
       if (propsOnAuthenticated) {
@@ -99,21 +119,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } catch (err: any) {
       console.error('Auth error:', err);
       let msg = err.message || 'Authentication failed. Please check your credentials.';
+      let type: 'already-registered' | 'not-found' | 'general' = 'general';
+
       if (
         err.code === 'auth/user-not-found' ||
         err.code === 'auth/wrong-password' ||
         err.code === 'auth/invalid-credential' ||
-        err.code === 'auth/invalid-login-credentials'
+        err.code === 'auth/invalid-login-credentials' ||
+        msg.toLowerCase().includes('no registered') ||
+        msg.toLowerCase().includes('not found')
       ) {
-        msg = 'Invalid email or password. Please verify your credentials or create a new account.';
-      } else if (err.code === 'auth/email-already-in-use') {
-        msg = 'This email is already registered. Please click "Sign In" above to sign in.';
+        msg = 'No matching account found with these credentials. Please check or create a new account.';
+        type = 'not-found';
+      } else if (
+        err.code === 'auth/email-already-in-use' ||
+        msg.toLowerCase().includes('already exists') ||
+        msg.toLowerCase().includes('already registered')
+      ) {
+        msg = 'An account with this mobile number or email already exists. Please sign in instead.';
+        type = 'already-registered';
       } else if (err.code === 'auth/weak-password') {
         msg = 'Password is too weak. Please use at least 6 characters.';
       } else if (err.code === 'auth/invalid-email') {
-        msg = 'Please enter a valid email address format.';
+        msg = 'Please enter a valid email address or 10-digit mobile number.';
       }
       setErrorMsg(msg);
+      setErrorType(type);
     } finally {
       setLoading(false);
     }
@@ -121,6 +152,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleGoogleLogin = async () => {
     setErrorMsg('');
+    setErrorType('general');
     setLoading(true);
     try {
       await signInWithGoogle();
@@ -133,10 +165,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (err.code === 'auth/unauthorized-domain') {
         const currentDomain = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
         setErrorMsg(
-          `Google Sign-In is not allowed from "${currentDomain}". To enable Google Login, add "${currentDomain}" in your Firebase Console > Authentication > Settings > Authorized Domains. Meanwhile, please use the Email & Password sign-in/registration form below!`
+          `Google Sign-In is restricted for domain "${currentDomain}". Please use the instant Mobile / Email sign-in form below.`
         );
       } else if (err.code !== 'auth/popup-closed-by-user') {
-        setErrorMsg(err.message || 'Google sign in failed. Please use email & password sign in below.');
+        setErrorMsg(err.message || 'Google sign in failed. Please use mobile or email sign in below.');
       }
     } finally {
       setLoading(false);
@@ -170,8 +202,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
           <p className="text-xs text-slate-300 mt-2">
             {mode === 'login'
-              ? 'Sign in with your email and password to view your bookings and place orders.'
-              : 'Register your email account to place print bookings and access your orders.'}
+              ? 'Sign in with your 10-digit mobile number or email to view past orders and pickup PINs.'
+              : 'Register your mobile account in seconds to place print orders and track live jobs.'}
           </p>
 
           {/* Mode Switch Tabs */}
@@ -181,6 +213,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               onClick={() => {
                 setMode('login');
                 setErrorMsg('');
+                setErrorType('general');
               }}
               className={`py-2 text-xs font-black rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
                 mode === 'login'
@@ -196,6 +229,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               onClick={() => {
                 setMode('signup');
                 setErrorMsg('');
+                setErrorType('general');
               }}
               className={`py-2 text-xs font-black rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
                 mode === 'signup'
@@ -212,17 +246,49 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Body Form */}
         <div className="p-6 space-y-4">
           {errorMsg && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2 animate-in fade-in">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl space-y-2 animate-in fade-in">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{errorMsg}</span>
+              </div>
+              {errorType === 'already-registered' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('login');
+                    setIdentifier(mobile || email);
+                    setErrorMsg('');
+                  }}
+                  className="text-xs font-bold text-indigo-700 hover:text-indigo-900 underline ml-6 cursor-pointer block"
+                >
+                  Already have this account? Click here to Sign In &rarr;
+                </button>
+              )}
+              {errorType === 'not-found' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('signup');
+                    if (identifier.includes('@')) {
+                      setEmail(identifier);
+                    } else if (identifier.replace(/\D/g, '').length >= 10) {
+                      setMobile(identifier.replace(/\D/g, '').slice(-10));
+                    }
+                    setErrorMsg('');
+                  }}
+                  className="text-xs font-bold text-indigo-700 hover:text-indigo-900 underline ml-6 cursor-pointer block"
+                >
+                  New here? Click here to Create New Account &rarr;
+                </button>
+              )}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3.5">
-            {mode === 'signup' && (
+            {mode === 'signup' ? (
               <>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
@@ -238,7 +304,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    WhatsApp / Mobile Number (10 Digits)
+                    WhatsApp / Mobile Number (10 Digits) *
                   </label>
                   <div className="relative">
                     <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -252,35 +318,64 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     />
                   </div>
                 </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-700">Email Address</label>
+                    <span className="text-[10px] text-slate-400 font-medium">Optional (for receipts)</span>
+                  </div>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="email"
+                      placeholder="name@example.com (optional)"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition"
+                    />
+                  </div>
+                </div>
               </>
+            ) : (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Mobile Number or Email Address *
+                </label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="e.g. 9876543210 or name@example.com"
+                    value={identifier}
+                    onChange={(e) => setIdentifier(e.target.value)}
+                    required
+                    className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition"
+                  />
+                </div>
+              </div>
             )}
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="email"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition"
-                />
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700">Password *</label>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-[11px] text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  <span>{showPassword ? 'Hide' : 'Show'}</span>
+                </button>
               </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition"
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition"
                 />
               </div>
               {mode === 'signup' && (
@@ -296,11 +391,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {loading ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Signing In...</span>
+                  <span>{mode === 'login' ? 'Signing In...' : 'Creating Account...'}</span>
                 </>
               ) : mode === 'login' ? (
                 <>
-                  <span>Sign In with Email</span>
+                  <span>Sign In</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               ) : (
@@ -312,8 +407,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </button>
           </form>
 
+          {/* Quick Demo Fill */}
+          <div className="pt-1 flex items-center justify-center">
+            <button
+              type="button"
+              onClick={handleQuickDemo}
+              className="text-[11px] text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-lg transition font-semibold cursor-pointer flex items-center gap-1.5"
+            >
+              <Sparkles className="w-3 h-3 text-amber-600" />
+              <span>Fill Quick Demo Account (9967842065)</span>
+            </button>
+          </div>
+
           {/* Divider */}
-          <div className="relative flex items-center justify-center my-2">
+          <div className="relative flex items-center justify-center my-1">
             <div className="border-t border-slate-200 w-full"></div>
             <span className="bg-white px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
               OR
@@ -353,7 +460,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <div className="bg-slate-50 border-t border-slate-100 p-4 text-center">
           <div className="flex items-center justify-center gap-1 text-[11px] text-slate-500 font-medium">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Secure Firebase Authentication • RSCC Portal</span>
+            <span>Encrypted Customer Authentication • RSCC Portal</span>
           </div>
         </div>
       </div>

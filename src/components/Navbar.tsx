@@ -162,17 +162,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Right Action Suite */}
             <div className="hidden sm:flex items-center gap-2.5">
               {/* Customer Account Button */}
-              {currentUser ? (
+              {(currentUser || customerProfile) ? (
                 <div className="relative">
                   <button
                     onClick={() => setUserDropdownOpen(!userDropdownOpen)}
                     className="text-xs font-semibold text-slate-800 hover:text-slate-950 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-3 py-2 rounded-xl transition flex items-center gap-2 cursor-pointer shadow-2xs"
                   >
                     <div className="w-5 h-5 rounded-md bg-slate-950 text-amber-400 flex items-center justify-center font-bold text-[10px]">
-                      {(customerProfile?.name || currentUser.displayName || currentUser.email || 'U')[0].toUpperCase()}
+                      {(customerProfile?.name || currentUser?.displayName || currentUser?.email || 'U')[0].toUpperCase()}
                     </div>
                     <span className="max-w-[110px] truncate">
-                      {customerProfile?.name || currentUser.displayName || currentUser.email?.split('@')[0] || 'Account'}
+                      {customerProfile?.name || currentUser?.displayName || currentUser?.email?.split('@')[0] || customerProfile?.mobile || 'Account'}
                     </span>
                   </button>
 
@@ -180,15 +180,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <div className="absolute right-0 mt-1.5 w-56 bg-white rounded-2xl shadow-xl border border-slate-200/90 py-2 z-50 animate-in fade-in zoom-in-95 divide-y divide-slate-100">
                       <div className="px-3.5 py-2">
                         <p className="text-xs font-bold text-slate-900 truncate">
-                          {customerProfile?.name || currentUser.displayName || 'Verified Customer'}
+                          {customerProfile?.name || currentUser?.displayName || 'Verified Customer'}
                         </p>
                         <p className="text-[10px] text-slate-500 font-mono-code truncate mt-0.5">
-                          {currentUser.email || customerProfile?.mobile}
+                          {customerProfile?.mobile ? `+91 ${customerProfile.mobile}` : currentUser?.email || 'Customer ID: ' + (customerProfile?.id || '')}
                         </p>
                       </div>
 
                       <div className="py-1">
-                        {(isAdminLoggedIn || currentUser.email?.toLowerCase() === 'rsiddhi.choice.2006@gmail.com') && (
+                        {(isAdminLoggedIn || currentUser?.email?.toLowerCase() === 'rsiddhi.choice.2006@gmail.com') && (
                           <button
                             onClick={() => {
                               setUserDropdownOpen(false);
@@ -314,18 +314,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             })}
 
             <div className="pt-3 border-t border-slate-100 space-y-2">
-              {currentUser ? (
+              {(currentUser || customerProfile) ? (
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded-lg bg-slate-950 text-amber-400 flex items-center justify-center font-bold text-xs">
-                      {(customerProfile?.name || currentUser.displayName || currentUser.email || 'U')[0].toUpperCase()}
+                      {(customerProfile?.name || currentUser?.displayName || currentUser?.email || 'U')[0].toUpperCase()}
                     </div>
                     <div>
                       <div className="text-xs font-bold text-slate-900 truncate">
-                        {customerProfile?.name || currentUser.displayName || 'Customer'}
+                        {customerProfile?.name || currentUser?.displayName || 'Customer'}
                       </div>
                       <div className="text-[10px] text-slate-500 font-mono-code truncate">
-                        {currentUser.email || customerProfile?.mobile}
+                        {customerProfile?.mobile ? `+91 ${customerProfile.mobile}` : currentUser?.email || 'Customer'}
                       </div>
                     </div>
                   </div>

@@ -39,6 +39,7 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
   onOpenAuthModal,
 }) => {
   const { currentUser, customerProfile, logout, openAuthModal } = useAuth();
+  const isAuthenticated = !!(currentUser || customerProfile);
 
   // Orders State (isolated strictly to verified customer)
   const [customerOrders, setCustomerOrders] = useState<OrderRecord[]>([]);
@@ -47,14 +48,40 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
   const [copiedPin, setCopiedPin] = useState<string | null>(null);
   const [copiedOrder, setCopiedOrder] = useState<string | null>(null);
 
-  // Load orders strictly for the authenticated customer
-  const loadOrdersForCustomer = async (identifier: string) => {
-    if (!identifier) return;
+  // Load orders strictly for the authenticated customer across all their identifiers
+  const loadOrdersForCustomer = async (identifier?: string) => {
     setLoadingOrders(true);
     setErrorMsg('');
     try {
-      const orders = await apiClient.getCustomerOrders(identifier);
-      setCustomerOrders(orders);
+      const queries = new Set<string>();
+      if (identifier) queries.add(identifier.trim());
+      if (customerProfile?.mobile) queries.add(customerProfile.mobile.trim());
+      if (customerProfile?.email) queries.add(customerProfile.email.trim());
+      if (customerProfile?.id) queries.add(customerProfile.id.trim());
+      if (currentUser?.email) queries.add(currentUser.email.trim());
+      if (currentUser?.uid) queries.add(currentUser.uid.trim());
+
+      if (queries.size === 0) {
+        setCustomerOrders([]);
+        return;
+      }
+
+      const allOrders: OrderRecord[] = [];
+      const seenIds = new Set<string>();
+
+      for (const q of queries) {
+        if (!q) continue;
+        const res = await apiClient.getCustomerOrders(q);
+        for (const ord of res) {
+          if (!seenIds.has(ord.id)) {
+            seenIds.add(ord.id);
+            allOrders.push(ord);
+          }
+        }
+      }
+
+      allOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      setCustomerOrders(allOrders);
     } catch (err: any) {
       console.warn('Could not fetch orders:', err);
       setErrorMsg(err.message || 'Could not fetch your order history.');
@@ -64,17 +91,14 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
     }
   };
 
-  // Automatically sync with Firebase currentUser if logged in
+  // Automatically sync when logged in
   useEffect(() => {
-    if (currentUser) {
-      const activeId = currentUser.uid || currentUser.email || customerProfile?.mobile || '';
-      if (activeId) {
-        loadOrdersForCustomer(activeId);
-      }
+    if (isAuthenticated) {
+      loadOrdersForCustomer();
     } else {
       setCustomerOrders([]);
     }
-  }, [currentUser, customerProfile]);
+  }, [isAuthenticated, currentUser, customerProfile]);
 
   const handleOpenLogin = (mode: 'login' | 'signup' = 'login') => {
     if (onOpenAuthModal) {
@@ -165,15 +189,20 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
         </div>
 
         {/* Logged In User Account Status */}
-        {currentUser && (
+        {isAuthenticated && (
           <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
               <span className="text-xs text-slate-300">
                 Signed In As:{' '}
                 <strong className="text-amber-400 font-mono">
-                  {currentUser.email || customerProfile?.name || 'Customer'}
+                  {customerProfile?.name || currentUser?.displayName || customerProfile?.mobile || currentUser?.email || 'Customer'}
                 </strong>
+                {customerProfile?.mobile && (
+                  <span className="text-slate-400 text-[11px] ml-1.5 font-mono">
+                    ({customerProfile.mobile})
+                  </span>
+                )}
               </span>
               <span className="bg-emerald-950 text-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-800">
                 ✓ Account Verified
@@ -182,9 +211,7 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() =>
-                  loadOrdersForCustomer(currentUser.uid || currentUser.email || customerProfile?.mobile || '')
-                }
+                onClick={() => loadOrdersForCustomer()}
                 disabled={loadingOrders}
                 className="text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
               >
@@ -213,7 +240,7 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
       )}
 
       {/* STATE 1: PLEASE SIGN IN PROMPT (When not logged in) */}
-      {!currentUser ? (
+      {!isAuthenticated ? (
         <div className="bg-white rounded-3xl p-8 sm:p-12 border border-slate-200 shadow-md text-center space-y-6 max-w-lg mx-auto">
           <div className="w-16 h-16 bg-amber-100 text-amber-900 rounded-3xl flex items-center justify-center mx-auto shadow-inner">
             <Lock className="w-8 h-8 text-amber-600" />

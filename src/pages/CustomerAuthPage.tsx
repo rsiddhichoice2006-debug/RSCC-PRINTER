@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { CustomerUser, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
+import { useAuth } from '../context/AuthContext';
 
 interface CustomerAuthPageProps {
   settings: ShopSettings;
@@ -29,6 +30,7 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
   onLoginSuccess,
   onNavigate,
 }) => {
+  const { loginCustomerDirect } = useAuth();
   const [activeTab, setActiveTab] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -48,9 +50,17 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanMobile = loginMobile.replace(/\D/g, '');
-    if (!cleanMobile || cleanMobile.length < 10) {
-      setErrorMsg('Please enter a valid 10-digit mobile number.');
+    const rawInput = loginMobile.trim();
+    if (!rawInput) {
+      setErrorMsg('Please enter your mobile number or email address.');
+      return;
+    }
+
+    const isEmail = rawInput.includes('@');
+    const cleanMobile = rawInput.replace(/\D/g, '').slice(-10);
+
+    if (!isEmail && cleanMobile.length < 10) {
+      setErrorMsg('Please enter a valid 10-digit mobile number or email address.');
       return;
     }
 
@@ -60,17 +70,20 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
 
     try {
       const res = await apiClient.loginCustomer({
-        mobile: cleanMobile,
+        identifier: rawInput,
+        mobile: !isEmail ? cleanMobile : undefined,
+        email: isEmail ? rawInput.toLowerCase() : undefined,
         password: loginPassword,
       });
 
       setSuccessMsg(`Welcome back, ${res.customer.name}!`);
+      loginCustomerDirect(res.customer);
       onLoginSuccess(res.customer);
       setTimeout(() => {
         onNavigate('my-orders');
       }, 800);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Login failed. Please verify credentials.');
+      setErrorMsg(err.message || 'Login failed. Please verify credentials or create a new account.');
     } finally {
       setLoading(false);
     }
@@ -83,7 +96,7 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
       return;
     }
 
-    const cleanMobile = regMobile.replace(/\D/g, '');
+    const cleanMobile = regMobile.replace(/\D/g, '').slice(-10);
     if (!cleanMobile || cleanMobile.length < 10) {
       setErrorMsg('Please enter a valid 10-digit mobile number.');
       return;
@@ -103,6 +116,7 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
       });
 
       setSuccessMsg(`Account created successfully! Welcome, ${res.customer.name}!`);
+      loginCustomerDirect(res.customer);
       onLoginSuccess(res.customer);
       setTimeout(() => {
         onNavigate('my-orders');
@@ -194,16 +208,15 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
-                10-Digit Mobile Number <span className="text-rose-500">*</span>
+                Mobile Number or Email Address <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
-                <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
-                  type="tel"
-                  placeholder="e.g. 9876543210"
+                  type="text"
+                  placeholder="e.g. 9876543210 or name@example.com"
                   value={loginMobile}
                   onChange={(e) => setLoginMobile(e.target.value)}
-                  maxLength={10}
                   className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
                   required
                 />
