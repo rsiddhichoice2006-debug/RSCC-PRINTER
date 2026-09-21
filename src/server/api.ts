@@ -40,6 +40,9 @@ interface ShopSettings {
   pickupTimings: string;
   isAcceptingOrders?: boolean;
   pauseOrderReason?: string;
+  webhookUrl?: string;
+  autoNotifyReadyWhatsApp?: boolean;
+  whatsAppSenderPhone?: string;
   pricing: ShopPricing;
 }
 
@@ -91,6 +94,7 @@ export interface OrderItem {
   ocrDetectedUpiId?: string;
   ocrVerifiedTime?: boolean;
   ocrTimeDiffMinutes?: number;
+  whatsappNotifiedAt?: string;
   specialInstructions?: string;
   internalNotes?: string[];
   createdAt: string;
@@ -122,16 +126,18 @@ const defaultSettings: ShopSettings = {
   shopName: 'Riddhi Siddhi Choice Centre',
   shortName: 'RSCC',
   tagline: 'Online Printing & Document Services',
-  phone: '+91 9967842065',
-  whatsapp: '9967842065',
+  phone: '+91 8652411690',
+  whatsapp: '8652411690',
   email: 'rsiddhi.choice.2006@gmail.com',
   address: 'Shop No. 4, Ground Floor, Riddhi Siddhi Choice Centre, Main Market, India',
-  upiId: '9967842065@OKBIZAXIS',
+  upiId: '8652411690@OKBIZAXIS',
   maxFileSizeMb: 50,
   retentionDays: 30,
   pickupTimings: '9:00 AM - 9:00 PM (Monday - Saturday)',
   isAcceptingOrders: true,
   pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
+  autoNotifyReadyWhatsApp: true,
+  whatsAppSenderPhone: '8652411690',
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 4,
@@ -203,7 +209,7 @@ function initDataStore() {
         {
           id: 'cust-default-001',
           name: 'RSCC Valued Customer',
-          mobile: '9967842065',
+          mobile: '8652411690',
           email: 'rsiddhi.choice.2006@gmail.com',
           passwordHash: 'pass123',
           createdAt: new Date().toISOString(),
@@ -1306,7 +1312,12 @@ Return your judgment strictly in JSON format:
     if (pathname.match(/^\/api\/orders\/[^\/]+\/status$/) && method === 'PUT') {
       const parts = pathname.split('/');
       const orderId = parts[3];
-      const body = await parseJsonBody<{ status: OrderItem['orderStatus']; note?: string }>(req);
+      const body = await parseJsonBody<{
+        status: OrderItem['orderStatus'];
+        note?: string;
+        whatsappNotified?: boolean;
+        whatsappNotifiedAt?: string;
+      }>(req);
 
       const orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
       if (orderIndex === -1) {
@@ -1318,6 +1329,10 @@ Return your judgment strictly in JSON format:
       orders[orderIndex].orderStatus = body.status;
       orders[orderIndex].updatedAt = new Date().toISOString();
 
+      if (body.whatsappNotified || body.status === 'READY_FOR_PICKUP') {
+        orders[orderIndex].whatsappNotifiedAt = body.whatsappNotifiedAt || new Date().toISOString();
+      }
+
       if (body.note) {
         orders[orderIndex].internalNotes = orders[orderIndex].internalNotes || [];
         orders[orderIndex].internalNotes.push(`[${new Date().toLocaleTimeString()}] ${body.note}`);
@@ -1325,13 +1340,16 @@ Return your judgment strictly in JSON format:
 
       saveOrdersToDisk();
 
+      const wasReadyTriggered = body.status === 'READY_FOR_PICKUP';
       auditLogs.unshift({
         id: 'log-' + Date.now(),
         timestamp: new Date().toISOString(),
-        action: 'ORDER_STATUS_CHANGED',
+        action: wasReadyTriggered ? 'ORDER_READY_FOR_PICKUP' : 'ORDER_STATUS_CHANGED',
         actor: 'Admin',
         orderNumber: orders[orderIndex].orderNumber,
-        details: `Status changed from ${oldStatus} to ${body.status}`,
+        details: wasReadyTriggered
+          ? `Status updated to READY_FOR_PICKUP. WhatsApp notification token ready for +91 ${orders[orderIndex].customer.mobile} (PIN: ${orders[orderIndex].deliveryPin}).`
+          : `Status changed from ${oldStatus} to ${body.status}`,
       });
 
       sendJson(res, 200, { success: true, order: orders[orderIndex] });

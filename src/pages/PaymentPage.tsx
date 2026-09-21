@@ -52,7 +52,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   const [timeLeft, setTimeLeft] = useState<number>(TOTAL_PAYMENT_SECONDS);
   const [isExpired, setIsExpired] = useState<boolean>(false);
 
-  const upiId = settings.upiId || '9967842065@OKBIZAXIS';
+  const upiId = settings.upiId || '8652411690@OKBIZAXIS';
   const shopName = settings.shopName || 'RIDDHI SIDDHI CHOICE CENTRE';
   const amount = order.totalAmount;
 

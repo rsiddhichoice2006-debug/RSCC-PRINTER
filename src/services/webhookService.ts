@@ -1,9 +1,10 @@
 import { OrderRecord, ShopSettings } from '../types';
+import { formatPickupReadyWhatsAppMessage, generateWhatsAppUrl } from './whatsappService';
 
 export const DEFAULT_MAKE_WEBHOOK_URL = 'https://hook.eu1.make.com/8pf2rw2l0pk9va2ofhqjjsg0cap9kutr';
 
 export interface WebhookOrderPayload {
-  event: 'ORDER_CREATED' | 'ORDER_PLACED' | 'PAYMENT_VERIFIED' | 'STATUS_UPDATED' | 'TEST_PING';
+  event: 'ORDER_CREATED' | 'ORDER_PLACED' | 'PAYMENT_VERIFIED' | 'STATUS_UPDATED' | 'READY_FOR_PICKUP' | 'TEST_PING';
   timestamp: string;
   orderId: string;
   orderNumber: string;
@@ -44,10 +45,18 @@ export interface WebhookOrderPayload {
     fileNames: string[];
     totalSizeBytes: number;
   };
+  whatsappNotification?: {
+    senderPhone: string;
+    recipientPhone: string;
+    message: string;
+    whatsappUrl: string;
+  };
   specialInstructions?: string;
   shop: {
     name: string;
     phone: string;
+    whatsapp: string;
+    whatsAppSenderPhone?: string;
     upiId: string;
   };
 }
@@ -57,7 +66,7 @@ export interface WebhookOrderPayload {
  */
 export async function triggerMakeWebhook(
   order: OrderRecord,
-  event: 'ORDER_CREATED' | 'ORDER_PLACED' | 'PAYMENT_VERIFIED' | 'STATUS_UPDATED' | 'TEST_PING' = 'ORDER_PLACED',
+  event: 'ORDER_CREATED' | 'ORDER_PLACED' | 'PAYMENT_VERIFIED' | 'STATUS_UPDATED' | 'READY_FOR_PICKUP' | 'TEST_PING' = 'ORDER_PLACED',
   customWebhookUrl?: string,
   settings?: ShopSettings
 ): Promise<{ success: boolean; message: string }> {
@@ -65,6 +74,13 @@ export async function triggerMakeWebhook(
   if (!url) {
     return { success: false, message: 'No webhook URL configured' };
   }
+
+  const senderPhone = settings?.whatsAppSenderPhone || settings?.whatsapp || settings?.phone || '8652411690';
+  const cleanSender = senderPhone.replace(/\D/g, '').slice(-10) || '8652411690';
+  const cleanRecipient = order.customer.mobile.replace(/\D/g, '').slice(-10);
+
+  const formattedMsg = formatPickupReadyWhatsAppMessage(order, settings);
+  const waUrl = generateWhatsAppUrl(cleanRecipient, formattedMsg);
 
   const payload: WebhookOrderPayload = {
     event,
@@ -108,11 +124,19 @@ export async function triggerMakeWebhook(
       fileNames: (order.files || []).map((f) => f.name),
       totalSizeBytes: (order.files || []).reduce((sum, f) => sum + (f.size || 0), 0),
     },
+    whatsappNotification: {
+      senderPhone: cleanSender,
+      recipientPhone: cleanRecipient,
+      message: formattedMsg,
+      whatsappUrl: waUrl,
+    },
     specialInstructions: order.specialInstructions,
     shop: {
       name: settings?.shopName || 'Riddhi Siddhi Choice Centre',
-      phone: settings?.phone || '+91 9967842065',
-      upiId: settings?.upiId || '9967842065@OKBIZAXIS',
+      phone: settings?.phone || '+91 8652411690',
+      whatsapp: settings?.whatsapp || '8652411690',
+      whatsAppSenderPhone: settings?.whatsAppSenderPhone || '8652411690',
+      upiId: settings?.upiId || '8652411690@OKBIZAXIS',
     },
   };
 

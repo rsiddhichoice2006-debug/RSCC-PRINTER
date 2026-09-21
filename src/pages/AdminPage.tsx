@@ -32,9 +32,12 @@ import {
   Volume2,
   VolumeX,
   X,
+  Send,
+  ExternalLink,
 } from 'lucide-react';
 import { AdminStats, OrderRecord, ShopSettings, SerializableFileItem } from '../types';
 import { apiClient } from '../services/apiClient';
+import { notifyCustomerOrderReady, formatPickupReadyWhatsAppMessage, generateWhatsAppUrl } from '../services/whatsappService';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -142,6 +145,11 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const [orderToDelete, setOrderToDelete] = useState<OrderRecord | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [whatsAppModalOrder, setWhatsAppModalOrder] = useState<{
+    order: OrderRecord;
+    message: string;
+    url: string;
+  } | null>(null);
 
   const handleTestWebhook = async () => {
     setTestingWebhook(true);
@@ -586,9 +594,63 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
         setSelectedOrder(updated);
       }
       loadDashboardData();
+
+      // AUTOMATIC WHATSAPP NOTIFICATION TRIGGER WHEN READY FOR PICKUP IS MARKED
+      if (status === 'READY_FOR_PICKUP') {
+        const cleanMobile = updated.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
+        const message = formatPickupReadyWhatsAppMessage(updated, settings);
+        const url = generateWhatsAppUrl(cleanMobile, message);
+
+        // Check if automatic direct dispatch is enabled (default: true)
+        const autoNotify = settings.autoNotifyReadyWhatsApp !== false;
+
+        let opened = false;
+        if (autoNotify && cleanMobile.length >= 10) {
+          try {
+            const win = window.open(url, '_blank');
+            if (win) {
+              opened = true;
+            }
+          } catch (e) {
+            console.warn('Window open restricted:', e);
+          }
+        }
+
+        if (opened) {
+          showToast(`📲 Order #${updated.orderNumber} marked Ready! Opening WhatsApp message for +91 ${cleanMobile}...`);
+        } else {
+          showToast(`🎉 Order #${updated.orderNumber} marked Ready for Pickup!`);
+        }
+
+        // Show prompt / preview modal so staff can also send or re-send with 1 click
+        setWhatsAppModalOrder({
+          order: updated,
+          message,
+          url,
+        });
+      } else {
+        showToast(`Order #${updated.orderNumber} status updated to ${status.replace(/_/g, ' ')}`);
+      }
     } catch (err: any) {
       alert('Error updating status: ' + err.message);
     }
+  };
+
+  const handleManualSendWhatsApp = (order: OrderRecord) => {
+    const cleanMobile = order.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
+    if (!cleanMobile || cleanMobile.length < 10) {
+      alert(`Customer mobile number "${order.customer.mobile}" is invalid.`);
+      return;
+    }
+    const message = formatPickupReadyWhatsAppMessage(order, settings);
+    const url = generateWhatsAppUrl(cleanMobile, message);
+    setWhatsAppModalOrder({
+      order,
+      message,
+      url,
+    });
+    window.open(url, '_blank');
+    showToast(`WhatsApp message opened for +91 ${cleanMobile}!`);
   };
 
   const handleAddNote = async (e: React.FormEvent) => {
@@ -1191,13 +1253,41 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
 
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {ord.orderStatus !== 'READY_FOR_PICKUP' && ord.orderStatus !== 'COMPLETED' && ord.orderStatus !== 'CANCELLED' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleUpdateStatus(ord.id, 'READY_FOR_PICKUP');
+                                }}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer shadow-sm"
+                                title="Mark as Ready & send WhatsApp notification"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Mark Ready</span>
+                              </button>
+                            )}
+
+                            {ord.orderStatus === 'READY_FOR_PICKUP' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleManualSendWhatsApp(ord);
+                                }}
+                                className="bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 font-extrabold text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                                title="Resend WhatsApp pickup alert to customer"
+                              >
+                                <Send className="w-3.5 h-3.5 text-emerald-700" />
+                                <span>WhatsApp</span>
+                              </button>
+                            )}
+
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleDownloadAllZip(ord);
                               }}
                               disabled={downloadingZipOrderId === ord.id}
-                              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
                               title="Download all customer files as .ZIP"
                             >
                               {downloadingZipOrderId === ord.id ? (
@@ -1873,6 +1963,83 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               </div>
             </div>
 
+            {/* Shop WhatsApp & Automation Card */}
+            <div className="mt-6 pt-6 border-t border-slate-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700 font-black text-sm">
+                    💬
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      Automated WhatsApp Pickup Notifications
+                      <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        Active
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      When staff marks an order as "Ready for Pickup", an automated notification with collection PIN and pickup address is instantly dispatched.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900">
+                      Auto-trigger WhatsApp to Customer on Ready
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Automatically opens and formats the WhatsApp pickup notification when staff clicks "READY / PICKUP".
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editSettings.autoNotifyReadyWhatsApp !== false}
+                      onChange={(e) =>
+                        setEditSettings({ ...editSettings, autoNotifyReadyWhatsApp: e.target.checked })
+                      }
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200">
+                  <label className="text-xs font-bold text-slate-800 block mb-1">
+                    Official Shop Dispatch Number (WhatsApp Business)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={editSettings.whatsAppSenderPhone || '8652411690'}
+                      onChange={(e) =>
+                        setEditSettings({ ...editSettings, whatsAppSenderPhone: e.target.value.trim() })
+                      }
+                      placeholder="8652411690"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-emerald-300 font-mono font-bold text-emerald-950 bg-white text-sm focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    All customer ready messages and Make.com notifications will reference this number (+91 {editSettings.whatsAppSenderPhone || '8652411690'}) as the official sender and pickup support contact.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
+                  <span className="font-bold text-slate-900">WhatsApp Notification Template Includes:</span>
+                  <ul className="list-disc list-inside text-[11px] text-slate-600 space-y-0.5">
+                    <li>Customer name & Order Number</li>
+                    <li>Unique 4-digit Collection/Pickup PIN</li>
+                    <li>Verified payment amount and print items summary</li>
+                    <li>Counter address ({editSettings.address || 'Shop No. 4, Ground Floor, RSCC'})</li>
+                    <li>Store hours ({editSettings.pickupTimings || '9:00 AM - 9:00 PM'})</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
             {/* Make.com Webhook Automation & Real-time Sync */}
             <div className="mt-6 pt-6 border-t border-slate-200">
               <div className="flex items-center justify-between mb-3">
@@ -2073,7 +2240,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     </div>
                     <div>
                       <span className="text-slate-400">Merchant UPI:</span>{' '}
-                      <span className="font-mono text-amber-300">9967842065@OKBIZAXIS</span>
+                      <span className="font-mono text-amber-300">{settings.upiId || '8652411690@OKBIZAXIS'}</span>
                     </div>
 
                     {/* OCR verification status tags */}
@@ -2167,9 +2334,14 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
 
             {/* Print Status Progress Control */}
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700 uppercase">
-                Update Order Print Status
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-700 uppercase">
+                  Update Order Print Status
+                </label>
+                <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
+                  <span>📲 Auto-WhatsApp on Ready</span>
+                </span>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
                 {(['PLACED', 'PRINTING', 'READY_FOR_PICKUP', 'COMPLETED', 'CANCELLED'] as const).map((st) => (
                   <button
@@ -2179,13 +2351,46 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       selectedOrder.orderStatus === st
                         ? st === 'CANCELLED'
                           ? 'bg-rose-600 text-white shadow'
+                          : st === 'READY_FOR_PICKUP'
+                          ? 'bg-emerald-600 text-white shadow ring-2 ring-emerald-400'
                           : 'bg-slate-900 text-white shadow'
+                        : st === 'READY_FOR_PICKUP'
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 font-extrabold'
                         : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
-                    {st.replace(/_/g, ' ')}
+                    {st === 'READY_FOR_PICKUP' ? 'READY / PICKUP ✨' : st.replace(/_/g, ' ')}
                   </button>
                 ))}
+              </div>
+
+              {/* Dedicated Customer WhatsApp Notification Bar */}
+              <div className="mt-3 p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
+                    <Send className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>WhatsApp Customer Pickup Notification</span>
+                  </div>
+                  <div className="text-[11px] text-emerald-800 mt-0.5">
+                    Customer: <strong>{selectedOrder.customer.name}</strong> • Mobile: <strong>+91 {selectedOrder.customer.mobile}</strong> • PIN: <strong>{selectedOrder.deliveryPin || '4921'}</strong>
+                  </div>
+                  {selectedOrder.whatsappNotifiedAt && (
+                    <div className="text-[10px] text-emerald-700 mt-0.5">
+                      ✓ Last notified: {new Date(selectedOrder.whatsappNotifiedAt).toLocaleString('en-IN')}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleManualSendWhatsApp(selectedOrder)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow cursor-pointer whitespace-nowrap"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send WhatsApp Now</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2371,6 +2576,99 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                 )}
                 <span>Yes, Delete</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WHATSAPP NOTIFICATION TRIGGER / PREVIEW MODAL */}
+      {whatsAppModalOrder && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-black">
+                  <Send className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    WhatsApp Pickup Notification
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Order #{whatsAppModalOrder.order.orderNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setWhatsAppModalOrder(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 text-sm cursor-pointer rounded-lg hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Customer & PIN Highlights */}
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Recipient</span>
+                <span className="font-extrabold text-slate-900">{whatsAppModalOrder.order.customer.name}</span>
+                <span className="text-slate-600 block text-[11px]">+91 {whatsAppModalOrder.order.customer.mobile}</span>
+              </div>
+              <div className="bg-amber-100/70 border border-amber-300 rounded-xl p-2 text-center">
+                <span className="text-amber-900 block text-[10px] uppercase font-black">Collection PIN</span>
+                <span className="font-mono text-lg font-black text-slate-950 tracking-wider">
+                  {whatsAppModalOrder.order.deliveryPin || '4921'}
+                </span>
+              </div>
+            </div>
+
+            {/* Sender Dispatch Number Indicator */}
+            <div className="px-3.5 py-2 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs">
+              <span className="text-emerald-900 font-semibold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Official Dispatch Line:
+              </span>
+              <span className="font-mono font-black text-emerald-950">
+                +91 {settings.whatsAppSenderPhone || settings.whatsapp || '8652411690'}
+              </span>
+            </div>
+
+            {/* Preview Box */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Formatted Message Preview
+              </label>
+              <div className="p-3.5 bg-emerald-950/5 border border-emerald-200 rounded-2xl text-xs font-mono text-slate-800 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+                {whatsAppModalOrder.message}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(whatsAppModalOrder.message);
+                  showToast('Message copied to clipboard! 📋');
+                }}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 px-3 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>📋 Copy Message</span>
+              </button>
+
+              <a
+                href={whatsAppModalOrder.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  showToast('WhatsApp launched! 🚀');
+                  setTimeout(() => setWhatsAppModalOrder(null), 1500);
+                }}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow cursor-pointer text-center"
+              >
+                <Send className="w-4 h-4" />
+                <span>Open WhatsApp Web / App</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
             </div>
           </div>
         </div>

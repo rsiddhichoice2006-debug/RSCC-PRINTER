@@ -20,17 +20,19 @@ const DEFAULT_SETTINGS: ShopSettings = {
   shopName: 'Riddhi Siddhi Choice Centre',
   shortName: 'RSCC',
   tagline: 'Online Printing & Document Services',
-  phone: '+91 9967842065',
-  whatsapp: '9967842065',
+  phone: '+91 8652411690',
+  whatsapp: '8652411690',
   email: 'rsiddhi.choice.2006@gmail.com',
   address: 'Shop No. 4, Ground Floor, Riddhi Siddhi Choice Centre, Main Market, India',
-  upiId: '9967842065@OKBIZAXIS',
+  upiId: '8652411690@OKBIZAXIS',
   maxFileSizeMb: 50,
   retentionDays: 30,
   pickupTimings: '9:00 AM - 9:00 PM (Monday - Saturday)',
   isAcceptingOrders: true,
   pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
   webhookUrl: DEFAULT_MAKE_WEBHOOK_URL,
+  autoNotifyReadyWhatsApp: true,
+  whatsAppSenderPhone: '8652411690',
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 4,
@@ -555,7 +557,7 @@ export const apiClient = {
       deliveryPin,
       customer: {
         name: payload.customer?.name?.trim() || 'Customer',
-        mobile: payload.customer?.mobile?.trim() || '9967842065',
+        mobile: payload.customer?.mobile?.trim() || '8652411690',
         email: payload.customer?.email?.trim() || undefined,
       },
       mode: payload.mode || 'DOCUMENT',
@@ -744,7 +746,7 @@ export const apiClient = {
       deliveryPin,
       customer: {
         name: payload.customer?.name?.trim() || 'Customer',
-        mobile: payload.customer?.mobile?.trim() || '9967842065',
+        mobile: payload.customer?.mobile?.trim() || '8652411690',
         email: payload.customer?.email?.trim() || undefined,
       },
       mode: payload.mode || 'DOCUMENT',
@@ -1359,7 +1361,8 @@ export const apiClient = {
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
       }
-      triggerMakeWebhook(backendData.order, 'STATUS_UPDATED', undefined, Storage.getSettings()).catch(() => {});
+      const webhookEvent = status === 'READY_FOR_PICKUP' ? 'READY_FOR_PICKUP' : 'STATUS_UPDATED';
+      triggerMakeWebhook(backendData.order, webhookEvent, undefined, Storage.getSettings()).catch(() => {});
       return backendData.order;
     }
 
@@ -1386,7 +1389,8 @@ export const apiClient = {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }
 
-    triggerMakeWebhook(updated, 'STATUS_UPDATED', undefined, Storage.getSettings()).catch(() => {});
+    const webhookEvent = status === 'READY_FOR_PICKUP' ? 'READY_FOR_PICKUP' : 'STATUS_UPDATED';
+    triggerMakeWebhook(updated, webhookEvent, undefined, Storage.getSettings()).catch(() => {});
     return updated;
   },
 
@@ -1589,7 +1593,7 @@ export const apiClient = {
       deliveryPin: '9999',
       customer: {
         name: 'Test Customer (Make.com Integration)',
-        mobile: '9967842065',
+        mobile: '8652411690',
         email: 'rsiddhi.choice.2006@gmail.com',
       },
       mode: 'DOCUMENT',

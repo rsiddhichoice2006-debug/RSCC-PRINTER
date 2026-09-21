@@ -66,6 +66,8 @@ export interface ShopSettings {
   isAcceptingOrders?: boolean;
   pauseOrderReason?: string;
   webhookUrl?: string;
+  autoNotifyReadyWhatsApp?: boolean;
+  whatsAppSenderPhone?: string;
   pricing: ShopPricing;
 }
 
@@ -155,6 +157,7 @@ export interface OrderRecord {
   ocrDetectedUpiId?: string;
   ocrVerifiedTime?: boolean;
   ocrTimeDiffMinutes?: number;
+  whatsappNotifiedAt?: string;
   specialInstructions?: string;
   internalNotes?: string[];
   createdAt: string;

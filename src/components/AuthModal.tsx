@@ -80,11 +80,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleQuickDemo = () => {
     if (mode === 'login') {
-      setIdentifier('9967842065');
+      setIdentifier('8652411690');
       setPassword('pass123');
     } else {
       setName('Demo Customer');
-      setMobile('9967842065');
+      setMobile('8652411690');
       setEmail('demo@customer.rscc.in');
       setPassword('pass123');
     }
@@ -415,7 +415,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               className="text-[11px] text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-lg transition font-semibold cursor-pointer flex items-center gap-1.5"
             >
               <Sparkles className="w-3 h-3 text-amber-600" />
-              <span>Fill Quick Demo Account (9967842065)</span>
+              <span>Fill Quick Demo Account (8652411690)</span>
             </button>
           </div>
 
