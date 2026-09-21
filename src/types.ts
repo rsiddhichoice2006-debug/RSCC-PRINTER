@@ -68,6 +68,7 @@ export interface ShopSettings {
   webhookUrl?: string;
   autoNotifyReadyWhatsApp?: boolean;
   whatsAppSenderPhone?: string;
+  whatsappSingleTabMode?: boolean;
   pricing: ShopPricing;
 }
 

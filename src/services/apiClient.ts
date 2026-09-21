@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS: ShopSettings = {
   webhookUrl: DEFAULT_MAKE_WEBHOOK_URL,
   autoNotifyReadyWhatsApp: true,
   whatsAppSenderPhone: '8652411690',
+  whatsappSingleTabMode: true,
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 4,

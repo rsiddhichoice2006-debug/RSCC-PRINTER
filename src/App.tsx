@@ -51,6 +51,7 @@ function MainApp() {
     retentionDays: 30,
     maxFileSizeMb: 50,
     autoNotifyReadyWhatsApp: true,
+    whatsappSingleTabMode: true,
     pricing: {
       bwSingle: 5,
       bwBoth: 4,

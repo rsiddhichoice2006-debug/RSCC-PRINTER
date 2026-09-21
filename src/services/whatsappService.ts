@@ -55,14 +55,46 @@ ${timings}
 Thank you for choosing ${shopName}! Have a great day! 🙏`;
 }
 
+export const WHATSAPP_TAB_TARGET = 'rscc_whatsapp_desk';
+
 /**
- * Generate a direct WhatsApp Web / WhatsApp Mobile deep link
+ * Generate a direct WhatsApp Web / WhatsApp Mobile deep link.
+ * When directMode is true (default):
+ * - On desktop: Targets web.whatsapp.com/send directly to BYPASS the "Continue to WhatsApp Web" screen!
+ * - On mobile/tablet: Targets api.whatsapp.com/send to open the native WhatsApp application.
  */
-export function generateWhatsAppUrl(mobile: string, message: string): string {
+export function generateWhatsAppUrl(mobile: string, message: string, directMode: boolean = true): string {
   const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
   const fullMobile = cleanMobile.startsWith('91') ? cleanMobile : `91${cleanMobile}`;
   const encodedText = encodeURIComponent(message);
+
+  if (directMode) {
+    const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+    if (!isMobile) {
+      // Bypasses the "Continue to Chat / Use WhatsApp Web" intermediate landing page on desktop
+      return `https://web.whatsapp.com/send?phone=${fullMobile}&text=${encodedText}`;
+    }
+    return `https://api.whatsapp.com/send?phone=${fullMobile}&text=${encodedText}`;
+  }
+
   return `https://wa.me/${fullMobile}?text=${encodedText}`;
+}
+
+/**
+ * Opens or reuses a single WhatsApp Web tab, preventing multiple tabs from piling up.
+ */
+export function openWhatsAppInSingleTab(url: string, singleTab: boolean = true): boolean {
+  try {
+    const target = singleTab ? WHATSAPP_TAB_TARGET : '_blank';
+    const win = window.open(url, target);
+    if (win) {
+      win.focus();
+      return true;
+    }
+  } catch (e) {
+    console.warn('Window open was blocked or restricted:', e);
+  }
+  return false;
 }
 
 /**
@@ -71,7 +103,7 @@ export function generateWhatsAppUrl(mobile: string, message: string): string {
 export function notifyCustomerOrderReady(
   order: OrderRecord,
   settings?: ShopSettings,
-  options?: { autoOpen?: boolean }
+  options?: { autoOpen?: boolean; singleTab?: boolean }
 ): WhatsAppNotificationResult {
   const cleanMobile = order.customer.mobile.replace(/\D/g, '').slice(-10);
   if (!cleanMobile || cleanMobile.length < 10) {
@@ -82,18 +114,11 @@ export function notifyCustomerOrderReady(
   }
 
   const message = formatPickupReadyWhatsAppMessage(order, settings);
-  const whatsappUrl = generateWhatsAppUrl(cleanMobile, message);
+  const whatsappUrl = generateWhatsAppUrl(cleanMobile, message, true);
 
   let openedTab = false;
   if (options?.autoOpen !== false) {
-    try {
-      const newWin = window.open(whatsappUrl, '_blank');
-      if (newWin) {
-        openedTab = true;
-      }
-    } catch (e) {
-      console.warn('Window open was blocked or restricted:', e);
-    }
+    openedTab = openWhatsAppInSingleTab(whatsappUrl, options?.singleTab !== false);
   }
 
   return {

@@ -37,7 +37,13 @@ import {
 } from 'lucide-react';
 import { AdminStats, OrderRecord, ShopSettings, SerializableFileItem } from '../types';
 import { apiClient } from '../services/apiClient';
-import { notifyCustomerOrderReady, formatPickupReadyWhatsAppMessage, generateWhatsAppUrl } from '../services/whatsappService';
+import {
+  notifyCustomerOrderReady,
+  formatPickupReadyWhatsAppMessage,
+  generateWhatsAppUrl,
+  openWhatsAppInSingleTab,
+  WHATSAPP_TAB_TARGET,
+} from '../services/whatsappService';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -599,25 +605,20 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       if (status === 'READY_FOR_PICKUP') {
         const cleanMobile = updated.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
         const message = formatPickupReadyWhatsAppMessage(updated, settings);
-        const url = generateWhatsAppUrl(cleanMobile, message);
+        // By default uses direct web URL on desktop, bypassing "Continue to WhatsApp Web" landing page
+        const url = generateWhatsAppUrl(cleanMobile, message, true);
 
         // Check if automatic direct dispatch is enabled (default: true)
         const autoNotify = settings.autoNotifyReadyWhatsApp !== false;
+        const singleTab = settings.whatsappSingleTabMode !== false;
 
         let opened = false;
         if (autoNotify && cleanMobile.length >= 10) {
-          try {
-            const win = window.open(url, '_blank');
-            if (win) {
-              opened = true;
-            }
-          } catch (e) {
-            console.warn('Window open restricted:', e);
-          }
+          opened = openWhatsAppInSingleTab(url, singleTab);
         }
 
         if (opened) {
-          showToast(`📲 Order #${updated.orderNumber} marked Ready! Opening WhatsApp message for +91 ${cleanMobile}...`);
+          showToast(`📲 Order #${updated.orderNumber} marked Ready! WhatsApp launched (single tab)...`);
         } else {
           showToast(`🎉 Order #${updated.orderNumber} marked Ready for Pickup!`);
         }
@@ -643,14 +644,14 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       return;
     }
     const message = formatPickupReadyWhatsAppMessage(order, settings);
-    const url = generateWhatsAppUrl(cleanMobile, message);
+    const url = generateWhatsAppUrl(cleanMobile, message, true);
     setWhatsAppModalOrder({
       order,
       message,
       url,
     });
-    window.open(url, '_blank');
-    showToast(`WhatsApp message opened for +91 ${cleanMobile}!`);
+    openWhatsAppInSingleTab(url, settings.whatsappSingleTabMode !== false);
+    showToast(`WhatsApp message opened in single tab for +91 ${cleanMobile}!`);
   };
 
   const handleAddNote = async (e: React.FormEvent) => {
@@ -2007,6 +2008,29 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                   </label>
                 </div>
 
+                <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-200">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                      Single-Tab WhatsApp Web Mode
+                      <span className="bg-blue-100 text-blue-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">Active</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Re-uses the same WhatsApp Web tab across all orders and skips the "Continue to WhatsApp Web" landing screen.
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editSettings.whatsappSingleTabMode !== false}
+                      onChange={(e) =>
+                        setEditSettings({ ...editSettings, whatsappSingleTabMode: e.target.checked })
+                      }
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
                 <div className="pt-2 border-t border-slate-200">
                   <label className="text-xs font-bold text-slate-800 block mb-1">
                     Official Shop Dispatch Number (WhatsApp Business)
@@ -2655,20 +2679,19 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                 <span>📋 Copy Message</span>
               </button>
 
-              <a
-                href={whatsAppModalOrder.url}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
                 onClick={() => {
-                  showToast('WhatsApp launched! 🚀');
+                  openWhatsAppInSingleTab(whatsAppModalOrder.url, settings.whatsappSingleTabMode !== false);
+                  showToast('WhatsApp launched (single tab)! 🚀');
                   setTimeout(() => setWhatsAppModalOrder(null), 1500);
                 }}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow cursor-pointer text-center"
               >
                 <Send className="w-4 h-4" />
-                <span>Open WhatsApp Web / App</span>
+                <span>Open in WhatsApp (Single Tab)</span>
                 <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+              </button>
             </div>
           </div>
         </div>

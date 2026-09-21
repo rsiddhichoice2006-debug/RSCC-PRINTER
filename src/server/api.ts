@@ -43,6 +43,7 @@ interface ShopSettings {
   webhookUrl?: string;
   autoNotifyReadyWhatsApp?: boolean;
   whatsAppSenderPhone?: string;
+  whatsappSingleTabMode?: boolean;
   pricing: ShopPricing;
 }
 
@@ -138,6 +139,7 @@ const defaultSettings: ShopSettings = {
   pauseOrderReason: 'Currently Not Accepting Orders Due to High Demand',
   autoNotifyReadyWhatsApp: true,
   whatsAppSenderPhone: '8652411690',
+  whatsappSingleTabMode: true,
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 4,
