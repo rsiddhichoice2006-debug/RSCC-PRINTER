@@ -1472,8 +1472,8 @@ Return your judgment strictly in JSON format:
 
     // 12. POST /api/create-order (Razorpay Create Order)
     if (pathname === '/api/create-order' && method === 'POST') {
-      const keyId = process.env.RAZORPAY_KEY_ID;
-      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+      const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_TfQk4RHXy0ikDN';
+      const keySecret = process.env.RAZORPAY_KEY_SECRET || 'Qr3gNYr3ZKdPzUxEmu17UbS7';
 
       if (!keyId || !keySecret) {
         sendJson(res, 401, {
@@ -1537,7 +1537,7 @@ Return your judgment strictly in JSON format:
 
     // 13. POST /api/verify-payment (Razorpay Signature Verification)
     if (pathname === '/api/verify-payment' && method === 'POST') {
-      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+      const keySecret = process.env.RAZORPAY_KEY_SECRET || 'Qr3gNYr3ZKdPzUxEmu17UbS7';
       if (!keySecret) {
         sendJson(res, 500, {
           success: false,

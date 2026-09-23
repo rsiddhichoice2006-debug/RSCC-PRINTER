@@ -85,7 +85,16 @@ export async function createRazorpayOrder(params: {
     }),
   });
 
-  const data = await res.json();
+  const rawText = await res.text();
+  let data: any;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(
+      `Server returned an invalid response (${res.status} ${res.statusText}). Please check your connection and try again.`
+    );
+  }
+
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to create Razorpay order');
   }
@@ -108,7 +117,16 @@ export async function verifyRazorpayPayment(payload: {
     body: JSON.stringify(payload),
   });
 
-  const data = await res.json();
+  const rawText = await res.text();
+  let data: any;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(
+      `Server returned an invalid response (${res.status} ${res.statusText}) during payment verification.`
+    );
+  }
+
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Payment signature verification failed');
   }

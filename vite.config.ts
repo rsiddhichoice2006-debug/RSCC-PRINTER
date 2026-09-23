@@ -5,23 +5,29 @@ import {defineConfig, Plugin} from 'vite';
 import { handleApiRequest } from './src/server/api';
 
 function apiServerPlugin(): Plugin {
+  const middleware = async (req: any, res: any, next: any) => {
+    if (req.url && (req.url.startsWith('/api/') || req.url === '/api')) {
+      try {
+        const handled = await handleApiRequest(req, res);
+        if (handled) return;
+      } catch (e) {
+        console.error('API middleware error:', e);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Server error in API middleware' }));
+        return;
+      }
+    }
+    next();
+  };
+
   return {
     name: 'api-server-plugin',
     configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        if (req.url?.startsWith('/api/')) {
-          try {
-            const handled = await handleApiRequest(req, res);
-            if (handled) return;
-          } catch (e) {
-            console.error('API middleware error:', e);
-            res.statusCode = 500;
-            res.end(JSON.stringify({ error: 'Server error in API middleware' }));
-            return;
-          }
-        }
-        next();
-      });
+      server.middlewares.use(middleware);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware);
     },
   };
 }

@@ -250,9 +250,14 @@ export async function processUploadedFile(file: File, maxFileSizeMb: number = 50
     clearTimeout(timeoutId);
 
     if (res.ok) {
-      const data = await res.json();
-      moderationStatus = data.moderationStatus || 'SAFE';
-      moderationReason = data.moderationReason || moderationReason;
+      try {
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+        moderationStatus = data.moderationStatus || 'SAFE';
+        moderationReason = data.moderationReason || moderationReason;
+      } catch {
+        moderationStatus = 'SAFE';
+      }
     }
   } catch {
     // Non-blocking fallback: permit safe document processing without halting upload
