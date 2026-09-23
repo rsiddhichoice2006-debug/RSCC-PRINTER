@@ -2,6 +2,12 @@ import { GoogleGenAI } from '@google/genai';
 import { IncomingMessage, ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+import Razorpay from 'razorpay';
+import dotenv from 'dotenv';
+
+// Load environment variables from .env
+dotenv.config();
 
 // Storage in-memory + JSON persistence fallback for demo & dev
 interface ShopPricing {
@@ -44,6 +50,7 @@ interface ShopSettings {
   autoNotifyReadyWhatsApp?: boolean;
   whatsAppSenderPhone?: string;
   whatsappSingleTabMode?: boolean;
+  whatsAppDispatchMode?: 'EXTENSION_SINGLE_TAB' | 'DESKTOP_APP' | 'WEB_WHATSAPP' | 'CLIPBOARD_PASTE' | 'MAKE_WEBHOOK_ONLY';
   pricing: ShopPricing;
 }
 
@@ -140,6 +147,7 @@ const defaultSettings: ShopSettings = {
   autoNotifyReadyWhatsApp: true,
   whatsAppSenderPhone: '8652411690',
   whatsappSingleTabMode: true,
+  whatsAppDispatchMode: 'DESKTOP_APP',
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 4,
@@ -1458,6 +1466,177 @@ Return your judgment strictly in JSON format:
       sendJson(res, 401, {
         success: false,
         error: 'Invalid admin credentials. Use rsiddhi.choice.2006@gmail.com / RSIDDHI2006',
+      });
+      return true;
+    }
+
+    // 12. POST /api/create-order (Razorpay Create Order)
+    if (pathname === '/api/create-order' && method === 'POST') {
+      const keyId = process.env.RAZORPAY_KEY_ID;
+      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+      if (!keyId || !keySecret) {
+        sendJson(res, 401, {
+          success: false,
+          error: 'Razorpay API credentials not configured in server environment (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET missing).',
+        });
+        return true;
+      }
+
+      const body = await parseJsonBody<{
+        amount?: number;
+        currency?: string;
+        receipt?: string;
+        notes?: Record<string, string>;
+      }>(req);
+
+      const rawAmount = Number(body.amount);
+      if (isNaN(rawAmount) || rawAmount < 100) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Invalid amount. Minimum amount is 100 paise (₹1.00).',
+        });
+        return true;
+      }
+
+      const currency = (body.currency || 'INR').toUpperCase();
+      const receipt = body.receipt || `rcpt_${Date.now()}`;
+
+      try {
+        const razorpay = new Razorpay({
+          key_id: keyId,
+          key_secret: keySecret,
+        });
+
+        const rzpOrder = await razorpay.orders.create({
+          amount: Math.round(rawAmount),
+          currency,
+          receipt,
+          notes: body.notes || {},
+        });
+
+        sendJson(res, 200, {
+          success: true,
+          order_id: rzpOrder.id,
+          amount: rzpOrder.amount,
+          currency: rzpOrder.currency,
+          receipt: rzpOrder.receipt,
+          key_id: keyId,
+        });
+        return true;
+      } catch (err: any) {
+        console.error('Razorpay order creation error:', err);
+        const statusCode = err?.statusCode || 500;
+        sendJson(res, statusCode === 401 ? 401 : 500, {
+          success: false,
+          error: err?.error?.description || err?.message || 'Failed to create Razorpay order',
+        });
+        return true;
+      }
+    }
+
+    // 13. POST /api/verify-payment (Razorpay Signature Verification)
+    if (pathname === '/api/verify-payment' && method === 'POST') {
+      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+      if (!keySecret) {
+        sendJson(res, 500, {
+          success: false,
+          error: 'Razorpay secret key not configured on server.',
+        });
+        return true;
+      }
+
+      const body = await parseJsonBody<{
+        razorpay_order_id?: string;
+        razorpay_payment_id?: string;
+        razorpay_signature?: string;
+        orderId?: string;
+        orderData?: Partial<OrderItem>;
+      }>(req);
+
+      const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
+
+      if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Missing required payment verification fields (razorpay_order_id, razorpay_payment_id, razorpay_signature).',
+        });
+        return true;
+      }
+
+      // Compute expected HMAC SHA256 signature
+      const generatedSignature = crypto
+        .createHmac('sha256', keySecret)
+        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+        .digest('hex');
+
+      // Safe constant-time comparison
+      const isSignatureValid =
+        generatedSignature.length === razorpay_signature.length &&
+        crypto.timingSafeEqual(
+          Buffer.from(generatedSignature, 'utf-8'),
+          Buffer.from(razorpay_signature, 'utf-8')
+        );
+
+      if (!isSignatureValid) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Invalid payment signature. Verification failed.',
+        });
+        return true;
+      }
+
+      // If optional orderId / orderData is supplied, update order status to verified
+      let updatedOrder: OrderItem | undefined;
+      const targetId = body.orderId || body.orderData?.id;
+      if (targetId) {
+        const existingIdx = orders.findIndex((o) => o.id === targetId || o.orderNumber === targetId);
+        const now = new Date().toISOString();
+        if (existingIdx !== -1) {
+          orders[existingIdx].paymentStatus = 'PAYMENT_VERIFIED';
+          orders[existingIdx].orderStatus = 'CONFIRMED';
+          orders[existingIdx].paymentReference = razorpay_payment_id;
+          orders[existingIdx].paymentMethod = 'Razorpay Standard Checkout';
+          orders[existingIdx].verifiedAt = now;
+          orders[existingIdx].updatedAt = now;
+          updatedOrder = orders[existingIdx];
+          saveOrdersToDisk();
+        } else if (body.orderData) {
+          const newOrder: OrderItem = {
+            id: body.orderData.id || `ord-${Date.now()}`,
+            orderNumber: body.orderData.orderNumber || `ORD-${Date.now().toString().slice(-6)}`,
+            deliveryPin: body.orderData.deliveryPin || generateDeliveryPin(),
+            customer: body.orderData.customer || { name: 'Customer', mobile: '9999999999' },
+            mode: body.orderData.mode || 'DOCUMENT',
+            paperSize: body.orderData.paperSize || 'A4',
+            paperQuality: body.orderData.paperQuality || '75_GSM',
+            files: body.orderData.files || [],
+            totalPages: body.orderData.totalPages || 1,
+            copies: body.orderData.copies || 1,
+            printType: body.orderData.printType || 'BW',
+            printingSide: body.orderData.printingSide || 'SINGLE',
+            ratePerPage: body.orderData.ratePerPage || 5,
+            totalAmount: body.orderData.totalAmount || 5,
+            paymentStatus: 'PAYMENT_VERIFIED',
+            orderStatus: 'CONFIRMED',
+            paymentReference: razorpay_payment_id,
+            paymentMethod: 'Razorpay Standard Checkout',
+            verifiedAt: now,
+            createdAt: body.orderData.createdAt || now,
+            updatedAt: now,
+          };
+          orders.unshift(newOrder);
+          updatedOrder = newOrder;
+          saveOrdersToDisk();
+        }
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        message: 'Payment verified successfully',
+        payment_id: razorpay_payment_id,
+        order_id: razorpay_order_id,
+        order: updatedOrder,
       });
       return true;
     }

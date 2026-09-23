@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS: ShopSettings = {
   autoNotifyReadyWhatsApp: true,
   whatsAppSenderPhone: '8652411690',
   whatsappSingleTabMode: true,
+  whatsAppDispatchMode: 'DESKTOP_APP',
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 4,

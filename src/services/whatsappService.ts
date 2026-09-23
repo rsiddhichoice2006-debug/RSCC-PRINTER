@@ -58,6 +58,18 @@ Thank you for choosing ${shopName}! Have a great day! 🙏`;
 export const WHATSAPP_TAB_TARGET = 'rscc_whatsapp_desk';
 
 /**
+ * Generate a WhatsApp Desktop application protocol link (whatsapp://).
+ * This completely avoids opening ANY browser tab on Chrome, and opens the
+ * native WhatsApp desktop window directly.
+ */
+export function generateWhatsAppDesktopUrl(mobile: string, message: string): string {
+  const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
+  const fullMobile = cleanMobile.startsWith('91') ? cleanMobile : `91${cleanMobile}`;
+  const encodedText = encodeURIComponent(message);
+  return `whatsapp://send?phone=${fullMobile}&text=${encodedText}`;
+}
+
+/**
  * Generate a direct WhatsApp Web / WhatsApp Mobile deep link.
  * When directMode is true (default):
  * - On desktop: Targets web.whatsapp.com/send directly to BYPASS the "Continue to WhatsApp Web" screen!
@@ -81,6 +93,40 @@ export function generateWhatsAppUrl(mobile: string, message: string, directMode:
 }
 
 /**
+ * Triggers the native WhatsApp Desktop application directly without creating ANY tabs in Chrome.
+ */
+export function launchWhatsAppDesktop(mobile: string, message: string): boolean {
+  try {
+    const desktopUrl = generateWhatsAppDesktopUrl(mobile, message);
+    const link = document.createElement('a');
+    link.href = desktopUrl;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => link.remove(), 1000);
+    return true;
+  } catch (err) {
+    console.warn('Failed to launch WhatsApp desktop protocol:', err);
+    return false;
+  }
+}
+
+/**
+ * Copies the ready message directly to clipboard so the user can just paste into their open WhatsApp tab
+ */
+export async function copyWhatsAppMessageToClipboard(message: string): Promise<boolean> {
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(message);
+      return true;
+    }
+  } catch (err) {
+    console.warn('Clipboard write failed:', err);
+  }
+  return false;
+}
+
+/**
  * Opens or reuses a single WhatsApp Web tab, preventing multiple tabs from piling up.
  */
 export function openWhatsAppInSingleTab(url: string, singleTab: boolean = true): boolean {
@@ -95,6 +141,62 @@ export function openWhatsAppInSingleTab(url: string, singleTab: boolean = true):
     console.warn('Window open was blocked or restricted:', e);
   }
   return false;
+}
+
+/**
+ * Smart dispatcher that respects the configured shop preference:
+ * - DESKTOP_APP: Launches WhatsApp Desktop directly (0 browser tabs created)
+ * - CLIPBOARD_PASTE: Auto-copies message to clipboard so user pastes into their already-open WhatsApp tab
+ * - WEB_WHATSAPP: Opens WhatsApp Web
+ */
+export function dispatchOrderReadyWhatsApp(
+  order: OrderRecord,
+  settings?: ShopSettings
+): { mode: string; success: boolean; message: string; desktopUrl: string; webUrl: string } {
+  const cleanMobile = order.customer.mobile.replace(/\D/g, '').slice(-10);
+  const formattedMsg = formatPickupReadyWhatsAppMessage(order, settings);
+  const desktopUrl = generateWhatsAppDesktopUrl(cleanMobile, formattedMsg);
+  const webUrl = generateWhatsAppUrl(cleanMobile, formattedMsg, true);
+
+  // Always copy message to clipboard for instant zero-friction backup
+  copyWhatsAppMessageToClipboard(formattedMsg);
+
+  // Broadcast to RSCC WhatsApp Chrome Extension if present (single-tab companion)
+  if (typeof window !== 'undefined') {
+    window.postMessage(
+      {
+        type: 'RSCC_DISPATCH_WHATSAPP',
+        phone: cleanMobile,
+        message: formattedMsg,
+        orderNumber: order.orderNumber,
+      },
+      '*'
+    );
+  }
+
+  const mode = settings?.whatsAppDispatchMode || 'EXTENSION_SINGLE_TAB';
+
+  if (mode === 'EXTENSION_SINGLE_TAB') {
+    // Check if extension is installed and responsive
+    return { mode: 'EXTENSION_SINGLE_TAB', success: true, message: formattedMsg, desktopUrl, webUrl };
+  }
+
+  if (mode === 'DESKTOP_APP') {
+    const ok = launchWhatsAppDesktop(cleanMobile, formattedMsg);
+    return { mode: 'DESKTOP_APP', success: ok, message: formattedMsg, desktopUrl, webUrl };
+  }
+
+  if (mode === 'CLIPBOARD_PASTE') {
+    return { mode: 'CLIPBOARD_PASTE', success: true, message: formattedMsg, desktopUrl, webUrl };
+  }
+
+  if (mode === 'MAKE_WEBHOOK_ONLY') {
+    return { mode: 'MAKE_WEBHOOK_ONLY', success: true, message: formattedMsg, desktopUrl, webUrl };
+  }
+
+  // WEB_WHATSAPP fallback
+  const ok = openWhatsAppInSingleTab(webUrl, settings?.whatsappSingleTabMode !== false);
+  return { mode: 'WEB_WHATSAPP', success: ok, message: formattedMsg, desktopUrl, webUrl };
 }
 
 /**

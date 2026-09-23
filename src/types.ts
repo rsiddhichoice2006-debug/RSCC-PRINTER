@@ -69,6 +69,7 @@ export interface ShopSettings {
   autoNotifyReadyWhatsApp?: boolean;
   whatsAppSenderPhone?: string;
   whatsappSingleTabMode?: boolean;
+  whatsAppDispatchMode?: 'EXTENSION_SINGLE_TAB' | 'DESKTOP_APP' | 'WEB_WHATSAPP' | 'CLIPBOARD_PASTE' | 'MAKE_WEBHOOK_ONLY';
   pricing: ShopPricing;
 }
 

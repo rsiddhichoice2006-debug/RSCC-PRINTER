@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "RSCC WhatsApp Single-Tab Companion",
+  "version": "1.0.0",
+  "description": "Directs customer pickup notifications into your already-open WhatsApp Web tab in Chrome without opening new tabs.",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "*://web.whatsapp.com/*",
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

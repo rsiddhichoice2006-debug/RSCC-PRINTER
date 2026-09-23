@@ -52,6 +52,7 @@ function MainApp() {
     maxFileSizeMb: 50,
     autoNotifyReadyWhatsApp: true,
     whatsappSingleTabMode: true,
+    whatsAppDispatchMode: 'DESKTOP_APP',
     pricing: {
       bwSingle: 5,
       bwBoth: 4,

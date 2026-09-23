@@ -41,9 +41,14 @@ import {
   notifyCustomerOrderReady,
   formatPickupReadyWhatsAppMessage,
   generateWhatsAppUrl,
+  generateWhatsAppDesktopUrl,
+  launchWhatsAppDesktop,
+  copyWhatsAppMessageToClipboard,
+  dispatchOrderReadyWhatsApp,
   openWhatsAppInSingleTab,
   WHATSAPP_TAB_TARGET,
 } from '../services/whatsappService';
+import { downloadWhatsAppExtensionZip } from '../services/whatsappExtensionHelper';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -124,6 +129,21 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [downloadingZipOrderId, setDownloadingZipOrderId] = useState<string | null>(null);
+
+  // Chrome Single-Tab WhatsApp Companion Extension State
+  const [isExtensionActive, setIsExtensionActive] = useState<boolean>(false);
+  const [showExtensionModal, setShowExtensionModal] = useState<boolean>(false);
+  const [downloadingExtension, setDownloadingExtension] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleMsg = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'RSCC_EXTENSION_ACTIVE') {
+        setIsExtensionActive(true);
+      }
+    };
+    window.addEventListener('message', handleMsg);
+    return () => window.removeEventListener('message', handleMsg);
+  }, []);
 
   // Sound & Live Notifications
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
@@ -605,29 +625,35 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       if (status === 'READY_FOR_PICKUP') {
         const cleanMobile = updated.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
         const message = formatPickupReadyWhatsAppMessage(updated, settings);
-        // By default uses direct web URL on desktop, bypassing "Continue to WhatsApp Web" landing page
-        const url = generateWhatsAppUrl(cleanMobile, message, true);
+        const webUrl = generateWhatsAppUrl(cleanMobile, message, true);
 
         // Check if automatic direct dispatch is enabled (default: true)
         const autoNotify = settings.autoNotifyReadyWhatsApp !== false;
-        const singleTab = settings.whatsappSingleTabMode !== false;
 
-        let opened = false;
         if (autoNotify && cleanMobile.length >= 10) {
-          opened = openWhatsAppInSingleTab(url, singleTab);
-        }
-
-        if (opened) {
-          showToast(`📲 Order #${updated.orderNumber} marked Ready! WhatsApp launched (single tab)...`);
+          const dispatchRes = dispatchOrderReadyWhatsApp(updated, settings);
+          if (dispatchRes.mode === 'EXTENSION_SINGLE_TAB') {
+            if (isExtensionActive) {
+              showToast(`🟢 Order #${updated.orderNumber} Ready! Navigated your open WhatsApp tab to customer with message pasted (0 new tabs)!`);
+            } else {
+              showToast(`📲 Order #${updated.orderNumber} Ready! Copied to clipboard & dispatched to open WhatsApp tab.`);
+            }
+          } else if (dispatchRes.mode === 'DESKTOP_APP') {
+            showToast(`📲 Order #${updated.orderNumber} Ready! Launched in WhatsApp Desktop (0 browser tabs).`);
+          } else if (dispatchRes.mode === 'CLIPBOARD_PASTE') {
+            showToast(`📋 Order #${updated.orderNumber} Ready! Message copied to clipboard. Paste into your open WhatsApp tab.`);
+          } else {
+            showToast(`📲 Order #${updated.orderNumber} marked Ready! Opening WhatsApp...`);
+          }
         } else {
           showToast(`🎉 Order #${updated.orderNumber} marked Ready for Pickup!`);
         }
 
-        // Show prompt / preview modal so staff can also send or re-send with 1 click
+        // Show prompt / preview modal so staff can also review, copy or re-send
         setWhatsAppModalOrder({
           order: updated,
           message,
-          url,
+          url: webUrl,
         });
       } else {
         showToast(`Order #${updated.orderNumber} status updated to ${status.replace(/_/g, ' ')}`);
@@ -650,8 +676,20 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
       message,
       url,
     });
-    openWhatsAppInSingleTab(url, settings.whatsappSingleTabMode !== false);
-    showToast(`WhatsApp message opened in single tab for +91 ${cleanMobile}!`);
+    const dispatchRes = dispatchOrderReadyWhatsApp(order, settings);
+    if (dispatchRes.mode === 'EXTENSION_SINGLE_TAB') {
+      if (isExtensionActive) {
+        showToast(`🟢 Opened in your existing WhatsApp Web tab for +91 ${cleanMobile} (0 new tabs)!`);
+      } else {
+        showToast(`🟢 Copied & dispatched for +91 ${cleanMobile}!`);
+      }
+    } else if (dispatchRes.mode === 'DESKTOP_APP') {
+      showToast(`📲 Launched WhatsApp Desktop for +91 ${cleanMobile} (0 tabs)!`);
+    } else if (dispatchRes.mode === 'CLIPBOARD_PASTE') {
+      showToast(`📋 Message copied to clipboard for +91 ${cleanMobile}! Paste in open WhatsApp tab.`);
+    } else {
+      showToast(`WhatsApp launched for +91 ${cleanMobile}!`);
+    }
   };
 
   const handleAddNote = async (e: React.FormEvent) => {
@@ -1900,10 +1938,10 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
             )}
           </div>
 
-          {/* Shop UPI & Details */}
+          {/* Shop Payment Gateway & Contact Information */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-4">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">
-              UPI Gateway & Contact Information
+              Payment Gateway & Contact Information
             </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -2008,27 +2046,153 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                   </label>
                 </div>
 
-                <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-200">
-                  <div>
-                    <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                      Single-Tab WhatsApp Web Mode
-                      <span className="bg-blue-100 text-blue-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded">Active</span>
+                {/* Single-Tab Chrome Extension Companion Banner */}
+                <div className={`p-4 rounded-xl border transition ${
+                  isExtensionActive ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'
+                }`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2.5 h-2.5 rounded-full ${isExtensionActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+                        <span className="text-xs font-black text-slate-900 uppercase tracking-wide">
+                          {isExtensionActive ? '🟢 Chrome Single-Tab Extension Active' : 'Chrome Single-Tab WhatsApp Companion'}
+                        </span>
+                        {isExtensionActive && (
+                          <span className="bg-emerald-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded">
+                            REUSING OPEN TAB
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1 leading-snug">
+                        {isExtensionActive
+                          ? 'Connected! When you click "Mark Ready", Chrome navigates your already-open WhatsApp Web tab directly to the customer with the message pasted. Zero new tabs created!'
+                          : 'Install our free 30-second helper so Chrome can find your already-open WhatsApp tab, open the customer chat in THAT SAME TAB, and paste the message automatically.'}
+                      </p>
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      Re-uses the same WhatsApp Web tab across all orders and skips the "Continue to WhatsApp Web" landing screen.
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={downloadingExtension}
+                        onClick={async () => {
+                          setDownloadingExtension(true);
+                          await downloadWhatsAppExtensionZip();
+                          setDownloadingExtension(false);
+                          setShowExtensionModal(true);
+                        }}
+                        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>{downloadingExtension ? 'Downloading...' : 'Download Extension (.zip)'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowExtensionModal(true)}
+                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer whitespace-nowrap"
+                      >
+                        <span>Setup Guide</span>
+                      </button>
                     </div>
                   </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editSettings.whatsappSingleTabMode !== false}
-                      onChange={(e) =>
-                        setEditSettings({ ...editSettings, whatsappSingleTabMode: e.target.checked })
-                      }
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-200">
+                  <label className="text-xs font-bold text-slate-800 block mb-1.5">
+                    WhatsApp Dispatch Mode (Prevent Tab Spawning)
                   </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditSettings({ ...editSettings, whatsAppDispatchMode: 'EXTENSION_SINGLE_TAB' })}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                        (editSettings.whatsAppDispatchMode || 'EXTENSION_SINGLE_TAB') === 'EXTENSION_SINGLE_TAB'
+                          ? 'border-emerald-600 bg-emerald-50/90 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-extrabold text-xs text-slate-900 flex items-center gap-1">
+                            🟢 Existing Tab
+                          </span>
+                          <span className="bg-emerald-100 text-emerald-800 text-[9px] font-extrabold px-1 py-0.5 rounded">
+                            0 TABS
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-snug">
+                          Finds your <strong>already-open WhatsApp Web tab</strong> in Chrome, navigates to the customer, and pastes the message in that same tab!
+                        </p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditSettings({ ...editSettings, whatsAppDispatchMode: 'DESKTOP_APP' })}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                        editSettings.whatsAppDispatchMode === 'DESKTOP_APP'
+                          ? 'border-emerald-600 bg-emerald-50/90 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-extrabold text-xs text-slate-900 flex items-center gap-1">
+                            🖥️ Desktop App
+                          </span>
+                          <span className="bg-emerald-100 text-emerald-800 text-[9px] font-extrabold px-1 py-0.5 rounded">
+                            0 TABS
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-snug">
+                          Controls the official WhatsApp Desktop app directly. <strong>Never opens any browser tabs.</strong>
+                        </p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditSettings({ ...editSettings, whatsAppDispatchMode: 'CLIPBOARD_PASTE' })}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                        editSettings.whatsAppDispatchMode === 'CLIPBOARD_PASTE'
+                          ? 'border-blue-600 bg-blue-50/90 ring-2 ring-blue-500/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-extrabold text-xs text-slate-900 flex items-center gap-1">
+                            📋 Auto-Copy
+                          </span>
+                          <span className="bg-blue-100 text-blue-800 text-[9px] font-extrabold px-1 py-0.5 rounded">
+                            0 TABS
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-snug">
+                          Auto-copies text on Mark Ready. Switch to your open WhatsApp tab &amp; press <strong>Ctrl+V + Enter</strong>.
+                        </p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditSettings({ ...editSettings, whatsAppDispatchMode: 'WEB_WHATSAPP' })}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                        editSettings.whatsAppDispatchMode === 'WEB_WHATSAPP'
+                          ? 'border-amber-600 bg-amber-50/90 ring-2 ring-amber-500/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-extrabold text-xs text-slate-900 flex items-center gap-1">
+                            🌐 Web URL
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-snug">
+                          Standard web link. Note: Browser security will open a new tab for each message.
+                        </p>
+                      </div>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="pt-2 border-t border-slate-200">
@@ -2667,30 +2831,232 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <div className="space-y-2 pt-1">
               <button
                 type="button"
                 onClick={() => {
+                  const cleanMobile = whatsAppModalOrder.order.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
+                  window.postMessage({
+                    type: 'RSCC_DISPATCH_WHATSAPP',
+                    phone: cleanMobile,
+                    message: whatsAppModalOrder.message,
+                    orderNumber: whatsAppModalOrder.order.orderNumber,
+                  }, '*');
                   navigator.clipboard.writeText(whatsAppModalOrder.message);
-                  showToast('Message copied to clipboard! 📋');
+
+                  if (isExtensionActive) {
+                    showToast('🟢 Customer chat opened in your existing WhatsApp Web tab! (0 new tabs)');
+                    setTimeout(() => setWhatsAppModalOrder(null), 1200);
+                  } else {
+                    // Open/reuse web tab with clean mobile and message, and copy text
+                    openWhatsAppInSingleTab(whatsAppModalOrder.url, true);
+                    showToast('🌐 WhatsApp Web opened & message copied to clipboard! (Install Chrome Extension to auto-navigate without new tabs)');
+                    setTimeout(() => setWhatsAppModalOrder(null), 1500);
+                  }
                 }}
-                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 px-3 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 px-3 rounded-xl text-xs transition flex items-center justify-center gap-2 shadow cursor-pointer text-center"
               >
-                <span>📋 Copy Message</span>
+                <span>🟢 Send to Open WhatsApp Web Tab</span>
               </button>
 
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cleanMobile = whatsAppModalOrder.order.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
+                    launchWhatsAppDesktop(cleanMobile, whatsAppModalOrder.message);
+                    showToast('🚀 Opened in WhatsApp Desktop app!');
+                    setTimeout(() => setWhatsAppModalOrder(null), 1200);
+                  }}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-2.5 px-2 rounded-xl text-[11px] transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <span>🖥️ Desktop App</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(whatsAppModalOrder.message);
+                    showToast('📋 Copied! Switch to your open WhatsApp tab & press Ctrl+V + Enter.');
+                  }}
+                  className="w-full bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 font-bold py-2.5 px-2 rounded-xl text-[11px] transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <span>📋 Copy Text</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    openWhatsAppInSingleTab(whatsAppModalOrder.url, settings.whatsappSingleTabMode !== false);
+                    showToast('Opening WhatsApp Web tab... 🌐');
+                    setTimeout(() => setWhatsAppModalOrder(null), 1500);
+                  }}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 px-2 rounded-xl text-[11px] transition cursor-pointer flex items-center justify-center gap-1 text-center"
+                >
+                  <Send className="w-3 h-3" />
+                  <span>Web Link</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </button>
+              </div>
+
+              {!isExtensionActive && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWhatsAppModalOrder(null);
+                      setShowExtensionModal(true);
+                    }}
+                    className="w-full text-center text-[11px] text-emerald-700 hover:text-emerald-800 underline font-bold cursor-pointer"
+                  >
+                    💡 Want Chrome to auto-paste into your open tab without new tabs? Click here for the 30s Chrome Helper.
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHROME SINGLE-TAB WHATSAPP EXTENSION SETUP MODAL */}
+      {showExtensionModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl font-black">
+                  🧩
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Chrome Single-Tab WhatsApp Helper
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Never let Chrome open duplicate WhatsApp tabs again
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowExtensionModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 text-sm cursor-pointer rounded-lg hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Connection Status Pill */}
+            <div className={`p-3.5 rounded-2xl border text-xs flex items-center justify-between ${
+              isExtensionActive ? 'bg-emerald-50 border-emerald-300 text-emerald-950 font-bold' : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full ${isExtensionActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+                <span>
+                  {isExtensionActive
+                    ? '🟢 Active & Connected to this Browser Tab!'
+                    : '⚪ Extension Not Yet Loaded in Chrome'}
+                </span>
+              </div>
+              {isExtensionActive && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.postMessage({
+                      type: 'RSCC_DISPATCH_WHATSAPP',
+                      phone: '8652411690',
+                      message: 'Test message from RSCC Admin Dashboard! 🎉'
+                    }, '*');
+                    showToast('🚀 Test message sent to your open WhatsApp tab!');
+                  }}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] rounded-lg cursor-pointer"
+                >
+                  Test Navigation
+                </button>
+              )}
+            </div>
+
+            {/* Why This Is Needed */}
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600 space-y-1.5 leading-relaxed">
+              <span className="font-extrabold text-slate-900 block">Why does Chrome open a new tab by default?</span>
+              <p>
+                Google Chrome security (Same-Origin Policy) blocks all regular websites from accessing other tabs. Without this lightweight helper, Chrome forces a new tab every time you click a WhatsApp link.
+              </p>
+              <p>
+                With this 1-click helper, Chrome grants permission to find your <strong>already-open WhatsApp Web tab</strong>, jump straight to the customer, and paste the message into that exact tab.
+              </p>
+            </div>
+
+            {/* 3 Simple Setup Steps */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                3-Step Setup (Takes 30 Seconds):
+              </h4>
+
+              <div className="space-y-2.5 text-xs text-slate-700">
+                <div className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-xl">
+                  <div className="w-6 h-6 rounded-full bg-slate-900 text-white font-black text-xs flex items-center justify-center shrink-0">
+                    1
+                  </div>
+                  <div className="space-y-1.5 flex-1">
+                    <span className="font-bold text-slate-900 block">Download and unzip the helper folder</span>
+                    <button
+                      type="button"
+                      disabled={downloadingExtension}
+                      onClick={async () => {
+                        setDownloadingExtension(true);
+                        await downloadWhatsAppExtensionZip();
+                        setDownloadingExtension(false);
+                        showToast('📦 Downloaded rscc-whatsapp-single-tab-extension.zip! Please unzip/extract it.');
+                      }}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>{downloadingExtension ? 'Packaging...' : 'Download Helper (.zip)'}</span>
+                    </button>
+                    <span className="text-[11px] text-slate-500 block">
+                      Extract / Unzip the downloaded file to a folder on your computer.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-xl">
+                  <div className="w-6 h-6 rounded-full bg-slate-900 text-white font-black text-xs flex items-center justify-center shrink-0">
+                    2
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-900 block">Open Chrome Extensions page</span>
+                    <p className="text-slate-600 text-[11px] mt-0.5">
+                      In Chrome address bar, open: <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono font-bold text-slate-800">chrome://extensions</code>
+                    </p>
+                    <p className="text-slate-600 text-[11px] mt-0.5">
+                      In the top-right corner, turn ON the <strong>"Developer mode"</strong> switch.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-xl">
+                  <div className="w-6 h-6 rounded-full bg-slate-900 text-white font-black text-xs flex items-center justify-center shrink-0">
+                    3
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-900 block">Click "Load unpacked" &amp; choose folder</span>
+                    <p className="text-slate-600 text-[11px] mt-0.5">
+                      Click the <strong>"Load unpacked"</strong> button in the top-left corner, and select the folder you extracted in Step 1.
+                    </p>
+                    <p className="text-emerald-700 text-[11px] mt-1 font-bold">
+                      Done! Once loaded, refresh this page. You will see the green connection indicator above!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2">
               <button
                 type="button"
-                onClick={() => {
-                  openWhatsAppInSingleTab(whatsAppModalOrder.url, settings.whatsappSingleTabMode !== false);
-                  showToast('WhatsApp launched (single tab)! 🚀');
-                  setTimeout(() => setWhatsAppModalOrder(null), 1500);
-                }}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow cursor-pointer text-center"
+                onClick={() => setShowExtensionModal(false)}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer transition text-center"
               >
-                <Send className="w-4 h-4" />
-                <span>Open in WhatsApp (Single Tab)</span>
-                <ExternalLink className="w-3.5 h-3.5" />
+                Close Setup Guide
               </button>
             </div>
           </div>
