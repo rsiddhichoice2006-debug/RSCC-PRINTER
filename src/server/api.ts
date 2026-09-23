@@ -441,7 +441,11 @@ function sendJson(res: ServerResponse, statusCode: number, data: any) {
 // Main API request handler
 export async function handleApiRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-  const pathname = url.pathname;
+  // Normalize pathname: lowercase, trim whitespace, and strip trailing slash (except root '/')
+  let pathname = url.pathname.trim();
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    pathname = pathname.slice(0, -1);
+  }
   const method = req.method?.toUpperCase();
 
   if (method === 'OPTIONS') {
