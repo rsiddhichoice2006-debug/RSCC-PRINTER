@@ -744,8 +744,17 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
     }
   };
 
-  // Filtered orders list
+  // Filtered orders list - CRITICAL RULE: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
   const filteredOrders = orders.filter((o) => {
+    // CRITICAL: Staff portal only shows orders where payment has been successfully completed and verified
+    const isPaymentSuccessful =
+      o.paymentStatus === 'PAYMENT_VERIFIED' ||
+      o.paymentStatus === 'VERIFIED';
+
+    if (!isPaymentSuccessful) {
+      return false;
+    }
+
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||

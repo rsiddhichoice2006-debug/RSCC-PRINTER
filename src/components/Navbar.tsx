@@ -90,8 +90,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
             <span className="text-slate-700 hidden sm:inline">|</span>
             <div className="hidden sm:flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded text-[11px]">
-              <span className="text-slate-400 uppercase font-semibold text-[9px] tracking-wider">UPI ID:</span>
-              <span className="text-amber-300 font-mono-code font-bold">{settings.upiId}</span>
+              <span className="text-emerald-400 font-bold">⚡ Razorpay Verified</span>
+              <span className="text-slate-400 text-[10px]">Secure Payments</span>
             </div>
           </div>
         </div>
@@ -414,11 +414,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
 
               <div className="flex items-start gap-3">
-                <Sparkles className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
+                <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-bold text-slate-900">Direct Shop UPI:</div>
-                  <div className="font-mono-code text-xs font-bold text-slate-950 bg-amber-100 text-amber-950 px-2 py-0.5 rounded border border-amber-300/80 inline-block mt-0.5">
-                    {settings.upiId}
+                  <div className="font-bold text-slate-900">Online Payments:</div>
+                  <div className="text-xs font-bold text-slate-700 inline-flex items-center gap-1 mt-0.5">
+                    <span className="text-indigo-600 font-black">Razorpay Gateway</span>
+                    <span className="text-slate-500">(UPI, GPay, PhonePe, Cards, NetBanking)</span>
                   </div>
                 </div>
               </div>

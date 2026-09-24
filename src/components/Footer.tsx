@@ -31,8 +31,8 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
             </p>
             <div className="pt-1">
               <div className="inline-flex items-center gap-2 bg-slate-900 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl font-mono-code">
-                <span className="text-slate-500 text-[10px] uppercase font-bold">UPI ID:</span>
-                <span className="text-amber-400 font-bold">{settings.upiId}</span>
+                <span className="text-emerald-400 font-bold">🔒 Razorpay Gateway</span>
+                <span className="text-slate-400 text-[10px]">100% Secure Checkout</span>
               </div>
             </div>
           </div>

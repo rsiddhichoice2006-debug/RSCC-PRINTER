@@ -858,15 +858,21 @@ export const apiClient = {
       }
     });
 
+    // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
+    const paidOnlyOrders = Array.from(ordersMap.values()).filter(
+      (o) =>
+        o.paymentStatus === 'PAYMENT_VERIFIED' ||
+        o.paymentStatus === 'VERIFIED'
+    );
+
     // Deduplicate and sort newest first
-    const uniqueOrders = Array.from(ordersMap.values());
-    uniqueOrders.sort(
+    paidOnlyOrders.sort(
       (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
 
-    Storage.saveOrders(uniqueOrders);
+    Storage.saveOrders(paidOnlyOrders);
 
-    let filtered = uniqueOrders;
+    let filtered = paidOnlyOrders;
     if (params?.search) {
       const q = params.search.toLowerCase();
       filtered = filtered.filter(
@@ -894,9 +900,14 @@ export const apiClient = {
 
     const emitMergedOrders = () => {
       if (!isSubscribed) return;
-      const sorted = Array.from(knownOrdersMap.values()).sort(
-        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-      );
+      // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
+      const sorted = Array.from(knownOrdersMap.values())
+        .filter(
+          (o) =>
+            o.paymentStatus === 'PAYMENT_VERIFIED' ||
+            o.paymentStatus === 'VERIFIED'
+        )
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       callback(sorted);
     };
 

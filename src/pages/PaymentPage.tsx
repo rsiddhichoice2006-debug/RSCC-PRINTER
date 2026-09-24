@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import confetti from 'canvas-confetti';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -12,7 +13,10 @@ import {
   CreditCard,
   Home,
   Check,
-  CheckCircle,
+  Receipt,
+  FileText,
+  BadgeCheck,
+  Zap,
 } from 'lucide-react';
 import { OrderRecord, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -37,7 +41,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   const [isRazorpayLoading, setIsRazorpayLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successOrder, setSuccessOrder] = useState<OrderRecord | null>(null);
-  const [redirectCountdown, setRedirectCountdown] = useState<number>(6);
+  const [redirectCountdown, setRedirectCountdown] = useState<number>(10);
 
   // 10-minute payment session timer (600 seconds)
   const TOTAL_PAYMENT_SECONDS = 600;
@@ -49,6 +53,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
   // Track if payment verification is currently in-flight to prevent duplicate requests
   const paymentProcessedRef = useRef<boolean>(false);
+  const hasAutoPromptedRef = useRef<boolean>(false);
 
   // Session Countdown timer
   useEffect(() => {
@@ -62,9 +67,21 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
     return () => clearInterval(timer);
   }, [timeLeft]);
 
+  const formatTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handleResetTimer = () => {
+    setTimeLeft(TOTAL_PAYMENT_SECONDS);
+    setIsExpired(false);
+    setErrorMsg('');
+  };
+
   // Launch Razorpay Standard Web Checkout
-  const handleRazorpayCheckout = async () => {
-    if (paymentProcessedRef.current || isExpired || isRazorpayLoading) return;
+  const handleLaunchRazorpay = async () => {
+    if (paymentProcessedRef.current || isExpired || isRazorpayLoading || isVerifying) return;
     setErrorMsg('');
     setIsRazorpayLoading(true);
 
@@ -75,9 +92,9 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
         receipt: `rcpt_${order.orderNumber || Date.now()}`,
         name: shopName,
         description: `Order #${order.orderNumber} - ₹${order.totalAmount.toFixed(2)}`,
-        customerName: order.customer?.name || 'Customer',
+        customerName: order.customer?.name || 'Valued Customer',
         customerEmail: order.customer?.email || 'customer@rscc.in',
-        customerMobile: order.customer?.mobile || '8652411690',
+        customerMobile: order.customer?.mobile || '',
         orderId: order.id,
         notes: {
           orderNumber: order.orderNumber,
@@ -90,22 +107,26 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
           paymentProcessedRef.current = true;
           setIsVerifying(true);
           try {
+            // Authoritative server-side order confirmation:
+            // CRITICAL: ONLY NOW does the order appear in the Staff Portal after payment is confirmed!
             const confirmedOrder = await apiClient.placeOrderWithPayment(order, {
               transactionId: paymentResult.razorpay_payment_id,
-              paymentMethod: 'Razorpay (Standard Web Checkout)',
+              paymentMethod: 'Razorpay (Online Payment)',
               amount: order.totalAmount,
             });
+            try {
+              confetti({ particleCount: 90, spread: 80, origin: { y: 0.6 } });
+            } catch {}
             setSuccessOrder(confirmedOrder || verifyData?.order);
             onPaymentSubmitted(confirmedOrder || verifyData?.order);
           } catch (err: any) {
             console.error('Error recording Razorpay order in system:', err);
-            // Fallback: use order returned from backend verification or synthesize
             const fallbackOrder: OrderRecord = verifyData?.order || {
               ...order,
               paymentStatus: 'PAYMENT_VERIFIED',
               orderStatus: 'CONFIRMED',
               paymentReference: paymentResult.razorpay_payment_id,
-              paymentMethod: 'Razorpay (Standard Web Checkout)',
+              paymentMethod: 'Razorpay (Online Payment)',
               verifiedAt: new Date().toISOString(),
             };
             setSuccessOrder(fallbackOrder);
@@ -117,18 +138,29 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
         },
         onError: (err) => {
           setIsRazorpayLoading(false);
-          setErrorMsg(err.description || 'Payment was cancelled or failed. Please try again.');
+          setErrorMsg(err.description || 'Payment was cancelled or not completed. Please try again.');
         },
         onDismiss: () => {
           setIsRazorpayLoading(false);
         },
       });
     } catch (err: any) {
-      console.error('Razorpay initialization error:', err);
+      console.error('Razorpay initialization notice:', err);
       setIsRazorpayLoading(false);
-      setErrorMsg(err.message || 'Could not initialize Razorpay checkout. Please try again.');
+      setErrorMsg(err.message || 'Could not initialize Razorpay checkout. Please check your internet connection.');
     }
   };
+
+  // Automatically prompt Razorpay checkout once on mount
+  useEffect(() => {
+    if (!hasAutoPromptedRef.current && !isExpired && !successOrder) {
+      hasAutoPromptedRef.current = true;
+      const autoTimer = setTimeout(() => {
+        handleLaunchRazorpay();
+      }, 700);
+      return () => clearTimeout(autoTimer);
+    }
+  }, []);
 
   // Auto-redirect countdown when order is successfully placed
   useEffect(() => {
@@ -148,18 +180,6 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
     return () => clearInterval(timer);
   }, [successOrder, onBackToHome]);
 
-  const formatTimer = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const handleResetTimer = () => {
-    setTimeLeft(TOTAL_PAYMENT_SECONDS);
-    setIsExpired(false);
-    setErrorMsg('');
-  };
-
   // SUCCESS SCREEN: When payment is completed and verified
   if (successOrder) {
     return (
@@ -178,7 +198,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               🎉 Your Order Has Been Placed!
             </h1>
             <p className="text-sm text-slate-600 max-w-md mx-auto">
-              Payment of <strong className="text-emerald-700 font-bold">₹{amount.toFixed(2)}</strong> has been verified via Razorpay. Your print job is now sent to the printing queue.
+              Payment of <strong className="text-emerald-700 font-bold">₹{amount.toFixed(2)}</strong> has been verified via Razorpay. Your job is now active in the shop printing queue.
             </p>
           </div>
 
@@ -198,7 +218,7 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
             <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
               <span className="text-slate-500 font-sans">Customer Name:</span>
-              <span className="font-bold text-slate-900">{successOrder.customer.name}</span>
+              <span className="font-bold text-slate-900">{successOrder.customer?.name}</span>
             </div>
 
             <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
@@ -207,21 +227,36 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
             </div>
 
             <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
-              <span className="text-slate-500 font-sans">Payment Method:</span>
-              <span className="font-bold text-slate-900">{successOrder.paymentMethod || 'Razorpay Standard Checkout'}</span>
+              <span className="text-slate-500 font-sans">Payment Channel:</span>
+              <span className="font-bold text-indigo-700 flex items-center gap-1">
+                <BadgeCheck className="w-4 h-4 text-indigo-600" />
+                <span>Razorpay Gateway</span>
+              </span>
             </div>
 
             {successOrder.paymentReference && (
               <div className="flex justify-between items-center">
-                <span className="text-slate-500 font-sans">Payment ID:</span>
-                <span className="font-mono text-slate-700 text-xs truncate max-w-[200px]">{successOrder.paymentReference}</span>
+                <span className="text-slate-500 font-sans">Razorpay Payment ID:</span>
+                <span className="font-mono text-slate-800 text-xs font-bold truncate max-w-[220px]">
+                  {successOrder.paymentReference}
+                </span>
               </div>
             )}
           </div>
 
+          <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-2xl text-left text-xs text-emerald-950 space-y-1">
+            <div className="font-bold flex items-center gap-1.5 text-emerald-900">
+              <Check className="w-4 h-4 text-emerald-600" />
+              <span>Dispatched to Shop Staff Queue</span>
+            </div>
+            <p className="text-slate-600">
+              Show your 4-digit pickup PIN <strong>{successOrder.deliveryPin}</strong> at the RSCC shop counter when collecting your printed documents.
+            </p>
+          </div>
+
           <div className="pt-2 space-y-3">
             <p className="text-xs text-slate-500">
-              Auto-returning to homepage in <strong className="text-emerald-700 font-bold">{redirectCountdown}s</strong>...
+              Returning to homepage in <strong className="text-emerald-700 font-bold">{redirectCountdown}s</strong>...
             </p>
             <button
               type="button"
@@ -238,19 +273,19 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-6">
       {/* Top Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-lg border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="inline-flex items-center gap-1.5 bg-emerald-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider">
-            <CreditCard className="w-3.5 h-3.5" />
-            <span>Razorpay Secure Checkout</span>
+      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="space-y-1.5">
+          <div className="inline-flex items-center gap-1.5 bg-indigo-500 text-white text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>Official Razorpay Payment</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-white">
-            Complete Secure Payment
+            Complete Order Payment
           </h1>
           <p className="text-xs sm:text-sm text-slate-300">
-            Order #{order.orderNumber} • Total Amount: <span className="font-bold text-emerald-400 text-base">₹{amount.toFixed(2)}</span>
+            Order #{order.orderNumber} • Amount Payable: <span className="font-bold text-emerald-400 text-base">₹{amount.toFixed(2)}</span>
           </p>
         </div>
 
@@ -286,103 +321,81 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3 text-rose-900 text-xs sm:text-sm">
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <div className="font-bold">Payment Error</div>
+            <div className="font-bold">Payment Notification</div>
             <p>{errorMsg}</p>
           </div>
         </div>
       )}
 
-      {/* Main Single Payment Gateway: Razorpay Checkout Card */}
+      {/* RAZORPAY PAYMENT GATEWAY CARD */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-6">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center font-bold">
-              <CreditCard className="w-5 h-5" />
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
+              <CreditCard className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-lg font-black text-slate-900">Razorpay Payment Gateway</h2>
-              <p className="text-xs text-slate-500">Official, bank-grade payment processing</p>
+              <h2 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
+                <span>Razorpay Secure Gateway</span>
+              </h2>
+              <p className="text-xs text-slate-500">
+                Direct Merchant Checkout • {shopName}
+              </p>
             </div>
           </div>
-          <span className="text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            100% Secure
-          </span>
-        </div>
-
-        {/* Supported Payment Channels */}
-        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
-          <div className="text-xs font-bold text-slate-700">Supported in the Razorpay Modal:</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-            <div className="p-2.5 bg-white rounded-xl border border-slate-200 font-bold text-slate-800 flex items-center justify-center gap-1.5 shadow-2xs">
-              <span className="text-emerald-600">⚡</span> Google Pay
-            </div>
-            <div className="p-2.5 bg-white rounded-xl border border-slate-200 font-bold text-slate-800 flex items-center justify-center gap-1.5 shadow-2xs">
-              <span className="text-purple-600">⚡</span> PhonePe
-            </div>
-            <div className="p-2.5 bg-white rounded-xl border border-slate-200 font-bold text-slate-800 flex items-center justify-center gap-1.5 shadow-2xs">
-              <span className="text-blue-600">⚡</span> Paytm / UPI
-            </div>
-            <div className="p-2.5 bg-white rounded-xl border border-slate-200 font-bold text-slate-800 flex items-center justify-center gap-1.5 shadow-2xs">
-              <span className="text-slate-600">💳</span> Cards / NetBanking
-            </div>
+          <div className="flex items-center gap-2 bg-emerald-50 text-emerald-800 text-xs font-black px-3.5 py-1.5 rounded-full border border-emerald-200 w-fit">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>256-Bit SSL Encrypted</span>
           </div>
         </div>
 
-        {/* Order Summary Snapshot */}
-        <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200 space-y-3 text-xs">
-          <h4 className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
-            Order Details
-          </h4>
-
-          <div className="space-y-1.5 text-slate-600">
-            <div className="flex justify-between">
-              <span>Customer:</span>
-              <span className="font-bold text-slate-900">{order.customer.name}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Mobile:</span>
-              <span className="font-mono font-bold text-slate-900">{order.customer.mobile}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Type & Paper:</span>
-              <span className="font-bold text-slate-900">
-                {order.printType === 'COLOUR' ? 'Colour' : 'B&W'} • {order.paperSize || 'A4'} ({order.paperQuality || '75 GSM'})
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>Sides:</span>
-              <span className="font-bold text-slate-900">
-                {order.printingSide === 'BOTH' ? 'Both Sides (Double)' : 'Single Side'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>Total Pages × Copies:</span>
-              <span className="font-bold text-slate-900">
-                {order.totalPages} pages × {order.copies} cop{order.copies === 1 ? 'y' : 'ies'}
-              </span>
-            </div>
-          </div>
-
-          <div className="border-t border-slate-200 pt-3 flex justify-between items-center text-sm font-black text-slate-900">
-            <span>Total Payable Amount:</span>
-            <span className="text-emerald-700 text-xl font-black">₹{amount.toFixed(2)}</span>
-          </div>
-        </div>
-
-        {/* Single Primary Action: Razorpay Standard Checkout Button */}
+        {/* Accepted Payment Modes via Razorpay */}
         <div className="space-y-3">
+          <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+            <Zap className="w-4 h-4 text-amber-500" />
+            <span>All Indian Payment Methods Accepted Inside Razorpay:</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 font-bold text-slate-800 flex flex-col items-center justify-center text-center gap-1 shadow-2xs">
+              <span className="text-base">⚡</span>
+              <span className="text-[11px] leading-tight">UPI Apps</span>
+              <span className="text-[9px] text-slate-400 font-normal">GPay, PhonePe, Paytm</span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 font-bold text-slate-800 flex flex-col items-center justify-center text-center gap-1 shadow-2xs">
+              <span className="text-base">💳</span>
+              <span className="text-[11px] leading-tight">Cards</span>
+              <span className="text-[9px] text-slate-400 font-normal">Debit & Credit Cards</span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 font-bold text-slate-800 flex flex-col items-center justify-center text-center gap-1 shadow-2xs">
+              <span className="text-base">🏦</span>
+              <span className="text-[11px] leading-tight">NetBanking</span>
+              <span className="text-[9px] text-slate-400 font-normal">50+ Banks Supported</span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 font-bold text-slate-800 flex flex-col items-center justify-center text-center gap-1 shadow-2xs">
+              <span className="text-base">👛</span>
+              <span className="text-[11px] leading-tight">Wallets & QR</span>
+              <span className="text-[9px] text-slate-400 font-normal">Razorpay QR, CRED</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Primary Action Button: Pay with Razorpay */}
+        <div className="space-y-3 pt-2">
           <button
             type="button"
             id="razorpay-pay-button"
-            onClick={handleRazorpayCheckout}
+            onClick={handleLaunchRazorpay}
             disabled={isVerifying || isRazorpayLoading || isExpired}
-            className="w-full py-4 px-6 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-base rounded-2xl transition shadow-xl shadow-emerald-600/20 flex items-center justify-center gap-3 cursor-pointer disabled:cursor-not-allowed transform active:scale-98"
+            className="w-full py-4 px-6 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-base sm:text-lg rounded-2xl transition shadow-xl shadow-indigo-600/25 flex items-center justify-center gap-3 cursor-pointer disabled:cursor-not-allowed transform active:scale-98"
           >
             {isRazorpayLoading ? (
               <>
                 <RefreshCw className="w-5 h-5 animate-spin text-white" />
-                <span>Opening Razorpay Checkout Modal...</span>
+                <span>Launching Razorpay Checkout...</span>
               </>
             ) : isVerifying ? (
               <>
@@ -391,39 +404,81 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               </>
             ) : (
               <>
-                <Lock className="w-5 h-5 text-emerald-200" />
-                <span>Pay ₹{amount.toFixed(2)} via Razorpay</span>
-                <ArrowRight className="w-5 h-5 text-emerald-200" />
+                <Lock className="w-5 h-5 text-indigo-200" />
+                <span>Pay ₹{amount.toFixed(2)} with Razorpay</span>
+                <ArrowRight className="w-5 h-5 text-indigo-200" />
               </>
             )}
           </button>
 
-          <div className="flex items-center justify-center gap-2 text-xs text-slate-500">
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>Instant confirmation with 256-bit bank encryption & HMAC verification</span>
+          <div className="flex items-center justify-center gap-2 text-xs text-slate-500 text-center">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>Instant automatic confirmation • Your order is dispatched directly to the shop print queue upon payment</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Order Summary Snapshot */}
+      <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-3 text-xs">
+        <h4 className="font-black text-slate-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+          <Receipt className="w-4 h-4 text-slate-500" />
+          <span>Order Summary</span>
+        </h4>
+
+        <div className="space-y-1.5 text-slate-600">
+          <div className="flex justify-between">
+            <span>Customer Name:</span>
+            <span className="font-bold text-slate-900">{order.customer?.name}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Mobile Number:</span>
+            <span className="font-mono font-bold text-slate-900">{order.customer?.mobile}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Document & Paper:</span>
+            <span className="font-bold text-slate-900">
+              {order.printType === 'COLOUR' ? 'Colour' : 'B&W'} • {order.paperSize || 'A4'} ({order.paperQuality || '75 GSM'})
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span>Sides:</span>
+            <span className="font-bold text-slate-900">
+              {order.printingSide === 'BOTH' ? 'Both Sides (Double)' : 'Single Side'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span>Total Pages × Copies:</span>
+            <span className="font-bold text-slate-900">
+              {order.totalPages} pages × {order.copies} cop{order.copies === 1 ? 'y' : 'ies'}
+            </span>
           </div>
         </div>
 
-        {/* Back and Cancel Actions */}
-        <div className="pt-2 border-t border-slate-100 flex gap-3">
-          <button
-            type="button"
-            onClick={onBackToEdit}
-            disabled={isVerifying || isRazorpayLoading}
-            className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
-          >
-            ← Edit Order
-          </button>
-
-          <button
-            type="button"
-            onClick={onBackToHome}
-            disabled={isVerifying || isRazorpayLoading}
-            className="flex-1 py-3 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition cursor-pointer"
-          >
-            Cancel Checkout
-          </button>
+        <div className="border-t border-slate-100 pt-3 flex justify-between items-center text-sm font-black text-slate-900">
+          <span>Total Payable:</span>
+          <span className="text-emerald-700 text-xl font-black">₹{amount.toFixed(2)}</span>
         </div>
+      </div>
+
+      {/* Back and Cancel Actions */}
+      <div className="pt-2 border-t border-slate-100 flex gap-3">
+        <button
+          type="button"
+          onClick={onBackToEdit}
+          disabled={isVerifying || isRazorpayLoading}
+          className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
+        >
+          ← Edit Order Details
+        </button>
+
+        <button
+          type="button"
+          onClick={onBackToHome}
+          disabled={isVerifying || isRazorpayLoading}
+          className="flex-1 py-3 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition cursor-pointer"
+        >
+          Cancel Checkout
+        </button>
       </div>
     </div>
   );

@@ -618,12 +618,12 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
             </div>
 
             <div className="bg-white rounded-2xl p-6 border border-slate-200/90 shadow-2xs space-y-3">
-              <div className="w-7 h-7 rounded-lg bg-slate-950 text-white font-mono-code font-bold text-xs flex items-center justify-center">
+              <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white font-mono-code font-bold text-xs flex items-center justify-center">
                 03
               </div>
-              <h3 className="font-bold text-slate-950 text-sm">Scan Shop UPI QR</h3>
+              <h3 className="font-bold text-slate-950 text-sm">Pay via Razorpay</h3>
               <p className="text-xs text-slate-500 leading-relaxed">
-                Complete payment directly via Google Pay, PhonePe, or Paytm with zero gateway fees.
+                Complete payment instantly via UPI, Google Pay, PhonePe, Cards, or NetBanking through Razorpay.
               </p>
             </div>
 
