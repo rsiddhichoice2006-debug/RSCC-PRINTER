@@ -37,11 +37,11 @@ const DEFAULT_SETTINGS: ShopSettings = {
   whatsAppDispatchMode: 'DESKTOP_APP',
   pricing: {
     a4Bw75Single: 5,
-    a4Bw75Both: 4,
+    a4Bw75Both: 5,
     a4Bw100Single: 7,
     a4Bw100Both: 12,
     a4Color100Single: 10,
-    a4Color100Both: 15,
+    a4Color100Both: 10,
     a3Bw75Single: 10,
     a3Bw75Both: 20,
     a3Bw100Single: 15,
@@ -51,9 +51,9 @@ const DEFAULT_SETTINGS: ShopSettings = {
     passportStandard: 50,
     passportMixed: 60,
     bwSingle: 5,
-    bwBoth: 4,
+    bwBoth: 5,
     colorSingle: 10,
-    colorBoth: 15,
+    colorBoth: 10,
     photoSheet: 15,
   },
 };
@@ -97,7 +97,28 @@ const Storage = {
   getSettings(): ShopSettings {
     try {
       const data = localStorage.getItem('rscc_settings_v2');
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (parsed?.pricing) {
+          if (!parsed.pricing.bwSingle || parsed.pricing.bwSingle < 5) {
+            parsed.pricing.bwSingle = 5;
+            parsed.pricing.a4Bw75Single = 5;
+          }
+          if (!parsed.pricing.bwBoth || parsed.pricing.bwBoth < 5) {
+            parsed.pricing.bwBoth = 5;
+            parsed.pricing.a4Bw75Both = 5;
+          }
+          if (!parsed.pricing.colorSingle || parsed.pricing.colorSingle < 10) {
+            parsed.pricing.colorSingle = 10;
+            parsed.pricing.a4Color100Single = 10;
+          }
+          if (!parsed.pricing.colorBoth || parsed.pricing.colorBoth < 10) {
+            parsed.pricing.colorBoth = 10;
+            parsed.pricing.a4Color100Both = 10;
+          }
+        }
+        return parsed;
+      }
     } catch (e) {
       console.warn('Storage read error:', e);
     }
@@ -240,12 +261,12 @@ function calculateOrderPrice(params: {
   if (paperSize === 'A4') {
     if (params.printType === 'BW') {
       if (paperQuality === '75_GSM') {
-        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 4) : (p.a4Bw75Single || 5);
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 5) : (p.a4Bw75Single || 5);
       } else {
         rate = params.printingSide === 'BOTH' ? (p.a4Bw100Both || 12) : (p.a4Bw100Single || 7);
       }
     } else {
-      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 15) : (p.a4Color100Single || 10);
+      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 10) : (p.a4Color100Single || 10);
     }
   } else {
     if (params.printType === 'BW') {
@@ -372,9 +393,9 @@ export const apiClient = {
         ...(newSettings.pricing || {}),
         // Ensure legacy price fallbacks are synchronized
         bwSingle: newSettings.pricing?.a4Bw75Single ?? newSettings.pricing?.bwSingle ?? current.pricing?.a4Bw75Single ?? current.pricing?.bwSingle ?? 5,
-        bwBoth: newSettings.pricing?.a4Bw75Both ?? newSettings.pricing?.bwBoth ?? current.pricing?.a4Bw75Both ?? current.pricing?.bwBoth ?? 4,
+        bwBoth: newSettings.pricing?.a4Bw75Both ?? newSettings.pricing?.bwBoth ?? current.pricing?.a4Bw75Both ?? current.pricing?.bwBoth ?? 5,
         colorSingle: newSettings.pricing?.a4Color100Single ?? newSettings.pricing?.colorSingle ?? current.pricing?.a4Color100Single ?? current.pricing?.colorSingle ?? 10,
-        colorBoth: newSettings.pricing?.a4Color100Both ?? newSettings.pricing?.colorBoth ?? current.pricing?.a4Color100Both ?? current.pricing?.colorBoth ?? 15,
+        colorBoth: newSettings.pricing?.a4Color100Both ?? newSettings.pricing?.colorBoth ?? current.pricing?.a4Color100Both ?? current.pricing?.colorBoth ?? 10,
         photoSheet: newSettings.pricing?.photoSheet ?? current.pricing?.photoSheet ?? 15,
       },
     };

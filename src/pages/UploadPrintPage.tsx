@@ -17,6 +17,7 @@ import {
   HelpCircle,
   FileSpreadsheet,
   Sliders,
+  Lock,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -56,7 +57,8 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   onProceedToPayment,
   loggedInCustomer,
 }) => {
-  const { currentUser, customerProfile } = useAuth();
+  const { currentUser, customerProfile, openAuthModal } = useAuth();
+  const isCustomerLoggedIn = !!(currentUser || customerProfile || loggedInCustomer);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = useState<boolean>(false);
   const [dragActive, setDragActive] = useState<boolean>(false);
@@ -321,6 +323,13 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
       return;
     }
 
+    if (!isCustomerLoggedIn) {
+      openAuthModal('login', 'Customer Login Required to Place Order', () => {
+        handleProceed();
+      });
+      return;
+    }
+
     if (!validateCustomerForm()) {
       return;
     }
@@ -405,9 +414,9 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
         <div className="bg-slate-800/80 border border-slate-700 rounded-2xl p-4 text-left shrink-0 text-xs text-slate-300 space-y-1">
           <div className="font-bold text-amber-400">RSCC Rate Card:</div>
-          <div>A4 B&W 75 GSM: ₹{pricing.a4Bw75Single} / ₹{pricing.a4Bw75Both}</div>
-          <div>A4 Colour 100 GSM: ₹{pricing.a4Color100Single} / ₹{pricing.a4Color100Both}</div>
-          <div>A3 B&W 75 GSM: ₹{pricing.a3Bw75Single} / ₹{pricing.a3Bw75Both}</div>
+          <div>A4 B&W 75 GSM: ₹{pricing.a4Bw75Single || 5} / ₹{pricing.a4Bw75Both || 5}</div>
+          <div>A4 Colour 100 GSM: ₹{pricing.a4Color100Single || 10} / ₹{pricing.a4Color100Both || 10}</div>
+          <div>A3 B&W 75 GSM: ₹{pricing.a3Bw75Single || 10} / ₹{pricing.a3Bw75Both || 20}</div>
         </div>
       </div>
 
@@ -711,9 +720,38 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
           {/* Customer Details Form */}
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <h3 className="font-black text-slate-900 text-base">
-              Customer Information
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="font-black text-slate-900 text-base">
+                Customer Information
+              </h3>
+              {isCustomerLoggedIn && (
+                <span className="text-[11px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-md flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Verified Account
+                </span>
+              )}
+            </div>
+
+            {!isCustomerLoggedIn && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-950">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-black">Customer Login Required</div>
+                    <div className="text-[11px] text-amber-800">You must be logged in to your account before placing your print order.</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login', 'Customer Login Required to Place Order')}
+                  className="px-4 py-2 bg-slate-950 hover:bg-slate-800 text-white text-xs font-black rounded-lg transition shrink-0 cursor-pointer shadow-xs"
+                >
+                  Log In / Sign Up
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
@@ -1119,6 +1157,16 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   >
                     <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
                     <span>NOT ACCEPTING ORDERS</span>
+                  </button>
+                ) : !isCustomerLoggedIn ? (
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('login', 'Customer Login Required to Place Order', () => handleProceed())}
+                    disabled={validFiles.length === 0 || hasFlaggedFiles}
+                    className="bg-slate-950 hover:bg-slate-800 disabled:opacity-40 text-white font-extrabold text-sm px-5 py-3 rounded-xl transition shadow-lg flex items-center gap-2 cursor-pointer"
+                  >
+                    <Lock className="w-4 h-4 text-amber-400" />
+                    <span>LOG IN TO PLACE ORDER</span>
                   </button>
                 ) : (
                   <button

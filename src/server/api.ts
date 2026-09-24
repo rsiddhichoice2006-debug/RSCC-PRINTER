@@ -150,11 +150,11 @@ const defaultSettings: ShopSettings = {
   whatsAppDispatchMode: 'DESKTOP_APP',
   pricing: {
     a4Bw75Single: 5,
-    a4Bw75Both: 4,
+    a4Bw75Both: 5,
     a4Bw100Single: 7,
     a4Bw100Both: 12,
     a4Color100Single: 10,
-    a4Color100Both: 15,
+    a4Color100Both: 10,
     a3Bw75Single: 10,
     a3Bw75Both: 20,
     a3Bw100Single: 15,
@@ -164,9 +164,9 @@ const defaultSettings: ShopSettings = {
     passportStandard: 50,
     passportMixed: 60,
     bwSingle: 5,
-    bwBoth: 4,
+    bwBoth: 5,
     colorSingle: 10,
-    colorBoth: 15,
+    colorBoth: 10,
     photoSheet: 15,
   },
 };
@@ -336,13 +336,13 @@ export function calculateOrderPrice(params: {
   if (paperSize === 'A4') {
     if (params.printType === 'BW') {
       if (paperQuality === '75_GSM') {
-        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 4) : (p.a4Bw75Single || 5);
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 5) : (p.a4Bw75Single || 5);
       } else {
         rate = params.printingSide === 'BOTH' ? (p.a4Bw100Both || 12) : (p.a4Bw100Single || 7);
       }
     } else {
       // A4 Colour (100 GSM)
-      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 15) : (p.a4Color100Single || 10);
+      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 10) : (p.a4Color100Single || 10);
     }
   } else {
     // A3
@@ -361,9 +361,9 @@ export function calculateOrderPrice(params: {
   // Fallback to legacy fields if 0
   if (!rate) {
     if (params.printType === 'BW') {
-      rate = params.printingSide === 'BOTH' ? (p.bwBoth || 4) : (p.bwSingle || 5);
+      rate = params.printingSide === 'BOTH' ? (p.bwBoth || 5) : (p.bwSingle || 5);
     } else {
-      rate = params.printingSide === 'BOTH' ? (p.colorBoth || 15) : (p.colorSingle || 10);
+      rate = params.printingSide === 'BOTH' ? (p.colorBoth || 10) : (p.colorSingle || 10);
     }
   }
 

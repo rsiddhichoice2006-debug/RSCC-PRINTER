@@ -3,12 +3,12 @@ import { PaperSize, PaperQuality, PrintType, PrintingSide, ShopPricing } from '.
 export const DEFAULT_PRICING: ShopPricing = {
   // A4 Black & White
   a4Bw75Single: 5,
-  a4Bw75Both: 4,
+  a4Bw75Both: 5,
   a4Bw100Single: 7,
   a4Bw100Both: 12,
   // A4 Colour
   a4Color100Single: 10,
-  a4Color100Both: 15,
+  a4Color100Both: 10,
   // A3 Black & White
   a3Bw75Single: 10,
   a3Bw75Both: 20,
@@ -22,9 +22,9 @@ export const DEFAULT_PRICING: ShopPricing = {
   passportMixed: 60,
   // Compatibility fallbacks
   bwSingle: 5,
-  bwBoth: 4,
+  bwBoth: 5,
   colorSingle: 10,
-  colorBoth: 15,
+  colorBoth: 10,
   photoSheet: 15,
 };
 

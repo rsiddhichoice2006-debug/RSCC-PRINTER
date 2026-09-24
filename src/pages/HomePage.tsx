@@ -42,14 +42,19 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
   const [quickSide, setQuickSide] = useState<'single' | 'both'>('single');
 
   const calculateQuickEstimate = () => {
+    const bwRate = Math.max(5, p?.bwSingle || 5);
+    const bwBothRate = Math.max(5, p?.bwBoth || 5);
+    const colorRate = Math.max(10, p?.colorSingle || 10);
+    const colorBothRate = Math.max(10, p?.colorBoth || 10);
+
     const rate =
       quickPrintType === 'bw'
         ? quickSide === 'single'
-          ? p.bwSingle
-          : p.bwBoth
+          ? bwRate
+          : bwBothRate
         : quickSide === 'single'
-        ? p.colorSingle
-        : p.colorBoth;
+        ? colorRate
+        : colorBothRate;
     return quickPages * rate;
   };
 
@@ -213,7 +218,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                         }`}
                       >
                         <span>Black & White</span>
-                        <span className="text-[10px] font-mono-code text-slate-400">₹{p.bwSingle}/pg</span>
+                        <span className="text-[10px] font-mono-code font-bold text-slate-300">₹{Math.max(5, p?.bwSingle || 5)}/pg</span>
                       </button>
 
                       <button
@@ -226,7 +231,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                         }`}
                       >
                         <span>Colour Print</span>
-                        <span className="text-[10px] font-mono-code text-amber-400">₹{p.colorSingle}/pg</span>
+                        <span className="text-[10px] font-mono-code font-bold text-amber-400">₹{Math.max(10, p?.colorSingle || 10)}/pg</span>
                       </button>
                     </div>
                   </div>
@@ -257,8 +262,8 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                         }`}
                       >
                         <span>Both Side (Duplex)</span>
-                        <span className="text-[9px] bg-emerald-950 text-emerald-300 font-bold px-1.5 py-0.5 rounded">
-                          Save
+                        <span className="text-[9px] bg-slate-800 text-slate-300 font-bold px-1.5 py-0.5 rounded">
+                          Duplex
                         </span>
                       </button>
                     </div>
@@ -501,14 +506,14 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-white p-4 rounded-xl border border-slate-200/80 text-left">
                   <div className="text-[11px] text-slate-500 font-medium">Single Side</div>
-                  <div className="text-2xl font-extrabold text-slate-950 font-mono-code mt-0.5">₹{p.bwSingle}</div>
+                  <div className="text-2xl font-extrabold text-slate-950 font-mono-code mt-0.5">₹{Math.max(5, p?.bwSingle || 5)}</div>
                   <div className="text-[10px] text-slate-400 mt-0.5">per printed page</div>
                 </div>
 
-                <div className="bg-emerald-50/60 p-4 rounded-xl border border-emerald-200/80 text-left">
-                  <div className="text-[11px] text-emerald-900 font-semibold">Both Side (Duplex)</div>
-                  <div className="text-2xl font-extrabold text-emerald-800 font-mono-code mt-0.5">₹{p.bwBoth}</div>
-                  <div className="text-[10px] text-emerald-700 mt-0.5">per printed page</div>
+                <div className="bg-slate-100/70 p-4 rounded-xl border border-slate-200/80 text-left">
+                  <div className="text-[11px] text-slate-700 font-semibold">Both Side (Duplex)</div>
+                  <div className="text-2xl font-extrabold text-slate-900 font-mono-code mt-0.5">₹{p.bwBoth || 5}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">per printed page</div>
                 </div>
               </div>
             </div>
@@ -533,13 +538,13 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-white p-4 rounded-xl border border-slate-200/80 text-left">
                   <div className="text-[11px] text-slate-500 font-medium">Single Side</div>
-                  <div className="text-2xl font-extrabold text-slate-950 font-mono-code mt-0.5">₹{p.colorSingle}</div>
+                  <div className="text-2xl font-extrabold text-slate-950 font-mono-code mt-0.5">₹{p.colorSingle || 10}</div>
                   <div className="text-[10px] text-slate-400 mt-0.5">per printed page</div>
                 </div>
 
                 <div className="bg-amber-50/60 p-4 rounded-xl border border-amber-200/80 text-left">
                   <div className="text-[11px] text-amber-900 font-semibold">Both Side (Duplex)</div>
-                  <div className="text-2xl font-extrabold text-amber-800 font-mono-code mt-0.5">₹{p.colorBoth}</div>
+                  <div className="text-2xl font-extrabold text-amber-800 font-mono-code mt-0.5">₹{p.colorBoth || 10}</div>
                   <div className="text-[10px] text-amber-700 mt-0.5">per printed page</div>
                 </div>
               </div>
@@ -556,22 +561,22 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div className="bg-white p-3 rounded-xl border border-slate-200">
                 <div className="text-slate-500 text-[10px]">B&W Single Side</div>
-                <div className="font-bold text-slate-950 font-mono-code mt-1">6 × ₹5 = ₹30</div>
+                <div className="font-bold text-slate-950 font-mono-code mt-1">6 × ₹{p.bwSingle || 5} = ₹{6 * (p.bwSingle || 5)}</div>
               </div>
 
               <div className="bg-white p-3 rounded-xl border border-slate-200">
-                <div className="text-emerald-800 text-[10px] font-semibold">B&W Both Side</div>
-                <div className="font-bold text-emerald-700 font-mono-code mt-1">6 × ₹4 = ₹24</div>
+                <div className="text-slate-700 text-[10px] font-semibold">B&W Both Side</div>
+                <div className="font-bold text-slate-900 font-mono-code mt-1">6 × ₹{p.bwBoth || 5} = ₹{6 * (p.bwBoth || 5)}</div>
               </div>
 
               <div className="bg-white p-3 rounded-xl border border-slate-200">
                 <div className="text-slate-500 text-[10px]">Colour Single Side</div>
-                <div className="font-bold text-slate-950 font-mono-code mt-1">6 × ₹10 = ₹60</div>
+                <div className="font-bold text-slate-950 font-mono-code mt-1">6 × ₹{p.colorSingle || 10} = ₹{6 * (p.colorSingle || 10)}</div>
               </div>
 
               <div className="bg-white p-3 rounded-xl border border-slate-200">
                 <div className="text-amber-800 text-[10px] font-semibold">Colour Both Side</div>
-                <div className="font-bold text-amber-700 font-mono-code mt-1">6 × ₹7.50 = ₹45</div>
+                <div className="font-bold text-amber-900 font-mono-code mt-1">6 × ₹{p.colorBoth || 10} = ₹{6 * (p.colorBoth || 10)}</div>
               </div>
             </div>
           </div>

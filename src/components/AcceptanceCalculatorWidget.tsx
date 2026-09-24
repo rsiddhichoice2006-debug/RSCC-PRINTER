@@ -38,10 +38,10 @@ export const AcceptanceCalculatorWidget: React.FC<AcceptanceCalculatorWidgetProp
       copies: 1,
       printType: 'BW' as const,
       printingSide: 'BOTH' as const,
-      rate: pricing.bwBoth, // 4
-      expected: 6 * 1 * pricing.bwBoth, // 24
+      rate: pricing.bwBoth, // 5
+      expected: 6 * 1 * pricing.bwBoth, // 30
       formula: `6 pages × 1 copy × ₹${pricing.bwBoth}/page`,
-      note: 'Charged for 6 pages at ₹4/page (NOT divided into 3 sheets!).',
+      note: 'Charged for 6 pages at ₹5/page (NOT divided into 3 sheets!).',
     },
     {
       id: 3,
@@ -62,10 +62,10 @@ export const AcceptanceCalculatorWidget: React.FC<AcceptanceCalculatorWidgetProp
       copies: 1,
       printType: 'COLOUR' as const,
       printingSide: 'BOTH' as const,
-      rate: pricing.colorBoth, // 7.5
-      expected: 6 * 1 * pricing.colorBoth, // 45
+      rate: pricing.colorBoth, // 10
+      expected: 6 * 1 * pricing.colorBoth, // 60
       formula: `6 pages × 1 copy × ₹${pricing.colorBoth}/page`,
-      note: 'Charged for 6 pages at ₹7.50/page.',
+      note: 'Charged for 6 pages at ₹10/page.',
     },
     {
       id: 5,
@@ -74,10 +74,10 @@ export const AcceptanceCalculatorWidget: React.FC<AcceptanceCalculatorWidgetProp
       copies: 1,
       printType: 'BW' as const,
       printingSide: 'BOTH' as const,
-      rate: pricing.bwBoth, // 4
-      expected: 7 * 1 * pricing.bwBoth, // 28
+      rate: pricing.bwBoth, // 5
+      expected: 7 * 1 * pricing.bwBoth, // 35
       formula: `7 pages × 1 copy × ₹${pricing.bwBoth}/page`,
-      note: 'Crucial: 7 × ₹4 = ₹28 (NOT ₹16 or based on 4 physical sheets).',
+      note: 'Crucial: 7 × ₹5 = ₹35 (each page calculated at ₹5/page).',
     },
     {
       id: 6,

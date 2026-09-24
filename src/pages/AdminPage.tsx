@@ -1479,7 +1479,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     <input
                       type="number"
                       step="0.5"
-                      value={editSettings.pricing.a4Bw75Both ?? editSettings.pricing.bwBoth ?? 4}
+                      value={editSettings.pricing.a4Bw75Both ?? editSettings.pricing.bwBoth ?? 5}
                       onChange={(e) =>
                         setEditSettings({
                           ...editSettings,
@@ -1492,7 +1492,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
                     />
-                    <span className="text-[10px] text-slate-400">Default: ₹4/page</span>
+                    <span className="text-[10px] text-slate-400">Default: ₹5/page</span>
                   </div>
                 </div>
               </div>
@@ -1585,7 +1585,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     <input
                       type="number"
                       step="0.5"
-                      value={editSettings.pricing.a4Color100Both ?? editSettings.pricing.colorBoth ?? 15}
+                      value={editSettings.pricing.a4Color100Both ?? editSettings.pricing.colorBoth ?? 10}
                       onChange={(e) =>
                         setEditSettings({
                           ...editSettings,
@@ -1598,7 +1598,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       }
                       className="w-full px-3 py-2 rounded-xl border border-amber-300 font-black text-amber-950 text-base"
                     />
-                    <span className="text-[10px] text-amber-700">Default: ₹15/page</span>
+                    <span className="text-[10px] text-amber-700">Default: ₹10/page</span>
                   </div>
                 </div>
               </div>

@@ -110,30 +110,30 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Main Studio Navigation Header */}
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-2xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-18">
+          <div className="flex items-center justify-between min-h-[4.25rem] py-2 gap-4 relative">
             {/* Brand Identity */}
             <div
               onClick={() => onNavigate('home')}
-              className="flex items-center gap-3.5 cursor-pointer group select-none py-1"
+              className="flex items-center gap-3 cursor-pointer group select-none py-1 shrink-0 z-10"
             >
-              <RsccLogo size="md" className="group-hover:shadow-sm transition-all rounded-xl border border-slate-200" />
-              <div>
+              <RsccLogo size="md" className="group-hover:shadow-sm transition-all rounded-xl border border-slate-200 shrink-0" />
+              <div className="shrink-0 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-extrabold text-slate-950 text-base sm:text-lg tracking-tight">
+                  <span className="font-black text-slate-950 text-base sm:text-lg tracking-tight whitespace-nowrap">
                     RIDDHI SIDDHI
                   </span>
-                  <span className="bg-slate-950 text-amber-400 text-[10px] font-mono-code font-bold px-1.5 py-0.5 rounded tracking-wide">
+                  <span className="bg-slate-950 text-amber-400 text-[10px] font-mono-code font-bold px-1.5 py-0.5 rounded tracking-wide shrink-0">
                     RSCC
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-500 font-medium tracking-wide">
+                <p className="text-[11px] text-slate-500 font-medium tracking-wide whitespace-nowrap">
                   Choice Centre • Digital Print & Photo Lab
                 </p>
               </div>
             </div>
 
-            {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/60">
+            {/* Desktop Navigation Links (Visible on XL screens to prevent crowding and overlapping the brand name) */}
+            <nav className="hidden xl:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/60 shrink-0">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = currentPage === item.id;
@@ -268,8 +268,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
 
-            {/* Mobile Menu Toggle Button */}
-            <div className="lg:hidden flex items-center gap-2">
+            {/* Mobile / Tablet Menu Toggle Button */}
+            <div className="xl:hidden flex items-center gap-2">
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                 className="p-2 rounded-xl text-slate-700 hover:bg-slate-100 transition border border-slate-200"
@@ -283,7 +283,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Mobile Flyout Menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden border-t border-slate-200 bg-white px-4 pt-3 pb-5 space-y-2 shadow-xl animate-in slide-in-from-top-2">
+          <div className="xl:hidden border-t border-slate-200 bg-white px-4 pt-3 pb-5 space-y-2 shadow-xl animate-in slide-in-from-top-2">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentPage === item.id;

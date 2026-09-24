@@ -55,7 +55,8 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
   onProceedToPayment,
   loggedInCustomer,
 }) => {
-  const { currentUser, customerProfile } = useAuth();
+  const { currentUser, customerProfile, openAuthModal } = useAuth();
+  const isCustomerLoggedIn = !!(currentUser || customerProfile || loggedInCustomer);
   const [serviceType, setServiceType] = useState<PassportServiceType>('STANDARD_PASSPORT');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [originalPreview, setOriginalPreview] = useState<string>('');
@@ -218,6 +219,13 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
     if (!photoFile || !processedPhotoUrl) {
       setUploadError('Please upload your photo to proceed.');
       fileInputRef.current?.click();
+      return;
+    }
+
+    if (!isCustomerLoggedIn) {
+      openAuthModal('login', 'Customer Login Required to Place Order', () => {
+        handleProceed();
+      });
       return;
     }
 
@@ -894,9 +902,38 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
 
             {/* Customer Details Form */}
             <div className="space-y-3 pt-3 border-t border-slate-100">
-              <div className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">
-                Customer Information
+              <div className="flex items-center justify-between">
+                <div className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">
+                  Customer Information
+                </div>
+                {isCustomerLoggedIn && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    Verified Account
+                  </span>
+                )}
               </div>
+
+              {!isCustomerLoggedIn && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-amber-950">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+                      <Lock className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black">Customer Login Required</div>
+                      <div className="text-[11px] text-amber-800">You must be logged in to order passport prints.</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('login', 'Customer Login Required to Place Order')}
+                    className="px-3.5 py-1.5 bg-slate-950 hover:bg-slate-800 text-white text-xs font-black rounded-lg transition shrink-0 cursor-pointer shadow-xs"
+                  >
+                    Log In / Sign Up
+                  </button>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -979,15 +1016,27 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                 <span className="text-emerald-700 text-lg">₹{totalAmount}</span>
               </div>
 
-              <button
-                type="button"
-                onClick={handleProceed}
-                disabled={settings.isAcceptingOrders === false || isProcessing}
-                className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-sm rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>Proceed to Payment (₹{totalAmount})</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {!isCustomerLoggedIn ? (
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login', 'Customer Login Required to Place Order', () => handleProceed())}
+                  disabled={settings.isAcceptingOrders === false || isProcessing}
+                  className="w-full py-4 bg-slate-950 hover:bg-slate-800 disabled:opacity-50 text-white font-black text-sm rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Lock className="w-4 h-4 text-amber-400" />
+                  <span>Log In to Place Order (₹{totalAmount})</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleProceed}
+                  disabled={settings.isAcceptingOrders === false || isProcessing}
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-sm rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Proceed to Payment (₹{totalAmount})</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
 
               <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 pt-1">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />

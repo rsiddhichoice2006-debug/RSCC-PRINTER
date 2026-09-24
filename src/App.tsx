@@ -55,9 +55,9 @@ function MainApp() {
     whatsAppDispatchMode: 'DESKTOP_APP',
     pricing: {
       bwSingle: 5,
-      bwBoth: 4,
+      bwBoth: 5,
       colorSingle: 10,
-      colorBoth: 7.5,
+      colorBoth: 10,
       photoSheet: 15,
     },
   });
@@ -117,13 +117,45 @@ function MainApp() {
   const handleProceedToPayment = async (orderPayload: any) => {
     try {
       const user = auth.currentUser || currentUser;
+      const isCustomerLoggedIn = !!(user || customerProfile);
+
+      // CRITICAL REQUIREMENT: Customers CANNOT place an order unless they are logged in
+      if (!isCustomerLoggedIn) {
+        openAuthModal('login', 'Customer Login Required to Place Order', () => {
+          const updatedUser = auth.currentUser || currentUser;
+          const savedStr = localStorage.getItem('rscc_customer_user');
+          let savedProfile: any = null;
+          if (savedStr) {
+            try {
+              savedProfile = JSON.parse(savedStr);
+            } catch {}
+          }
+          const finalProfile = customerProfile || savedProfile;
+          const enhanced = {
+            ...orderPayload,
+            userId: updatedUser?.uid || finalProfile?.id || undefined,
+            customer: {
+              ...orderPayload.customer,
+              name: orderPayload.customer?.name || updatedUser?.displayName || finalProfile?.name || 'Customer',
+              email: orderPayload.customer?.email || updatedUser?.email || finalProfile?.email || '',
+              mobile: orderPayload.customer?.mobile || finalProfile?.mobile || '',
+            },
+          };
+          const draftOrder = apiClient.createDraftOrder(enhanced);
+          setActiveOrder(draftOrder);
+          setCurrentPage('payment');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+        return;
+      }
+
       const enhancedPayload = {
         ...orderPayload,
-        userId: user?.uid || orderPayload.userId || undefined,
+        userId: user?.uid || customerProfile?.id || orderPayload.userId || undefined,
         customer: {
           ...orderPayload.customer,
           name: orderPayload.customer?.name || user?.displayName || customerProfile?.name || 'Customer',
-          email: orderPayload.customer?.email || user?.email || '',
+          email: orderPayload.customer?.email || user?.email || customerProfile?.email || '',
           mobile: orderPayload.customer?.mobile || customerProfile?.mobile || '',
         },
       };

@@ -21,6 +21,7 @@ import {
 import { OrderRecord, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
 import { openRazorpayCheckout } from '../services/razorpayService';
+import { useAuth } from '../context/AuthContext';
 
 interface PaymentPageProps {
   order: OrderRecord;
@@ -37,6 +38,9 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
   onBackToEdit,
   onBackToHome,
 }) => {
+  const { currentUser, customerProfile, openAuthModal } = useAuth();
+  const isCustomerLoggedIn = !!(currentUser || customerProfile);
+
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [isRazorpayLoading, setIsRazorpayLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -81,6 +85,14 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
   // Launch Razorpay Standard Web Checkout
   const handleLaunchRazorpay = async () => {
+    // CRITICAL: Customer must be logged in to pay and place order
+    if (!isCustomerLoggedIn) {
+      openAuthModal('login', 'Customer Login Required to Place Order', () => {
+        handleLaunchRazorpay();
+      });
+      return;
+    }
+
     if (paymentProcessedRef.current || isExpired || isRazorpayLoading || isVerifying) return;
     setErrorMsg('');
     setIsRazorpayLoading(true);
@@ -92,9 +104,9 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
         receipt: `rcpt_${order.orderNumber || Date.now()}`,
         name: shopName,
         description: `Order #${order.orderNumber} - ₹${order.totalAmount.toFixed(2)}`,
-        customerName: order.customer?.name || 'Valued Customer',
-        customerEmail: order.customer?.email || 'customer@rscc.in',
-        customerMobile: order.customer?.mobile || '',
+        customerName: order.customer?.name || customerProfile?.name || currentUser?.displayName || 'Valued Customer',
+        customerEmail: order.customer?.email || customerProfile?.email || currentUser?.email || 'customer@rscc.in',
+        customerMobile: order.customer?.mobile || customerProfile?.mobile || '',
         orderId: order.id,
         notes: {
           orderNumber: order.orderNumber,
@@ -151,16 +163,16 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
     }
   };
 
-  // Automatically prompt Razorpay checkout once on mount
+  // Automatically prompt Razorpay checkout once on mount ONLY IF LOGGED IN
   useEffect(() => {
-    if (!hasAutoPromptedRef.current && !isExpired && !successOrder) {
+    if (!hasAutoPromptedRef.current && !isExpired && !successOrder && isCustomerLoggedIn) {
       hasAutoPromptedRef.current = true;
       const autoTimer = setTimeout(() => {
         handleLaunchRazorpay();
       }, 700);
       return () => clearTimeout(autoTimer);
     }
-  }, []);
+  }, [isCustomerLoggedIn, isExpired, successOrder]);
 
   // Auto-redirect countdown when order is successfully placed
   useEffect(() => {
@@ -327,6 +339,32 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
         </div>
       )}
 
+      {/* LOGIN REQUIRED NOTIFICATION IF NOT AUTHENTICATED */}
+      {!isCustomerLoggedIn && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-3xl p-6 text-amber-950 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0">
+              <Lock className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-black text-sm sm:text-base text-slate-900">
+                Customer Login Required to Place Order
+              </h3>
+              <p className="text-xs text-amber-900 mt-0.5">
+                Please log in or register before submitting payment. Your order will be linked to your account for live status and pickup PIN.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => openAuthModal('login', 'Customer Login Required to Place Order')}
+            className="px-5 py-3 bg-slate-950 hover:bg-slate-800 text-white font-black text-xs rounded-xl transition shrink-0 cursor-pointer shadow-md"
+          >
+            Log In / Sign Up Now
+          </button>
+        </div>
+      )}
+
       {/* RAZORPAY PAYMENT GATEWAY CARD */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-md space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -385,31 +423,43 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
         {/* Primary Action Button: Pay with Razorpay */}
         <div className="space-y-3 pt-2">
-          <button
-            type="button"
-            id="razorpay-pay-button"
-            onClick={handleLaunchRazorpay}
-            disabled={isVerifying || isRazorpayLoading || isExpired}
-            className="w-full py-4 px-6 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-base sm:text-lg rounded-2xl transition shadow-xl shadow-indigo-600/25 flex items-center justify-center gap-3 cursor-pointer disabled:cursor-not-allowed transform active:scale-98"
-          >
-            {isRazorpayLoading ? (
-              <>
-                <RefreshCw className="w-5 h-5 animate-spin text-white" />
-                <span>Launching Razorpay Checkout...</span>
-              </>
-            ) : isVerifying ? (
-              <>
-                <RefreshCw className="w-5 h-5 animate-spin text-white" />
-                <span>Verifying Payment with Razorpay...</span>
-              </>
-            ) : (
-              <>
-                <Lock className="w-5 h-5 text-indigo-200" />
-                <span>Pay ₹{amount.toFixed(2)} with Razorpay</span>
-                <ArrowRight className="w-5 h-5 text-indigo-200" />
-              </>
-            )}
-          </button>
+          {!isCustomerLoggedIn ? (
+            <button
+              type="button"
+              id="razorpay-login-button"
+              onClick={() => openAuthModal('login', 'Customer Login Required to Place Order')}
+              className="w-full py-4 px-6 bg-slate-950 hover:bg-slate-800 text-white font-black text-base sm:text-lg rounded-2xl transition shadow-xl flex items-center justify-center gap-3 cursor-pointer transform active:scale-98"
+            >
+              <Lock className="w-5 h-5 text-amber-400" />
+              <span>Log In to Place Order & Pay ₹{amount.toFixed(2)}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              id="razorpay-pay-button"
+              onClick={handleLaunchRazorpay}
+              disabled={isVerifying || isRazorpayLoading || isExpired}
+              className="w-full py-4 px-6 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-base sm:text-lg rounded-2xl transition shadow-xl shadow-indigo-600/25 flex items-center justify-center gap-3 cursor-pointer disabled:cursor-not-allowed transform active:scale-98"
+            >
+              {isRazorpayLoading ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin text-white" />
+                  <span>Launching Razorpay Checkout...</span>
+                </>
+              ) : isVerifying ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin text-white" />
+                  <span>Verifying Payment with Razorpay...</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-5 h-5 text-indigo-200" />
+                  <span>Pay ₹{amount.toFixed(2)} with Razorpay</span>
+                  <ArrowRight className="w-5 h-5 text-indigo-200" />
+                </>
+              )}
+            </button>
+          )}
 
           <div className="flex items-center justify-center gap-2 text-xs text-slate-500 text-center">
             <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />

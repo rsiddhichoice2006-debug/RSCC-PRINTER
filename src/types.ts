@@ -26,12 +26,12 @@ export type OrderStatus =
 export interface ShopPricing {
   // A4 Black & White
   a4Bw75Single: number;  // 5
-  a4Bw75Both: number;    // 4
+  a4Bw75Both: number;    // 5
   a4Bw100Single: number; // 7
   a4Bw100Both: number;   // 12
   // A4 Colour
   a4Color100Single: number; // 10
-  a4Color100Both: number;   // 15
+  a4Color100Both: number;   // 10
   // A3 Black & White
   a3Bw75Single: number;  // 10
   a3Bw75Both: number;    // 20

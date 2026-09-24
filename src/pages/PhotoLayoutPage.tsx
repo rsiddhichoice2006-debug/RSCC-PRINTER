@@ -18,6 +18,7 @@ import {
   ShieldAlert,
   ChevronDown,
   Check,
+  Lock,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -44,7 +45,8 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
   onProceedToPayment,
   loggedInCustomer,
 }) => {
-  const { currentUser, customerProfile } = useAuth();
+  const { currentUser, customerProfile, openAuthModal } = useAuth();
+  const isCustomerLoggedIn = !!(currentUser || customerProfile || loggedInCustomer);
   const [paperSize, setPaperSize] = useState<PaperSize>('A4');
   const [selectedLayout, setSelectedLayout] = useState<PhotoLayoutType>('4_PHOTOS');
   const [photoOrientation, setPhotoOrientation] = useState<PhotoOrientation>('PORTRAIT');
@@ -174,6 +176,13 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
     if (uploadedPhotos.length === 0) {
       alert('Please upload at least one photo before proceeding.');
+      return;
+    }
+
+    if (!isCustomerLoggedIn) {
+      openAuthModal('login', 'Customer Login Required to Place Order', () => {
+        handleProceed();
+      });
       return;
     }
 
@@ -514,9 +523,38 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
           {/* Customer Details Form */}
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-            <h2 className="text-lg font-black text-slate-900">
-              3. Customer Information
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-black text-slate-900">
+                3. Customer Information
+              </h2>
+              {isCustomerLoggedIn && (
+                <span className="text-[11px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-md flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Verified Account
+                </span>
+              )}
+            </div>
+
+            {!isCustomerLoggedIn && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-950">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-black">Customer Login Required</div>
+                    <div className="text-[11px] text-amber-800">You must be logged in to your account before placing your photo order.</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login', 'Customer Login Required to Place Order')}
+                  className="px-4 py-2 bg-slate-950 hover:bg-slate-800 text-white text-xs font-black rounded-lg transition shrink-0 cursor-pointer shadow-xs"
+                >
+                  Log In / Sign Up
+                </button>
+              </div>
+            )}
 
             <div className="space-y-3 text-xs">
               <div>
@@ -787,13 +825,23 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                     <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
                     <span>NOT ACCEPTING ORDERS (HIGH DEMAND)</span>
                   </button>
+                ) : !isCustomerLoggedIn ? (
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('login', 'Customer Login Required to Place Order', () => handleProceed())}
+                    disabled={uploadedPhotos.length === 0}
+                    className="bg-slate-950 hover:bg-slate-800 disabled:opacity-40 text-white font-extrabold text-sm px-6 py-3 rounded-xl transition shadow-lg flex items-center gap-2 cursor-pointer"
+                  >
+                    <Lock className="w-4 h-4 text-amber-400" />
+                    <span>LOG IN TO PLACE ORDER • ₹{totalAmount}</span>
+                  </button>
                 ) : (
                   <button
                     onClick={handleProceed}
                     disabled={uploadedPhotos.length === 0}
                     className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-sm px-6 py-3 rounded-xl transition shadow-lg flex items-center gap-2 cursor-pointer"
                   >
-                    <span>PROCEED TO UPI PAYMENT • ₹{totalAmount}</span>
+                    <span>PROCEED TO PAYMENT • ₹{totalAmount}</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 )}
