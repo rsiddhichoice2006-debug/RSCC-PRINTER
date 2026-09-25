@@ -141,7 +141,7 @@ function MainApp() {
               mobile: orderPayload.customer?.mobile || finalProfile?.mobile || '',
             },
           };
-          const draftOrder = apiClient.createDraftOrder(enhanced);
+          const draftOrder = apiClient.createDraftOrder(enhanced, settings);
           setActiveOrder(draftOrder);
           setCurrentPage('payment');
           window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -161,7 +161,7 @@ function MainApp() {
       };
       // Prepare draft order for customer payment.
       // CRITICAL RULE: DO NOT submit or register order to Staff Portal until payment is SUCCESSFUL.
-      const draftOrder = apiClient.createDraftOrder(enhancedPayload);
+      const draftOrder = apiClient.createDraftOrder(enhancedPayload, settings);
       setActiveOrder(draftOrder);
       setCurrentPage('payment');
       window.scrollTo({ top: 0, behavior: 'smooth' });

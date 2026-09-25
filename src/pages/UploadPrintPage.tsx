@@ -376,6 +376,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
       ratePerPage,
       copyRatePerPage,
       totalAmount,
+      pricing,
       specialInstructions: customer.specialInstructions?.trim() || undefined,
     };
 

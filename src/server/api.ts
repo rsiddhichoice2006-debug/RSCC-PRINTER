@@ -352,34 +352,34 @@ export function calculateOrderPrice(params: {
   if (paperSize === 'A4') {
     if (params.printType === 'BW') {
       if (paperQuality === '75_GSM') {
-        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 5) : (p.a4Bw75Single || 5);
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both ?? p.bwBoth ?? 4) : (p.a4Bw75Single ?? p.bwSingle ?? 5);
       } else {
-        rate = params.printingSide === 'BOTH' ? (p.a4Bw100Both || 12) : (p.a4Bw100Single || 7);
+        rate = params.printingSide === 'BOTH' ? (p.a4Bw100Both ?? p.bwBoth ?? 4) : (p.a4Bw100Single ?? p.bwSingle ?? 5);
       }
     } else {
       // A4 Colour (100 GSM)
-      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 10) : (p.a4Color100Single || 10);
+      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both ?? p.colorBoth ?? 10) : (p.a4Color100Single ?? p.colorSingle ?? 10);
     }
   } else {
     // A3
     if (params.printType === 'BW') {
       if (paperQuality === '75_GSM') {
-        rate = params.printingSide === 'BOTH' ? (p.a3Bw75Both || 20) : (p.a3Bw75Single || 10);
+        rate = params.printingSide === 'BOTH' ? (p.a3Bw75Both ?? 20) : (p.a3Bw75Single ?? 10);
       } else {
-        rate = params.printingSide === 'BOTH' ? (p.a3Bw100Both || 25) : (p.a3Bw100Single || 15);
+        rate = params.printingSide === 'BOTH' ? (p.a3Bw100Both ?? 25) : (p.a3Bw100Single ?? 15);
       }
     } else {
       // A3 Colour (100 GSM)
-      rate = params.printingSide === 'BOTH' ? (p.a3Color100Both || 35) : (p.a3Color100Single || 20);
+      rate = params.printingSide === 'BOTH' ? (p.a3Color100Both ?? 35) : (p.a3Color100Single ?? 20);
     }
   }
 
-  // Fallback to legacy fields if 0
-  if (!rate) {
+  // Fallback to legacy fields if 0 or undefined
+  if (rate === undefined || rate === null) {
     if (params.printType === 'BW') {
-      rate = params.printingSide === 'BOTH' ? (p.bwBoth || 4) : (p.bwSingle || 5);
+      rate = params.printingSide === 'BOTH' ? (p.bwBoth ?? 4) : (p.bwSingle ?? 5);
     } else {
-      rate = params.printingSide === 'BOTH' ? (p.colorBoth || 10) : (p.colorSingle || 10);
+      rate = params.printingSide === 'BOTH' ? (p.colorBoth ?? 10) : (p.colorSingle ?? 10);
     }
   }
 
@@ -1552,12 +1552,14 @@ Return your judgment strictly in JSON format:
       const currency = (body.currency || 'INR').toUpperCase();
       const receipt = body.receipt || `rcpt_${Date.now()}`;
 
+      const safeAmount = isNaN(rawAmount) || rawAmount <= 0 ? 100 : Math.max(100, Math.round(rawAmount));
+
       if (isNaN(rawAmount) || rawAmount < 100) {
         sendJson(res, 200, {
           success: true,
           fallbackToClient: true,
           order_id: '',
-          amount: 500,
+          amount: safeAmount,
           currency,
           receipt,
           key_id: keyId,

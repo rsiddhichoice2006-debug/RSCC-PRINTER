@@ -1,6 +1,7 @@
-import { AdminStats, CustomerUser, OrderRecord, ShopSettings } from '../types';
+import { AdminStats, CustomerUser, OrderRecord, ShopSettings, PaperSize, PrintType, PaperQuality, PrintingSide } from '../types';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { triggerMakeWebhook, DEFAULT_MAKE_WEBHOOK_URL } from './webhookService';
+import { getDocumentRate, getAdditionalSetRate, calculateDocumentOrderAmount } from '../utils/pricingCalculator';
 import {
   collection,
   doc,
@@ -108,24 +109,19 @@ const Storage = {
       if (data) {
         const parsed = JSON.parse(data);
         if (parsed?.pricing) {
-          if (!parsed.pricing.bwSingle || parsed.pricing.bwSingle < 5) {
-            parsed.pricing.bwSingle = 5;
-            parsed.pricing.a4Bw75Single = 5;
-          }
-          if (!parsed.pricing.bwBoth || parsed.pricing.bwBoth < 5) {
-            parsed.pricing.bwBoth = 5;
-            parsed.pricing.a4Bw75Both = 5;
-          }
-          if (!parsed.pricing.colorSingle || parsed.pricing.colorSingle < 10) {
-            parsed.pricing.colorSingle = 10;
-            parsed.pricing.a4Color100Single = 10;
-          }
-          if (!parsed.pricing.colorBoth || parsed.pricing.colorBoth < 10) {
-            parsed.pricing.colorBoth = 10;
-            parsed.pricing.a4Color100Both = 10;
-          }
+          return {
+            ...DEFAULT_SETTINGS,
+            ...parsed,
+            pricing: {
+              ...DEFAULT_SETTINGS.pricing,
+              ...parsed.pricing,
+            },
+          };
         }
-        return parsed;
+        return {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+        };
       }
     } catch (e) {
       console.warn('Storage read error:', e);
@@ -234,18 +230,18 @@ function calculateOrderPrice(params: {
   customPricing?: ShopSettings['pricing'];
 }): { ratePerPage: number; totalAmount: number } {
   const p = params.customPricing || DEFAULT_SETTINGS.pricing;
-  const copies = params.copies || 1;
+  const copies = Math.max(1, params.copies || 1);
   const paperSize = params.paperSize || 'A4';
   const paperQuality = params.paperQuality || (params.printType === 'COLOUR' ? '100_GSM' : '75_GSM');
 
   if (params.mode === 'PASSPORT_PHOTO') {
     const sheets = params.totalSheets || 1;
-    let rate = p.passportStandard || 50;
+    let rate = p.passportStandard ?? 50;
 
     if (params.passportService === 'STANDARD_PASSPORT') {
-      rate = p.passportStandard || 50;
+      rate = p.passportStandard ?? 50;
     } else if (params.passportService === 'MIXED_SIZE') {
-      rate = p.passportMixed || 60;
+      rate = p.passportMixed ?? 60;
     }
 
     return {
@@ -256,66 +252,28 @@ function calculateOrderPrice(params: {
 
   if (params.mode === 'PHOTO') {
     const sheets = params.totalSheets || Math.max(1, params.totalPages || 1);
-    const ratePerPage = p.a4Color100Single || 10;
+    const ratePerPage = p.a4Color100Single ?? 10;
     return {
       ratePerPage,
       totalAmount: sheets * ratePerPage * copies,
     };
   }
 
-  const pages = params.totalPages || 1;
-  let rate = 0;
-
-  if (paperSize === 'A4') {
-    if (params.printType === 'BW') {
-      if (paperQuality === '75_GSM') {
-        rate = params.printingSide === 'BOTH' ? (p.a4Bw75Both || 5) : (p.a4Bw75Single || 5);
-      } else {
-        rate = params.printingSide === 'BOTH' ? (p.a4Bw100Both || 12) : (p.a4Bw100Single || 7);
-      }
-    } else {
-      rate = params.printingSide === 'BOTH' ? (p.a4Color100Both || 10) : (p.a4Color100Single || 10);
-    }
-  } else {
-    if (params.printType === 'BW') {
-      if (paperQuality === '75_GSM') {
-        rate = params.printingSide === 'BOTH' ? (p.a3Bw75Both || 20) : (p.a3Bw75Single || 10);
-      } else {
-        rate = params.printingSide === 'BOTH' ? (p.a3Bw100Both || 25) : (p.a3Bw100Single || 15);
-      }
-    } else {
-      rate = params.printingSide === 'BOTH' ? (p.a3Color100Both || 35) : (p.a3Color100Single || 20);
-    }
-  }
-
-  if (!rate) {
-    if (params.printType === 'COLOUR') {
-      rate = params.printingSide === 'BOTH' ? p.colorBoth : p.colorSingle;
-    } else {
-      rate = params.printingSide === 'BOTH' ? (p.bwBoth || 4) : (p.bwSingle || 5);
-    }
-  }
-
-  // Calculate: 1st Set @ standard rate, 2nd+ Sets @ copy rate
-  const s = Math.max(1, copies || 1);
-  let copyRate = rate;
-  if (paperSize === 'A4') {
-    if (params.printType === 'BW') {
-      copyRate = params.printingSide === 'BOTH' ? (p.bwCopyBoth ?? 3) : (p.bwCopySingle ?? 2);
-    } else {
-      copyRate = params.printingSide === 'BOTH' ? (p.colorCopyBoth ?? 8) : (p.colorCopySingle ?? 8);
-    }
-  } else {
-    if (params.printType === 'BW') {
-      copyRate = params.printingSide === 'BOTH' ? (p.a3BwCopyBoth ?? 10) : (p.a3BwCopySingle ?? 6);
-    } else {
-      copyRate = params.printingSide === 'BOTH' ? (p.a3ColorCopyBoth ?? 25) : (p.a3ColorCopySingle ?? 15);
-    }
-  }
-
-  const firstSetCost = pages * rate;
-  const additionalSetsCost = (s - 1) * pages * copyRate;
-  const totalAmount = firstSetCost + additionalSetsCost;
+  const pages = Math.max(1, params.totalPages || 1);
+  const rate = getDocumentRate(
+    paperSize as PaperSize,
+    (params.printType || 'BW') as PrintType,
+    paperQuality as PaperQuality,
+    (params.printingSide || 'SINGLE') as PrintingSide,
+    p
+  );
+  const copyRate = getAdditionalSetRate(
+    paperSize as PaperSize,
+    (params.printType || 'BW') as PrintType,
+    (params.printingSide || 'SINGLE') as PrintingSide,
+    p
+  );
+  const { totalAmount } = calculateDocumentOrderAmount(pages, copies, rate, copyRate);
 
   return {
     ratePerPage: rate,
@@ -579,11 +537,13 @@ export const apiClient = {
   },
 
   // Create Draft Order in memory (Amazon/Flipkart model: not placed to database until payment is done)
-  createDraftOrder(payload: any): OrderRecord {
-    const currentSettings = Storage.getSettings();
+  createDraftOrder(payload: any, activeSettings?: ShopSettings): OrderRecord {
+    const currentSettings = activeSettings || Storage.getSettings();
     if (currentSettings.isAcceptingOrders === false) {
       throw new Error(currentSettings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand');
     }
+
+    const effectivePricing = payload.pricing || activeSettings?.pricing || currentSettings.pricing;
 
     const calculated = calculateOrderPrice({
       mode: payload.mode || 'DOCUMENT',
@@ -595,8 +555,18 @@ export const apiClient = {
       copies: payload.copies || 1,
       printType: payload.printType || 'BW',
       printingSide: payload.printingSide || 'SINGLE',
-      customPricing: currentSettings.pricing,
+      customPricing: effectivePricing,
     });
+
+    const finalRate =
+      payload.ratePerPage !== undefined && payload.ratePerPage !== null && !isNaN(Number(payload.ratePerPage))
+        ? Number(payload.ratePerPage)
+        : calculated.ratePerPage;
+
+    const finalTotal =
+      payload.totalAmount !== undefined && payload.totalAmount !== null && !isNaN(Number(payload.totalAmount))
+        ? Number(payload.totalAmount)
+        : calculated.totalAmount;
 
     const orderNumber = generateOrderNumber();
     const deliveryPin = generateDeliveryPin();
@@ -632,8 +602,8 @@ export const apiClient = {
       copies: payload.copies || 1,
       printType: payload.printType || 'BW',
       printingSide: payload.printingSide || 'SINGLE',
-      ratePerPage: calculated.ratePerPage,
-      totalAmount: calculated.totalAmount,
+      ratePerPage: finalRate,
+      totalAmount: finalTotal,
       paymentStatus: 'PAYMENT_PENDING',
       orderStatus: 'PLACED',
       paymentWindowExpiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
