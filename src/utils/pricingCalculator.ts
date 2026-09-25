@@ -4,8 +4,8 @@ export const DEFAULT_PRICING: ShopPricing = {
   // A4 Black & White
   a4Bw75Single: 5,
   a4Bw75Both: 5,
-  a4Bw100Single: 7,
-  a4Bw100Both: 12,
+  a4Bw100Single: 5,
+  a4Bw100Both: 5,
   // A4 Colour
   a4Color100Single: 10,
   a4Color100Both: 10,

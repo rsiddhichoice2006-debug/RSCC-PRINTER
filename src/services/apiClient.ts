@@ -38,8 +38,8 @@ const DEFAULT_SETTINGS: ShopSettings = {
   pricing: {
     a4Bw75Single: 5,
     a4Bw75Both: 5,
-    a4Bw100Single: 7,
-    a4Bw100Both: 12,
+    a4Bw100Single: 5,
+    a4Bw100Both: 5,
     a4Color100Single: 10,
     a4Color100Both: 10,
     a3Bw75Single: 10,

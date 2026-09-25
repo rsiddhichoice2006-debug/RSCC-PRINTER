@@ -1511,7 +1511,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     <input
                       type="number"
                       step="0.5"
-                      value={editSettings.pricing.a4Bw100Single ?? 7}
+                      value={editSettings.pricing.a4Bw100Single ?? 5}
                       onChange={(e) =>
                         setEditSettings({
                           ...editSettings,
@@ -1523,7 +1523,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
                     />
-                    <span className="text-[10px] text-slate-400">Default: ₹7/page</span>
+                    <span className="text-[10px] text-slate-400">Default: ₹5/page</span>
                   </div>
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">
@@ -1532,7 +1532,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     <input
                       type="number"
                       step="0.5"
-                      value={editSettings.pricing.a4Bw100Both ?? 12}
+                      value={editSettings.pricing.a4Bw100Both ?? 5}
                       onChange={(e) =>
                         setEditSettings({
                           ...editSettings,
@@ -1544,7 +1544,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
                     />
-                    <span className="text-[10px] text-slate-400">Default: ₹12/page</span>
+                    <span className="text-[10px] text-slate-400">Default: ₹5/page</span>
                   </div>
                 </div>
               </div>

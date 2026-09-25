@@ -25,7 +25,6 @@ import {
   Award,
 } from 'lucide-react';
 import { ShopSettings } from '../types';
-import { AcceptanceCalculatorWidget } from '../components/AcceptanceCalculatorWidget';
 import { RsccLogo } from '../components/RsccLogo';
 
 interface HomePageProps {
@@ -35,28 +34,6 @@ interface HomePageProps {
 
 export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
   const p = settings.pricing;
-
-  // Quick interactive hero estimator state
-  const [quickPages, setQuickPages] = useState<number>(5);
-  const [quickPrintType, setQuickPrintType] = useState<'bw' | 'color'>('bw');
-  const [quickSide, setQuickSide] = useState<'single' | 'both'>('single');
-
-  const calculateQuickEstimate = () => {
-    const bwRate = Math.max(5, p?.bwSingle || 5);
-    const bwBothRate = Math.max(5, p?.bwBoth || 5);
-    const colorRate = Math.max(10, p?.colorSingle || 10);
-    const colorBothRate = Math.max(10, p?.colorBoth || 10);
-
-    const rate =
-      quickPrintType === 'bw'
-        ? quickSide === 'single'
-          ? bwRate
-          : bwBothRate
-        : quickSide === 'single'
-        ? colorRate
-        : colorBothRate;
-    return quickPages * rate;
-  };
 
   return (
     <div className="space-y-20 pb-16">
@@ -168,130 +145,92 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
               </div>
             </div>
 
-            {/* Right Col (5 cols): Interactive Quick Estimator Card */}
+            {/* Right Col (5 cols): Official Studio Rates & Quick Counter Access Card */}
             <div className="lg:col-span-5">
-              <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 text-left relative">
+              <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-6 text-left relative">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                   <div>
-                    <span className="text-[10px] text-amber-400 font-mono-code uppercase tracking-wider font-semibold">
-                      Live Estimator
+                    <span className="text-[10px] text-amber-400 font-mono-code uppercase tracking-wider font-bold">
+                      Direct Counter Rates
                     </span>
-                    <h3 className="text-base font-bold text-white tracking-tight">
-                      Calculate Print Cost
+                    <h3 className="text-base font-extrabold text-white tracking-tight">
+                      Official Transparent Pricing
                     </h3>
                   </div>
-                  <span className="bg-slate-800 text-slate-300 text-[11px] font-mono-code px-2.5 py-1 rounded-lg border border-slate-700">
-                    A4 Size
+                  <span className="bg-emerald-950/80 text-emerald-300 text-[11px] font-mono-code px-2.5 py-1 rounded-lg border border-emerald-800/60 font-semibold">
+                    Fixed Rates
                   </span>
                 </div>
 
-                <div className="space-y-4">
-                  {/* Page Count Slider */}
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-slate-300">
-                      <span>Document Page Count:</span>
-                      <span className="font-bold text-white font-mono-code bg-slate-800 px-2 py-0.5 rounded">
-                        {quickPages} {quickPages === 1 ? 'Page' : 'Pages'}
-                      </span>
+                <div className="space-y-3">
+                  {/* B&W 5 Rupee */}
+                  <div className="bg-slate-950/80 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between transition hover:border-slate-700">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-slate-800 text-slate-200 border border-slate-700 flex items-center justify-center font-bold text-xs">
+                        B&W
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-white">Black & White Print</div>
+                        <div className="text-xs text-slate-400">Single or Both side • Laser crisp</div>
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min={1}
-                      max={100}
-                      value={quickPages}
-                      onChange={(e) => setQuickPages(parseInt(e.target.value) || 1)}
-                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                    />
-                  </div>
-
-                  {/* Print Color Mode */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-400 block">Print Mode:</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setQuickPrintType('bw')}
-                        className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
-                          quickPrintType === 'bw'
-                            ? 'bg-slate-800 text-white border-amber-400/80 shadow-xs'
-                            : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <span>Black & White</span>
-                        <span className="text-[10px] font-mono-code font-bold text-slate-300">₹{Math.max(5, p?.bwSingle || 5)}/pg</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setQuickPrintType('color')}
-                        className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
-                          quickPrintType === 'color'
-                            ? 'bg-slate-800 text-white border-amber-400/80 shadow-xs'
-                            : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <span>Colour Print</span>
-                        <span className="text-[10px] font-mono-code font-bold text-amber-400">₹{Math.max(10, p?.colorSingle || 10)}/pg</span>
-                      </button>
+                    <div className="text-right">
+                      <div className="text-2xl font-black text-white font-mono-code">₹5</div>
+                      <div className="text-[10px] text-slate-400 font-medium">per page</div>
                     </div>
                   </div>
 
-                  {/* Sides Selection */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-400 block">Layout Side:</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setQuickSide('single')}
-                        className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
-                          quickSide === 'single'
-                            ? 'bg-slate-800 text-white border-amber-400/80 shadow-xs'
-                            : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <span>Single Side</span>
-                      </button>
+                  {/* Colour 10 Rupee */}
+                  <div className="bg-slate-950/80 border border-amber-500/20 rounded-2xl p-4 flex items-center justify-between transition hover:border-amber-500/40">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-400/20 text-amber-300 border border-amber-400/30 flex items-center justify-center font-bold text-xs">
+                        COL
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-white">Colour Print</div>
+                        <div className="text-xs text-slate-400">100 GSM • High-def laser colour</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-black text-amber-400 font-mono-code">₹10</div>
+                      <div className="text-[10px] text-slate-400 font-medium">per page</div>
+                    </div>
+                  </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setQuickSide('both')}
-                        className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
-                          quickSide === 'both'
-                            ? 'bg-slate-800 text-white border-amber-400/80 shadow-xs'
-                            : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <span>Both Side (Duplex)</span>
-                        <span className="text-[9px] bg-slate-800 text-slate-300 font-bold px-1.5 py-0.5 rounded">
-                          Duplex
-                        </span>
-                      </button>
+                  {/* Passport Photo Studio */}
+                  <div className="bg-slate-950/80 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between transition hover:border-slate-700">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 flex items-center justify-center font-bold text-xs">
+                        PAS
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-white">Passport Photo Studio</div>
+                        <div className="text-xs text-slate-400">10 Photos • Auto background & framing</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-black text-white font-mono-code">₹50</div>
+                      <div className="text-[10px] text-slate-400 font-medium">10 photos sheet</div>
                     </div>
                   </div>
                 </div>
 
-                {/* Estimate Result Box */}
-                <div className="bg-slate-950 rounded-2xl p-4 border border-slate-800 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-semibold">Total Estimated Amount</span>
-                    <div className="text-2xl font-extrabold text-white font-mono-code">
-                      ₹{calculateQuickEstimate()}
-                    </div>
-                  </div>
+                {/* Direct Order Actions */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
                   <button
-                    onClick={() =>
-                      onNavigate('upload', {
-                        sample: {
-                          pages: quickPages,
-                          printType: quickPrintType,
-                          sides: quickSide,
-                        },
-                      })
-                    }
-                    className="bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs btn-elevated"
+                    onClick={() => onNavigate('upload')}
+                    className="bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black py-3 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md btn-elevated"
                   >
-                    <span>Print This</span>
+                    <span>Upload Documents</span>
                     <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    onClick={() => onNavigate('passport-photo')}
+                    className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-3 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700"
+                  >
+                    <span>Passport Studio</span>
+                    <Camera className="w-3.5 h-3.5 text-amber-400" />
                   </button>
                 </div>
               </div>
@@ -581,14 +520,6 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
             </div>
           </div>
         </section>
-
-        {/* Embedded Acceptance Calculator Widget */}
-        <AcceptanceCalculatorWidget
-          pricing={settings.pricing}
-          onApplySample={(params) => {
-            onNavigate('upload', { sample: params });
-          }}
-        />
 
         {/* How It Works - High-End Sequential Timeline */}
         <section className="space-y-8">
