@@ -37,9 +37,17 @@ const DEFAULT_SETTINGS: ShopSettings = {
   whatsAppDispatchMode: 'DESKTOP_APP',
   pricing: {
     a4Bw75Single: 5,
-    a4Bw75Both: 5,
+    a4Bw75Both: 4,
     a4Bw100Single: 5,
-    a4Bw100Both: 5,
+    a4Bw100Both: 4,
+    bwCopySingle: 2,
+    bwCopyBoth: 3,
+    colorCopySingle: 8,
+    colorCopyBoth: 8,
+    a3BwCopySingle: 6,
+    a3BwCopyBoth: 10,
+    a3ColorCopySingle: 15,
+    a3ColorCopyBoth: 25,
     a4Color100Single: 10,
     a4Color100Both: 10,
     a3Bw75Single: 10,
@@ -51,7 +59,7 @@ const DEFAULT_SETTINGS: ShopSettings = {
     passportStandard: 50,
     passportMixed: 60,
     bwSingle: 5,
-    bwBoth: 5,
+    bwBoth: 4,
     colorSingle: 10,
     colorBoth: 10,
     photoSheet: 15,
@@ -284,13 +292,34 @@ function calculateOrderPrice(params: {
     if (params.printType === 'COLOUR') {
       rate = params.printingSide === 'BOTH' ? p.colorBoth : p.colorSingle;
     } else {
-      rate = params.printingSide === 'BOTH' ? p.bwBoth : p.bwSingle;
+      rate = params.printingSide === 'BOTH' ? (p.bwBoth || 4) : (p.bwSingle || 5);
     }
   }
 
+  // Calculate: 1st Set @ standard rate, 2nd+ Sets @ copy rate
+  const s = Math.max(1, copies || 1);
+  let copyRate = rate;
+  if (paperSize === 'A4') {
+    if (params.printType === 'BW') {
+      copyRate = params.printingSide === 'BOTH' ? (p.bwCopyBoth ?? 3) : (p.bwCopySingle ?? 2);
+    } else {
+      copyRate = params.printingSide === 'BOTH' ? (p.colorCopyBoth ?? 8) : (p.colorCopySingle ?? 8);
+    }
+  } else {
+    if (params.printType === 'BW') {
+      copyRate = params.printingSide === 'BOTH' ? (p.a3BwCopyBoth ?? 10) : (p.a3BwCopySingle ?? 6);
+    } else {
+      copyRate = params.printingSide === 'BOTH' ? (p.a3ColorCopyBoth ?? 25) : (p.a3ColorCopySingle ?? 15);
+    }
+  }
+
+  const firstSetCost = pages * rate;
+  const additionalSetsCost = (s - 1) * pages * copyRate;
+  const totalAmount = firstSetCost + additionalSetsCost;
+
   return {
     ratePerPage: rate,
-    totalAmount: pages * rate * copies,
+    totalAmount,
   };
 }
 

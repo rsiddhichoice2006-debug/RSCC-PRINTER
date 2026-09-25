@@ -26,9 +26,18 @@ export type OrderStatus =
 export interface ShopPricing {
   // A4 Black & White
   a4Bw75Single: number;  // 5
-  a4Bw75Both: number;    // 5
-  a4Bw100Single: number; // 7
-  a4Bw100Both: number;   // 12
+  a4Bw75Both: number;    // 4
+  a4Bw100Single: number; // 5
+  a4Bw100Both: number;   // 4
+  // Additional Sets (2nd+ Set / Copies) Rates
+  bwCopySingle?: number; // 2
+  bwCopyBoth?: number;   // 3
+  colorCopySingle?: number; // 8
+  colorCopyBoth?: number;   // 8
+  a3BwCopySingle?: number; // 6
+  a3BwCopyBoth?: number;   // 10
+  a3ColorCopySingle?: number; // 15
+  a3ColorCopyBoth?: number;   // 25
   // A4 Colour
   a4Color100Single: number; // 10
   a4Color100Both: number;   // 10
@@ -83,6 +92,7 @@ export interface UploadedFileItem {
   type: string;
   previewUrl?: string;
   pageCount: number;
+  sets?: number;
   pageSelectionMode?: PageSelectionMode;
   customPageRange?: string;
   selectedPageCount?: number;
@@ -98,6 +108,7 @@ export interface SerializableFileItem {
   size: number;
   type: string;
   pageCount: number;
+  sets?: number;
   pageSelectionMode?: PageSelectionMode;
   customPageRange?: string;
   selectedPageCount?: number;
@@ -143,9 +154,11 @@ export interface OrderRecord {
   totalPages: number;
   totalSheets?: number;
   copies: number;
+  sets?: number;
   printType: PrintType;
   printingSide: PrintingSide;
   ratePerPage: number;
+  copyRatePerPage?: number;
   totalAmount: number;
   paymentStatus: PaymentStatus;
   orderStatus: OrderStatus;

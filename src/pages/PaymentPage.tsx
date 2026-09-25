@@ -497,9 +497,9 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Total Pages × Copies:</span>
+            <span>Pages &amp; Sets:</span>
             <span className="font-bold text-slate-900">
-              {order.totalPages} pages × {order.copies} cop{order.copies === 1 ? 'y' : 'ies'}
+              {order.totalPages} pages • {order.copies} set{order.copies === 1 ? '' : 's'}
             </span>
           </div>
         </div>

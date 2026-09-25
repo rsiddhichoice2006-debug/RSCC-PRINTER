@@ -1479,7 +1479,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     <input
                       type="number"
                       step="0.5"
-                      value={editSettings.pricing.a4Bw75Both ?? editSettings.pricing.bwBoth ?? 5}
+                      value={editSettings.pricing.a4Bw75Both ?? editSettings.pricing.bwBoth ?? 4}
                       onChange={(e) =>
                         setEditSettings({
                           ...editSettings,
@@ -1492,7 +1492,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
                     />
-                    <span className="text-[10px] text-slate-400">Default: ₹5/page</span>
+                    <span className="text-[10px] text-slate-400">Default: ₹4/page</span>
                   </div>
                 </div>
               </div>
@@ -1532,7 +1532,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                     <input
                       type="number"
                       step="0.5"
-                      value={editSettings.pricing.a4Bw100Both ?? 5}
+                      value={editSettings.pricing.a4Bw100Both ?? 4}
                       onChange={(e) =>
                         setEditSettings({
                           ...editSettings,
@@ -1544,7 +1544,59 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       }
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-base"
                     />
-                    <span className="text-[10px] text-slate-400">Default: ₹5/page</span>
+                    <span className="text-[10px] text-slate-400">Default: ₹4/page</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* A4 Additional Sets (2nd+ Set Copy Discount) */}
+              <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 space-y-3">
+                <div className="font-bold text-emerald-950 border-b border-emerald-200 pb-1 flex items-center justify-between">
+                  <span>2nd+ Set (Copies) • B&W</span>
+                  <span className="text-[10px] text-emerald-700 font-bold">Copy Discount</span>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-emerald-900 font-semibold mb-1">
+                      Single Side 2nd+ Set (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.bwCopySingle ?? 2}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            bwCopySingle: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-emerald-300 font-black text-emerald-950 text-base"
+                    />
+                    <span className="text-[10px] text-emerald-700">Default: ₹2/page</span>
+                  </div>
+                  <div>
+                    <label className="block text-emerald-900 font-semibold mb-1">
+                      Both Side 2nd+ Set (₹/pg):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={editSettings.pricing.bwCopyBoth ?? 3}
+                      onChange={(e) =>
+                        setEditSettings({
+                          ...editSettings,
+                          pricing: {
+                            ...editSettings.pricing,
+                            bwCopyBoth: parseFloat(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-emerald-300 font-black text-emerald-950 text-base"
+                    />
+                    <span className="text-[10px] text-emerald-700">Default: ₹3/page</span>
                   </div>
                 </div>
               </div>

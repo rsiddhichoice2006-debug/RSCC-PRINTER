@@ -232,8 +232,8 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
               </span>
             </div>
             <div className="flex justify-between text-xs text-slate-300">
-              <span>Copies:</span>
-              <span className="font-mono font-bold text-white">{order.copies}</span>
+              <span>Sets / Copies:</span>
+              <span className="font-mono font-bold text-white">{order.copies} set{order.copies === 1 ? '' : 's'}</span>
             </div>
             <div className="flex justify-between text-xs text-slate-300">
               <span>Rate per page/sheet:</span>

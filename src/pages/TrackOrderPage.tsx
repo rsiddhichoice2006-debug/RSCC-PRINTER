@@ -274,8 +274,8 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Copies:</span>
-                  <span className="font-semibold text-slate-900">{order.copies}</span>
+                  <span className="text-slate-500">Sets / Copies:</span>
+                  <span className="font-semibold text-slate-900">{order.copies} set{order.copies === 1 ? '' : 's'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Total Pages:</span>

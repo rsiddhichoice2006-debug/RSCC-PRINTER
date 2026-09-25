@@ -163,7 +163,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                 </div>
 
                 <div className="space-y-3">
-                  {/* B&W 5 Rupee */}
+                  {/* B&W 5 Rupee Single / 4 Rupee Double */}
                   <div className="bg-slate-950/80 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between transition hover:border-slate-700">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-slate-800 text-slate-200 border border-slate-700 flex items-center justify-center font-bold text-xs">
@@ -171,11 +171,11 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                       </div>
                       <div>
                         <div className="text-sm font-bold text-white">Black & White Print</div>
-                        <div className="text-xs text-slate-400">Single or Both side • Laser crisp</div>
+                        <div className="text-xs text-slate-400">Single ₹5 • Double ₹4 • Extra sets from ₹2/pg</div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-black text-white font-mono-code">₹5</div>
+                      <div className="text-2xl font-black text-white font-mono-code">₹5 <span className="text-xs text-slate-400 font-normal">/ ₹4</span></div>
                       <div className="text-[10px] text-slate-400 font-medium">per page</div>
                     </div>
                   </div>
@@ -451,7 +451,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
 
                 <div className="bg-slate-100/70 p-4 rounded-xl border border-slate-200/80 text-left">
                   <div className="text-[11px] text-slate-700 font-semibold">Both Side (Duplex)</div>
-                  <div className="text-2xl font-extrabold text-slate-900 font-mono-code mt-0.5">₹{p.bwBoth || 5}</div>
+                  <div className="text-2xl font-extrabold text-slate-900 font-mono-code mt-0.5">₹{p.bwBoth || 4}</div>
                   <div className="text-[10px] text-slate-500 mt-0.5">per printed page</div>
                 </div>
               </div>
@@ -505,7 +505,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
 
               <div className="bg-white p-3 rounded-xl border border-slate-200">
                 <div className="text-slate-700 text-[10px] font-semibold">B&W Both Side</div>
-                <div className="font-bold text-slate-900 font-mono-code mt-1">6 × ₹{p.bwBoth || 5} = ₹{6 * (p.bwBoth || 5)}</div>
+                <div className="font-bold text-slate-900 font-mono-code mt-1">6 × ₹{p.bwBoth || 4} = ₹{6 * (p.bwBoth || 4)}</div>
               </div>
 
               <div className="bg-white p-3 rounded-xl border border-slate-200">

@@ -35,6 +35,8 @@ import { getSelectedPageCount } from '../utils/pageCalculator';
 import {
   DEFAULT_PRICING,
   getDocumentRate,
+  getAdditionalSetRate,
+  calculateDocumentOrderAmount,
   getAvailableQualitiesForPrintType,
 } from '../utils/pricingCalculator';
 import { useAuth } from '../context/AuthContext';
@@ -154,9 +156,25 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   // Price Calculation according to RSCC Dynamic Pricing Engine
   const pricing = settings.pricing || DEFAULT_PRICING;
   const ratePerPage = getDocumentRate(paperSize, printType, paperQuality, printingSide, pricing);
+  const copyRatePerPage = getAdditionalSetRate(paperSize, printType, printingSide, pricing);
 
-  // Formula: Total = Number of Pages × Copies × Rate per page
-  const totalAmount = (totalPages > 0 ? totalPages : 0) * copies * ratePerPage;
+  // Set-based pricing: Set 1 @ standard rate; Sets 2+ @ discounted copy rate
+  const { totalAmount, firstSetCost, additionalSetsCost, additionalSetsCount } =
+    calculateDocumentOrderAmount(totalPages, copies, ratePerPage, copyRatePerPage);
+
+  const handleFileSetsChange = (fileId: string, newSets: number) => {
+    const validSets = Math.max(1, newSets);
+    setUploadedFiles((prev) =>
+      prev.map((f) => (f.id === fileId ? { ...f, sets: validSets } : f))
+    );
+    setCopies(validSets);
+  };
+
+  const handleGlobalSetsChange = (newSets: number) => {
+    const validSets = Math.max(1, newSets);
+    setCopies(validSets);
+    setUploadedFiles((prev) => prev.map((f) => ({ ...f, sets: validSets })));
+  };
 
   // Handle Drag & Drop Files
   const handleFiles = async (fileList: FileList | null) => {
@@ -272,13 +290,6 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     setUploadedFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
-  const updatePageCount = (id: string, newCount: number) => {
-    if (newCount < 1) return;
-    setUploadedFiles((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, pageCount: newCount } : f))
-    );
-  };
-
   const updatePageSelection = (id: string, mode: PageSelectionMode, customRange?: string) => {
     setUploadedFiles((prev) =>
       prev.map((f) => {
@@ -349,6 +360,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         size: f.size,
         type: f.type,
         pageCount: f.pageCount,
+        sets: f.sets || copies,
         pageSelectionMode: f.pageSelectionMode || 'ALL',
         customPageRange: f.customPageRange,
         selectedPageCount: f.selectedPageCount || f.pageCount,
@@ -358,9 +370,11 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
       })),
       totalPages,
       copies,
+      sets: copies,
       printType,
       printingSide,
       ratePerPage,
+      copyRatePerPage,
       totalAmount,
       specialInstructions: customer.specialInstructions?.trim() || undefined,
     };
@@ -567,24 +581,62 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                           </div>
                         </div>
 
-                        {/* Manual total page count editor & Delete action */}
-                        <div className="flex items-center gap-3 self-end sm:self-center">
+                        {/* Number of Sets Required & Page count editor & Delete action */}
+                        <div className="flex items-center flex-wrap gap-2.5 self-end sm:self-center">
                           {!fileItem.isProcessing && !isFlagged && (
-                            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-1">
-                              <span className="text-[11px] text-slate-500 pl-1 font-medium">
-                                Total:
-                              </span>
-                              <input
-                                type="number"
-                                min={1}
-                                max={999}
-                                value={fileItem.pageCount}
-                                onChange={(e) =>
-                                  updatePageCount(fileItem.id, parseInt(e.target.value) || 1)
-                                }
-                                className="w-12 text-center text-xs font-bold text-slate-900 focus:outline-none"
-                              />
-                            </div>
+                            <>
+                              {/* Number of Sets Required */}
+                              <div className="flex items-center gap-1 bg-amber-50 border border-amber-300 rounded-lg p-1 shadow-2xs">
+                                <span className="text-[11px] text-amber-950 pl-1.5 font-bold">
+                                  Sets:
+                                </span>
+                                <div className="flex items-center">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleFileSetsChange(
+                                        fileItem.id,
+                                        Math.max(1, (fileItem.sets || copies || 1) - 1)
+                                      )
+                                    }
+                                    className="w-5 h-5 rounded bg-white text-slate-800 hover:bg-amber-100 flex items-center justify-center font-bold text-xs border border-amber-200 cursor-pointer transition shadow-2xs"
+                                    title="Decrease sets required"
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={99}
+                                    value={fileItem.sets || copies || 1}
+                                    onChange={(e) =>
+                                      handleFileSetsChange(
+                                        fileItem.id,
+                                        Math.max(1, parseInt(e.target.value) || 1)
+                                      )
+                                    }
+                                    className="w-8 text-center text-xs font-black text-amber-950 bg-transparent focus:outline-none"
+                                    title="Number of sets required"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleFileSetsChange(
+                                        fileItem.id,
+                                        (fileItem.sets || copies || 1) + 1
+                                      )
+                                    }
+                                    className="w-5 h-5 rounded bg-white text-slate-800 hover:bg-amber-100 flex items-center justify-center font-bold text-xs border border-amber-200 cursor-pointer transition shadow-2xs"
+                                    title="Increase sets required"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <span className="text-[10px] text-amber-800 pr-1 font-semibold">
+                                  set{(fileItem.sets || copies || 1) > 1 ? 's' : ''}
+                                </span>
+                              </div>
+                            </>
                           )}
 
                           <button
@@ -1041,34 +1093,54 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               </div>
             </div>
 
-            {/* 5. NUMBER OF COPIES */}
+            {/* 5. NUMBER OF SETS REQUIRED */}
             <div className="space-y-2">
-              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                Number of Copies
-              </label>
-
-              <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
-                <span className="text-xs text-slate-600 font-medium pl-2">
-                  Total sets to print:
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                  Number of Sets Required
+                </label>
+                <span className="text-[10px] font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                  {copies === 1 ? '1 Set (Standard Rate)' : `${copies} Sets (Discounted Copy Rates)`}
                 </span>
-                <div className="flex items-center bg-white border border-slate-300 rounded-xl p-1 shadow-xs">
-                  <button
-                    type="button"
-                    onClick={() => setCopies(Math.max(1, copies - 1))}
-                    className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition cursor-pointer"
-                  >
-                    -
-                  </button>
-                  <span className="w-10 text-center font-extrabold text-slate-900 text-sm">
-                    {copies}
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5 pl-1">
+                    <div className="text-xs text-slate-800 font-bold">
+                      Sets to Print:
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      1st set: ₹{ratePerPage}/pg • 2nd+ set: <span className="font-bold text-emerald-700">₹{copyRatePerPage}/pg</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center bg-white border border-slate-300 rounded-xl p-1 shadow-xs">
+                    <button
+                      type="button"
+                      onClick={() => handleGlobalSetsChange(Math.max(1, copies - 1))}
+                      className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition cursor-pointer"
+                    >
+                      -
+                    </button>
+                    <span className="w-10 text-center font-extrabold text-slate-900 text-sm font-mono">
+                      {copies}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleGlobalSetsChange(copies + 1)}
+                      className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition cursor-pointer"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-[11px] bg-amber-50/70 border border-amber-200 rounded-xl p-2 text-amber-950 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                  <span>
+                    <strong>Multi-Set Rule:</strong> 1st set is ₹{ratePerPage}/pg, all subsequent sets count at ₹{copyRatePerPage}/pg!
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setCopies(copies + 1)}
-                    className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-base flex items-center justify-center transition cursor-pointer"
-                  >
-                    +
-                  </button>
                 </div>
               </div>
             </div>
@@ -1091,7 +1163,9 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   {validFiles.map((f) => (
                     <div key={f.id} className="flex justify-between items-center text-[11px]">
                       <span className="truncate max-w-[180px]">• {f.name}</span>
-                      <span className="font-mono text-slate-400">{f.pageCount} pgs</span>
+                      <span className="font-mono text-slate-400">
+                        {f.pageCount} pgs × {f.sets || copies} set{(f.sets || copies) > 1 ? 's' : ''}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1125,29 +1199,51 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Total Pages:</span>
-                  <span className="font-bold text-white">{totalPages}</span>
+                  <span className="text-slate-400">Total Pages (1 Set):</span>
+                  <span className="font-bold text-white font-mono">{totalPages} pages</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Copies:</span>
-                  <span className="font-bold text-white">{copies}</span>
+                  <span className="text-slate-400">Sets Required:</span>
+                  <span className="font-bold text-amber-400 font-mono">
+                    {copies} {copies === 1 ? 'set' : 'sets'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Rate:</span>
-                  <span className="font-bold text-amber-400">₹{ratePerPage}/page</span>
+                  <span className="text-slate-400">1st Set Rate:</span>
+                  <span className="font-bold text-white font-mono">₹{ratePerPage}/page</span>
                 </div>
+                {copies > 1 && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">2nd+ Sets Copy Rate:</span>
+                    <span className="font-bold text-emerald-400 font-mono">₹{copyRatePerPage}/page</span>
+                  </div>
+                )}
               </div>
 
               {/* Exact Formula & Total Amount */}
-              <div className="pt-3 border-t border-slate-800 flex items-end justify-between">
-                <div>
-                  <div className="text-[10px] text-slate-400 font-mono">
-                    {totalPages} pgs × {copies} cps × ₹{ratePerPage}
+              <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                <div className="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800 space-y-1 text-[11px] font-mono">
+                  <div className="flex justify-between text-slate-300">
+                    <span>• 1st Set ({totalPages} pgs × ₹{ratePerPage}):</span>
+                    <span className="text-white font-bold">₹{firstSetCost}</span>
                   </div>
-                  <div className="text-2xl font-black text-amber-400 tracking-tight">
-                    Price: ₹{totalAmount}
-                  </div>
+                  {copies > 1 && (
+                    <div className="flex justify-between text-emerald-300">
+                      <span>• Extra {additionalSetsCount} Set{additionalSetsCount > 1 ? 's' : ''} ({totalPages * additionalSetsCount} pgs × ₹{copyRatePerPage}):</span>
+                      <span className="font-bold">+₹{additionalSetsCost}</span>
+                    </div>
+                  )}
                 </div>
+
+                <div className="flex items-end justify-between">
+                  <div>
+                    <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                      Total Payable Amount:
+                    </div>
+                    <div className="text-2xl font-black text-amber-400 tracking-tight font-mono">
+                      ₹{totalAmount}
+                    </div>
+                  </div>
 
                 {settings.isAcceptingOrders === false ? (
                   <button
@@ -1181,18 +1277,19 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 )}
               </div>
             </div>
-
-            {/* Explanatory Note */}
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 space-y-1">
-              <div className="font-bold flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-amber-700" />
-                <span>RSCC Transparent Pricing Policy:</span>
-              </div>
-              <p>
-                Price is strictly computed as <strong>Total Pages × Copies × Rate per page</strong> for your chosen paper size ({paperSize}), print type ({printType === 'BW' ? 'B&W' : 'Colour'}), and GSM ({paperQuality === '75_GSM' ? '75 GSM' : '100 GSM'}).
-              </p>
-            </div>
           </div>
+
+          {/* Explanatory Note */}
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 space-y-1">
+            <div className="font-bold flex items-center gap-1">
+              <Info className="w-3.5 h-3.5 text-amber-700" />
+              <span>RSCC Transparent Pricing Policy:</span>
+            </div>
+            <p>
+              Price is strictly computed as <strong>1st Set @ ₹{ratePerPage}/pg</strong> and <strong>additional sets @ ₹{copyRatePerPage}/pg</strong> for your chosen paper size ({paperSize}) and print type ({printType === 'BW' ? 'B&W' : 'Colour'}).
+            </p>
+          </div>
+        </div>
         </div>
       </div>
     </div>
