@@ -63,7 +63,7 @@ const DEFAULT_SETTINGS: ShopSettings = {
     bwBoth: 4,
     colorSingle: 10,
     colorBoth: 10,
-    photoSheet: 15,
+    photoSheet: 0,
   },
 };
 
@@ -109,6 +109,10 @@ const Storage = {
       if (data) {
         const parsed = JSON.parse(data);
         if (parsed?.pricing) {
+          // If stored photoSheet has old default (15), update to 0
+          if (parsed.pricing.photoSheet === 15) {
+            parsed.pricing.photoSheet = 0;
+          }
           return {
             ...DEFAULT_SETTINGS,
             ...parsed,
@@ -252,7 +256,10 @@ function calculateOrderPrice(params: {
 
   if (params.mode === 'PHOTO') {
     const sheets = params.totalSheets || Math.max(1, params.totalPages || 1);
-    const ratePerPage = p.a4Color100Single ?? 10;
+    const ratePerPage =
+      p.photoSheet !== undefined && p.photoSheet !== null
+        ? p.photoSheet
+        : (p.a4Color100Single ?? 0);
     return {
       ratePerPage,
       totalAmount: sheets * ratePerPage * copies,
@@ -383,7 +390,7 @@ export const apiClient = {
         bwBoth: newSettings.pricing?.a4Bw75Both ?? newSettings.pricing?.bwBoth ?? current.pricing?.a4Bw75Both ?? current.pricing?.bwBoth ?? 5,
         colorSingle: newSettings.pricing?.a4Color100Single ?? newSettings.pricing?.colorSingle ?? current.pricing?.a4Color100Single ?? current.pricing?.colorSingle ?? 10,
         colorBoth: newSettings.pricing?.a4Color100Both ?? newSettings.pricing?.colorBoth ?? current.pricing?.a4Color100Both ?? current.pricing?.colorBoth ?? 10,
-        photoSheet: newSettings.pricing?.photoSheet ?? current.pricing?.photoSheet ?? 15,
+        photoSheet: newSettings.pricing?.photoSheet !== undefined ? newSettings.pricing.photoSheet : (current.pricing?.photoSheet ?? 0),
       },
     };
 
@@ -1396,6 +1403,9 @@ export const apiClient = {
       }
       const webhookEvent = status === 'READY_FOR_PICKUP' ? 'READY_FOR_PICKUP' : 'STATUS_UPDATED';
       triggerMakeWebhook(backendData.order, webhookEvent, undefined, Storage.getSettings()).catch(() => {});
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('rscc_order_updated', { detail: backendData.order }));
+      }
       return backendData.order;
     }
 
@@ -1424,6 +1434,9 @@ export const apiClient = {
 
     const webhookEvent = status === 'READY_FOR_PICKUP' ? 'READY_FOR_PICKUP' : 'STATUS_UPDATED';
     triggerMakeWebhook(updated, webhookEvent, undefined, Storage.getSettings()).catch(() => {});
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('rscc_order_updated', { detail: updated }));
+    }
     return updated;
   },
 

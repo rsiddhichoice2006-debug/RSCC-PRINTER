@@ -129,6 +129,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <p className="text-[11px] text-slate-500 font-medium tracking-wide whitespace-nowrap">
                   Choice Centre • Digital Print & Photo Lab
                 </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-80"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
+                  </span>
+                  <span className="text-[10px] font-black text-red-600 uppercase tracking-wider">
+                    Delivery Starting Soon
+                  </span>
+                </div>
               </div>
             </div>
 

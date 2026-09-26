@@ -17,6 +17,7 @@ import {
   FileText,
   BadgeCheck,
   Zap,
+  MapPin,
 } from 'lucide-react';
 import { OrderRecord, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -95,6 +96,41 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
     if (paymentProcessedRef.current || isExpired || isRazorpayLoading || isVerifying) return;
     setErrorMsg('');
+
+    // If order total is 0 (Free Promotion / ₹0 photo printing), directly confirm order without gateway
+    if (order.totalAmount <= 0) {
+      paymentProcessedRef.current = true;
+      setIsVerifying(true);
+      try {
+        const confirmedOrder = await apiClient.placeOrderWithPayment(order, {
+          transactionId: 'FREE_PROMO_' + Date.now(),
+          paymentMethod: 'Free Promotional Order (₹0)',
+          amount: 0,
+        });
+        try {
+          confetti({ particleCount: 90, spread: 80, origin: { y: 0.6 } });
+        } catch {}
+        setSuccessOrder(confirmedOrder);
+        onPaymentSubmitted(confirmedOrder);
+      } catch (err: any) {
+        console.error('Error placing free order:', err);
+        const fallbackOrder: OrderRecord = {
+          ...order,
+          paymentStatus: 'PAYMENT_VERIFIED',
+          orderStatus: 'CONFIRMED',
+          paymentReference: 'FREE_PROMO_' + Date.now(),
+          paymentMethod: 'Free Promotional Order (₹0)',
+          totalAmount: 0,
+          verifiedAt: new Date().toISOString(),
+        };
+        setSuccessOrder(fallbackOrder);
+        onPaymentSubmitted(fallbackOrder);
+      } finally {
+        setIsVerifying(false);
+      }
+      return;
+    }
+
     setIsRazorpayLoading(true);
 
     try {
@@ -266,6 +302,16 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
             </p>
           </div>
 
+          <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl text-left text-xs text-amber-950 space-y-1">
+            <div className="font-bold flex items-center gap-1.5 text-amber-900">
+              <MapPin className="w-4 h-4 text-amber-700" />
+              <span>Shop Counter Pickup (Home Delivery Starting Soon)</span>
+            </div>
+            <p className="text-slate-600">
+              Please note: Home delivery has not currently started, but will be started soon! Please visit our counter at <strong>{settings.address}</strong> to collect your order.
+            </p>
+          </div>
+
           <div className="pt-2 space-y-3">
             <p className="text-xs text-slate-500">
               Returning to homepage in <strong className="text-emerald-700 font-bold">{redirectCountdown}s</strong>...
@@ -423,6 +469,19 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
 
         {/* Primary Action Button: Pay with Razorpay */}
         <div className="space-y-3 pt-2">
+          {/* Delivery Notice - Counter Pickup Only */}
+          <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-4 text-xs text-amber-950 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <span className="font-black text-amber-900 text-sm block">
+                ⚠️ Store Counter Pickup Only (Home Delivery Starting Soon!)
+              </span>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Please note: We have not currently started home delivery services — doorstep delivery will be started soon! Once payment is complete, your printed documents will be prepared and packed for pickup at our shop counter (<strong>{settings.address}</strong>).
+              </p>
+            </div>
+          </div>
+
           {!isCustomerLoggedIn ? (
             <button
               type="button"
@@ -431,7 +490,11 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               className="w-full py-4 px-6 bg-slate-950 hover:bg-slate-800 text-white font-black text-base sm:text-lg rounded-2xl transition shadow-xl flex items-center justify-center gap-3 cursor-pointer transform active:scale-98"
             >
               <Lock className="w-5 h-5 text-amber-400" />
-              <span>Log In to Place Order & Pay ₹{amount.toFixed(2)}</span>
+              <span>
+                {amount <= 0
+                  ? 'Log In to Confirm Free Order (₹0.00)'
+                  : `Log In to Place Order & Pay ₹${amount.toFixed(2)}`}
+              </span>
             </button>
           ) : (
             <button
@@ -439,7 +502,11 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               id="razorpay-pay-button"
               onClick={handleLaunchRazorpay}
               disabled={isVerifying || isRazorpayLoading || isExpired}
-              className="w-full py-4 px-6 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-base sm:text-lg rounded-2xl transition shadow-xl shadow-indigo-600/25 flex items-center justify-center gap-3 cursor-pointer disabled:cursor-not-allowed transform active:scale-98"
+              className={`w-full py-4 px-6 ${
+                amount <= 0
+                  ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/25'
+                  : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/25'
+              } disabled:opacity-50 text-white font-black text-base sm:text-lg rounded-2xl transition shadow-xl flex items-center justify-center gap-3 cursor-pointer disabled:cursor-not-allowed transform active:scale-98`}
             >
               {isRazorpayLoading ? (
                 <>
@@ -449,7 +516,13 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
               ) : isVerifying ? (
                 <>
                   <RefreshCw className="w-5 h-5 animate-spin text-white" />
-                  <span>Verifying Payment with Razorpay...</span>
+                  <span>{amount <= 0 ? 'Confirming Free Order...' : 'Verifying Payment with Razorpay...'}</span>
+                </>
+              ) : amount <= 0 ? (
+                <>
+                  <Sparkles className="w-5 h-5 text-amber-300" />
+                  <span>Confirm & Place Free Order (₹0.00)</span>
+                  <ArrowRight className="w-5 h-5 text-emerald-200" />
                 </>
               ) : (
                 <>
@@ -501,6 +574,51 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
             <span className="font-bold text-slate-900">
               {order.totalPages} pages • {order.copies} set{order.copies === 1 ? '' : 's'}
             </span>
+          </div>
+
+          {/* Files Snapshot */}
+          {order.files && order.files.length > 0 && (
+            <div className="pt-2 border-t border-slate-100 space-y-1.5">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Files Dispatched to Counter ({order.files.length}):
+              </span>
+              <div className="space-y-1">
+                {order.files.map((f, idx) => (
+                  <div
+                    key={idx}
+                    className="p-2 rounded-xl bg-slate-50 border border-slate-200 text-[11px] flex flex-col gap-0.5"
+                  >
+                    <div className="flex items-center justify-between font-semibold text-slate-800">
+                      <span className="truncate max-w-[240px]">{f.name}</span>
+                      <span className="font-mono text-emerald-700 font-bold">{f.pageCount} pgs</span>
+                    </div>
+                    {(f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL')) && (
+                      <div className="text-[10px] text-indigo-700 font-semibold flex items-center gap-1">
+                        <span>✂️ Staff portal PDF contains ONLY:</span>
+                        <span className="bg-indigo-100 text-indigo-900 px-1.5 py-0.2 rounded font-bold">
+                          {f.selectedPagesSummary || f.pageSelectionMode}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-between items-center bg-amber-50/80 p-2.5 rounded-xl border border-amber-200 text-amber-900 mt-2">
+            <div className="flex items-center gap-1.5 font-bold">
+              <MapPin className="w-3.5 h-3.5 text-amber-700" />
+              <span>Fulfillment Method:</span>
+            </div>
+            <div className="text-right">
+              <span className="font-black bg-amber-200/80 text-amber-950 px-2 py-0.5 rounded text-[11px]">
+                Counter Pickup Only
+              </span>
+              <span className="block text-[10px] text-amber-700 mt-0.5">
+                (Home delivery starting soon)
+              </span>
+            </div>
           </div>
         </div>
 

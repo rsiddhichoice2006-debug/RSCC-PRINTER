@@ -78,19 +78,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     contextCloseModal();
   };
 
-  const handleQuickDemo = () => {
-    if (mode === 'login') {
-      setIdentifier('8652411690');
-      setPassword('pass123');
-    } else {
-      setName('Demo Customer');
-      setMobile('8652411690');
-      setEmail('demo@customer.rscc.in');
-      setPassword('pass123');
-    }
-    setErrorMsg('');
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -100,16 +87,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     try {
       if (mode === 'signup') {
         if (!name.trim()) throw new Error('Please enter your full name');
+        if (!email.trim() || !email.includes('@') || !email.includes('.')) {
+          throw new Error('Please enter a valid email address (required for login)');
+        }
         const cleanMobile = mobile.replace(/\D/g, '');
-        if (cleanMobile.length < 10) throw new Error('Please enter a valid 10-digit mobile number');
+        if (cleanMobile.length < 10) throw new Error('Please enter a valid 10-digit mobile number for order & counter pickup notifications');
         if (password.length < 6) throw new Error('Password must be at least 6 characters');
 
-        await signUp(name, cleanMobile, email.trim() || undefined, password);
+        await signUp(name, cleanMobile, email.trim(), password);
       } else {
-        if (!identifier.trim()) throw new Error('Please enter your mobile number or email address');
+        const cleanId = identifier.trim();
+        if (!cleanId) throw new Error('Please enter your email address');
+
+        // Customer shall NOT login through mobile number
+        const isPureNumber = /^\d{10,}$/.test(cleanId.replace(/\D/g, '')) && !cleanId.includes('@');
+        if (isPureNumber) {
+          throw new Error('Customer login via mobile number is not allowed. Please enter your email address to sign in.');
+        }
+
+        if (!cleanId.includes('@') || !cleanId.includes('.')) {
+          throw new Error('Please enter a valid email address (e.g. yourname@gmail.com)');
+        }
+
         if (!password) throw new Error('Please enter your password');
 
-        await signIn(identifier.trim(), password);
+        await signIn(cleanId.toLowerCase(), password);
       }
 
       if (propsOnAuthenticated) {
@@ -129,19 +131,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         msg.toLowerCase().includes('no registered') ||
         msg.toLowerCase().includes('not found')
       ) {
-        msg = 'No matching account found with these credentials. Please check or create a new account.';
+        msg = 'No matching account found with this email address. Please check or create a new account.';
         type = 'not-found';
       } else if (
         err.code === 'auth/email-already-in-use' ||
         msg.toLowerCase().includes('already exists') ||
         msg.toLowerCase().includes('already registered')
       ) {
-        msg = 'An account with this mobile number or email already exists. Please sign in instead.';
+        msg = 'An account with this email address already exists. Please sign in instead.';
         type = 'already-registered';
       } else if (err.code === 'auth/weak-password') {
         msg = 'Password is too weak. Please use at least 6 characters.';
       } else if (err.code === 'auth/invalid-email') {
-        msg = 'Please enter a valid email address or 10-digit mobile number.';
+        msg = 'Please enter a valid email address.';
       }
       setErrorMsg(msg);
       setErrorType(type);
@@ -202,8 +204,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
           <p className="text-xs text-slate-300 mt-2">
             {mode === 'login'
-              ? 'Sign in with your 10-digit mobile number or email to view past orders and pickup PINs.'
-              : 'Register your mobile account in seconds to place print orders and track live jobs.'}
+              ? 'Sign in with your registered email address and password to view past orders and pickup PINs.'
+              : 'Create your customer account with your email and mobile number to place print orders and track live jobs.'}
           </p>
 
           {/* Mode Switch Tabs */}
@@ -321,16 +323,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-bold text-slate-700">Email Address</label>
-                    <span className="text-[10px] text-slate-400 font-medium">Optional (for receipts)</span>
+                    <label className="text-xs font-bold text-slate-700">Email Address (Login ID) *</label>
                   </div>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="email"
-                      placeholder="name@example.com (optional)"
+                      placeholder="e.g. name@example.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
+                      required
                       className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition"
                     />
                   </div>
@@ -339,19 +341,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             ) : (
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Mobile Number or Email Address *
+                  Email Address *
                 </label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="text"
-                    placeholder="e.g. 9876543210 or name@example.com"
+                    type="email"
+                    placeholder="e.g. name@example.com"
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     required
                     className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition"
                   />
                 </div>
+                <p className="text-[11px] text-slate-500 mt-1">Mobile number login is not allowed. Please enter your email.</p>
               </div>
             )}
 
@@ -406,18 +409,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               )}
             </button>
           </form>
-
-          {/* Quick Demo Fill */}
-          <div className="pt-1 flex items-center justify-center">
-            <button
-              type="button"
-              onClick={handleQuickDemo}
-              className="text-[11px] text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-lg transition font-semibold cursor-pointer flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3 h-3 text-amber-600" />
-              <span>Fill Quick Demo Account (8652411690)</span>
-            </button>
-          </div>
 
           {/* Divider */}
           <div className="relative flex items-center justify-center my-1">

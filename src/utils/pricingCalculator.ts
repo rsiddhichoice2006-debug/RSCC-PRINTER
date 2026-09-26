@@ -34,7 +34,7 @@ export const DEFAULT_PRICING: ShopPricing = {
   bwBoth: 4,
   colorSingle: 10,
   colorBoth: 10,
-  photoSheet: 15,
+  photoSheet: 0,
 };
 
 /**

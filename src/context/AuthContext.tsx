@@ -162,110 +162,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     triggerAuthCallback();
   };
 
-  // Unified Sign In: Supports Mobile Number (10 digits) OR Email Address
+  // Unified Sign In: Strictly via Email Address (Mobile login disallowed per policy)
   const signIn = async (identifier: string, pass: string) => {
     const raw = identifier.trim();
-    if (!raw) throw new Error('Please enter your mobile number or email address');
-    const isEmail = raw.includes('@');
-    const cleanMobile = raw.replace(/\D/g, '').slice(-10);
+    if (!raw) throw new Error('Please enter your email address');
 
-    let customerResult: CustomerUser | null = null;
+    // Customer shall NOT login through mobile number
+    const isPureNumber = /^\d{10,}$/.test(raw.replace(/\D/g, '')) && !raw.includes('@');
+    if (isPureNumber) {
+      throw new Error('Customer login via mobile number is not allowed. Please enter your registered email address to sign in.');
+    }
 
-    if (!isEmail && cleanMobile.length >= 10) {
-      // 1. Phone number login: Check backend / local database first
-      try {
-        const res = await apiClient.loginCustomer({
-          mobile: cleanMobile,
-          password: pass,
-        });
-        if (res?.customer) {
-          customerResult = res.customer;
-        }
-      } catch (err: any) {
-        console.warn('Backend phone login notice:', err.message);
-      }
+    if (!raw.includes('@')) {
+      throw new Error('Please enter a valid email address (e.g. yourname@gmail.com)');
+    }
 
-      // Try Firebase with the resolved email or synthesized email
-      const targetEmail = customerResult?.email || `${cleanMobile}@customer.rscc.in`;
-      try {
-        const cred = await signInWithEmailAndPassword(auth, targetEmail, pass);
-        if (cred.user) {
-          setCurrentUser(cred.user);
-          if (!customerResult) {
-            customerResult = {
-              id: cred.user.uid,
-              name: cred.user.displayName || `Customer ${cleanMobile.slice(-4)}`,
-              mobile: cleanMobile,
-              email: cred.user.email || targetEmail,
-              createdAt: new Date().toISOString(),
-            };
-          }
-        }
-      } catch (fbErr: any) {
-        // If customer was verified in backend, don't fail just because Firebase auth is separate
-        if (!customerResult) {
-          throw fbErr;
-        }
-      }
+    // Email Address login
+    const cleanEmail = raw.toLowerCase();
+    try {
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      if (cred.user) {
+        setCurrentUser(cred.user);
+        const base: CustomerUser = {
+          id: cred.user.uid,
+          name: cred.user.displayName || cleanEmail.split('@')[0],
+          mobile: '',
+          email: cleanEmail,
+          createdAt: new Date().toISOString(),
+        };
+        setCustomerProfile(base);
+        localStorage.setItem('rscc_customer_user', JSON.stringify(base));
 
-      if (customerResult) {
-        setCustomerProfile(customerResult);
-        localStorage.setItem('rscc_customer_user', JSON.stringify(customerResult));
-        if (!auth.currentUser) {
-          setCurrentUser({
-            uid: customerResult.id,
-            email: customerResult.email || `${customerResult.mobile}@customer.rscc.in`,
-            displayName: customerResult.name,
-            phoneNumber: customerResult.mobile,
-          } as any);
+        // Also sync to backend
+        try {
+          await apiClient.loginCustomer({ email: cleanEmail, password: pass });
+        } catch (e) {
+          // ignore
         }
+
         closeAuthModal();
         triggerAuthCallback();
         return;
       }
-
-      throw new Error('No registered account found with this mobile number. Please click New Account to register.');
-    } else {
-      // 2. Email Address login
-      const cleanEmail = raw.toLowerCase();
+    } catch (fbErr: any) {
+      // Check backend fallback
       try {
-        const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-        if (cred.user) {
-          setCurrentUser(cred.user);
-          const base: CustomerUser = {
-            id: cred.user.uid,
-            name: cred.user.displayName || cleanEmail.split('@')[0],
-            mobile: '',
-            email: cleanEmail,
-            createdAt: new Date().toISOString(),
-          };
-          setCustomerProfile(base);
-          localStorage.setItem('rscc_customer_user', JSON.stringify(base));
-
-          // Also sync to backend
-          try {
-            await apiClient.loginCustomer({ email: cleanEmail, password: pass });
-          } catch (e) {
-            // ignore
-          }
-
-          closeAuthModal();
-          triggerAuthCallback();
+        const res = await apiClient.loginCustomer({ email: cleanEmail, password: pass });
+        if (res?.customer) {
+          loginCustomerDirect(res.customer);
           return;
         }
-      } catch (fbErr: any) {
-        // Check backend fallback
-        try {
-          const res = await apiClient.loginCustomer({ email: cleanEmail, password: pass });
-          if (res?.customer) {
-            loginCustomerDirect(res.customer);
-            return;
-          }
-        } catch (apiErr) {
-          // keep original Firebase error
-        }
-        throw fbErr;
+      } catch (apiErr) {
+        // keep original Firebase error
       }
+      throw fbErr;
     }
   };
 

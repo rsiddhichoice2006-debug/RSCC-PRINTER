@@ -49,8 +49,10 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
   const [copiedOrder, setCopiedOrder] = useState<string | null>(null);
 
   // Load orders strictly for the authenticated customer across all their identifiers
-  const loadOrdersForCustomer = async (identifier?: string) => {
-    setLoadingOrders(true);
+  const loadOrdersForCustomer = async (identifier?: string, isSilent = false) => {
+    if (!isSilent) {
+      setLoadingOrders(true);
+    }
     setErrorMsg('');
     try {
       const queries = new Set<string>();
@@ -84,20 +86,49 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
       setCustomerOrders(allOrders);
     } catch (err: any) {
       console.warn('Could not fetch orders:', err);
-      setErrorMsg(err.message || 'Could not fetch your order history.');
+      if (!isSilent) {
+        setErrorMsg(err.message || 'Could not fetch your order history.');
+      }
       setCustomerOrders([]);
     } finally {
-      setLoadingOrders(false);
+      if (!isSilent) {
+        setLoadingOrders(false);
+      }
     }
   };
 
-  // Automatically sync when logged in
+  // Automatically sync when logged in & poll every 3 seconds for simultaneous updates
   useEffect(() => {
-    if (isAuthenticated) {
-      loadOrdersForCustomer();
-    } else {
+    if (!isAuthenticated) {
       setCustomerOrders([]);
+      return;
     }
+
+    loadOrdersForCustomer();
+
+    // Auto-polling interval
+    const interval = setInterval(() => {
+      loadOrdersForCustomer(undefined, true);
+    }, 3000);
+
+    const handleOrderEvent = () => {
+      loadOrdersForCustomer(undefined, true);
+    };
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'rscc_orders_v2') {
+        loadOrdersForCustomer(undefined, true);
+      }
+    };
+
+    window.addEventListener('rscc_order_updated', handleOrderEvent);
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('rscc_order_updated', handleOrderEvent);
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, [isAuthenticated, currentUser, customerProfile]);
 
   const handleOpenLogin = (mode: 'login' | 'signup' = 'login') => {
@@ -133,7 +164,7 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
       return (
         <span className="bg-cyan-100 text-cyan-900 border border-cyan-300 text-[11px] font-black px-2.5 py-1 rounded-full flex items-center gap-1 animate-pulse">
           <PackageCheck className="w-3 h-3 text-cyan-700" />
-          <span>Ready for Pickup</span>
+          <span>Ready to Pick Up</span>
         </span>
       );
     }
@@ -141,7 +172,7 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
       return (
         <span className="bg-indigo-100 text-indigo-900 border border-indigo-300 text-[11px] font-black px-2.5 py-1 rounded-full flex items-center gap-1">
           <Printer className="w-3 h-3 text-indigo-700" />
-          <span>Printing in Progress</span>
+          <span>Getting Prepared</span>
         </span>
       );
     }
@@ -229,6 +260,19 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
             </div>
           </div>
         )}
+      </div>
+
+      {/* Notice: Self-Pickup Only (Delivery Starting Soon) */}
+      <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-4 text-xs text-amber-950 flex items-start gap-3">
+        <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+        <div className="space-y-0.5">
+          <span className="font-black text-amber-900 text-sm block">
+            ⚠️ Store Counter Pickup Only (Home Delivery Starting Soon!)
+          </span>
+          <p className="text-[11px] text-amber-800 leading-relaxed">
+            Please note that we have not currently started doorstep delivery services. Home delivery will be started soon! All completed orders can be picked up at our shop counter ({settings.address}) with your 4-digit Delivery PIN.
+          </p>
+        </div>
       </div>
 
       {/* Notifications */}

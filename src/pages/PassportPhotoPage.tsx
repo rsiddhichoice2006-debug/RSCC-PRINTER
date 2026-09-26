@@ -1038,9 +1038,14 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                 </button>
               )}
 
-              <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 pt-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>PIN-protected counter pickup at {settings.shopName}</span>
+              <div className="flex flex-col items-center justify-center gap-1 text-[11px] text-slate-500 pt-1 text-center">
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>PIN-protected counter pickup at {settings.shopName}</span>
+                </div>
+                <span className="text-[10px] text-amber-700 font-semibold">
+                  (Note: Home delivery is not currently started, will be started soon!)
+                </span>
               </div>
             </div>
           </div>

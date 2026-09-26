@@ -58,7 +58,7 @@ function MainApp() {
       bwBoth: 5,
       colorSingle: 10,
       colorBoth: 10,
-      photoSheet: 15,
+      photoSheet: 0,
     },
   });
 

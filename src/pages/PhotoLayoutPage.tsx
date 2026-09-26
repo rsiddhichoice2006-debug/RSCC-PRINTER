@@ -19,6 +19,7 @@ import {
   ChevronDown,
   Check,
   Lock,
+  MapPin,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -94,8 +95,11 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
   const currentSheetSlots = generateSheetSlots(uploadedPhotos, selectedLayout, activeSheetIndex);
 
-  // Pricing: A4 = ₹10 / page
-  const ratePerSheet = settings.pricing?.a4Color100Single || 10;
+  // Pricing: A4 Photo Sheet Rate (configured via photoSheet)
+  const ratePerSheet =
+    settings.pricing?.photoSheet !== undefined && settings.pricing?.photoSheet !== null
+      ? settings.pricing.photoSheet
+      : 0;
 
   const totalAmount = requiredSheets * copies * ratePerSheet;
 
@@ -213,12 +217,14 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
       totalSheets: requiredSheets,
       copies,
       printType: 'COLOUR',
+      paperQuality: '100GSM',
       printingSide: 'SINGLE',
       ratePerPage: ratePerSheet,
       totalAmount,
+      pricing: settings.pricing,
       specialInstructions: customer.specialInstructions?.trim()
-        ? `[${paperSize} Photo Print - ₹${ratePerSheet}/page] ${customer.specialInstructions.trim()}`
-        : `Paper: ${paperSize} Photo Paper (₹${ratePerSheet}/page) | Layout: ${selectedLayout}`,
+        ? `[${paperSize} 100 GSM Photo Print - ₹${ratePerSheet}/page] ${customer.specialInstructions.trim()}`
+        : `Paper: ${paperSize} 100 GSM Paper (₹${ratePerSheet}/page) | Layout: ${selectedLayout}`,
     };
 
     onProceedToPayment(orderPayload);
@@ -261,7 +267,7 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
             A4 Photo Printing Layouts
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-            Choose your layout, upload photos, and preview them live on realistic high-gloss A4 photographic sheets at just ₹{ratePerSheet} per page.
+            Choose your layout, upload photos, and preview them live on premium 100 GSM A4 paper sheets at just ₹{ratePerSheet} per page.
           </p>
         </div>
 
@@ -286,11 +292,11 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
             <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
               <span>1. Choose Photo Layout</span>
               <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
-                A4 Photo Paper (₹{ratePerSheet}/page)
+                A4 100 GSM Paper (₹{ratePerSheet}/page)
               </span>
             </h2>
             <p className="text-xs text-slate-600">
-              Select how many photos you want arranged on each A4 glossy sheet.
+              Select how many photos you want arranged on each A4 100 GSM sheet.
             </p>
           </div>
         </div>
@@ -745,7 +751,7 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
                   {/* Printable Footer Notice on Sheet */}
                   <div className="pt-2 text-[9px] text-slate-400 flex items-center justify-between border-t border-slate-200 mt-2 select-none">
-                    <span>RSCC High-Gloss {paperSize} Photo Sheet</span>
+                    <span>RSCC 100 GSM {paperSize} Paper Sheet</span>
                     <span>{paperSize === 'A4' ? '210 × 297 mm' : '297 × 420 mm'} • {currentLayoutConfig.dimensionsText}</span>
                   </div>
                 </div>
@@ -764,7 +770,7 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                     </span>
                   </div>
                   <p className="text-xs leading-relaxed text-slate-300">
-                    <strong>Please Note:</strong> The digital preview displayed above is for layout visualization and framing reference only. Your final physical hard copy will be precision-printed in high-definition, professional studio-quality resolution with vibrant, archival laboratory finish on 250 GSM photographic stock.
+                    <strong>Please Note:</strong> The digital preview displayed above is for layout visualization and framing reference only. Your final physical hard copy will be precision-printed in high-definition, crisp studio-quality resolution with vibrant, clean finish on premium 100 GSM paper stock.
                   </p>
                 </div>
               </div>
@@ -775,7 +781,7 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div className="space-y-1">
                   <div className="font-bold text-white text-sm">
-                    {currentLayoutConfig.name} ({paperSize} Photo Sheet)
+                    {currentLayoutConfig.name} ({paperSize} 100 GSM Sheet)
                   </div>
                   <div className="text-slate-400">
                     {uploadedPhotos.length} photos uploaded • <strong>{requiredSheets} {paperSize} sheet{requiredSheets > 1 ? 's' : ''}</strong> required
@@ -802,6 +808,15 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                       +
                     </button>
                   </div>
+                </div>
+              </div>
+
+              {/* Delivery Notice */}
+              <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 text-xs text-slate-300 flex items-start gap-2">
+                <MapPin className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="leading-tight">
+                  <span className="font-bold text-amber-300">Store Counter Pickup Only:</span>{' '}
+                  <span>We have not currently started delivery services — doorstep delivery will be started soon! Collect at {settings.address}.</span>
                 </div>
               </div>
 

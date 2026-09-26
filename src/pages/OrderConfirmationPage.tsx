@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import {
   CheckCircle2,
@@ -14,8 +14,11 @@ import {
   Copy,
   Check,
   ShieldCheck,
+  PackageCheck,
+  Sparkles,
 } from 'lucide-react';
 import { OrderRecord, ShopSettings } from '../types';
+import { apiClient } from '../services/apiClient';
 
 interface OrderConfirmationPageProps {
   order: OrderRecord;
@@ -23,15 +26,49 @@ interface OrderConfirmationPageProps {
   onNavigate: (page: string, params?: any) => void;
 }
 
+// Dual-tone counter chime
+function playReadyChime() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(659.25, now);
+    gain1.gain.setValueAtTime(0.15, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.3);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880, now + 0.15);
+    gain2.gain.setValueAtTime(0.18, now + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.15);
+    osc2.stop(now + 0.6);
+  } catch {}
+}
+
 export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
-  order,
+  order: initialOrder,
   settings,
   onNavigate,
 }) => {
-  const [copied, setCopied] = React.useState(false);
+  const [order, setOrder] = useState<OrderRecord>(initialOrder);
+  const [copied, setCopied] = useState(false);
+  const prevStatusRef = useRef<string>(initialOrder.orderStatus);
 
   useEffect(() => {
-    // Trigger celebratory confetti on load
+    // Trigger celebratory confetti on initial load
     try {
       confetti({
         particleCount: 80,
@@ -42,6 +79,71 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
       // ignore
     }
   }, []);
+
+  // Real-time synchronization while on confirmation page
+  useEffect(() => {
+    if (order.orderStatus === 'COMPLETED' || order.orderStatus === 'CANCELLED') return;
+
+    const syncOrderSilently = async () => {
+      try {
+        const fresh = await apiClient.trackOrder(order.orderNumber, order.customer.mobile || order.customer.email || '');
+        if (fresh) {
+          if (fresh.orderStatus === 'READY_FOR_PICKUP' && prevStatusRef.current !== 'READY_FOR_PICKUP') {
+            try {
+              confetti({ particleCount: 100, spread: 80, origin: { y: 0.5 } });
+            } catch {}
+            playReadyChime();
+          }
+          prevStatusRef.current = fresh.orderStatus;
+          setOrder(fresh);
+        }
+      } catch {}
+    };
+
+    const interval = setInterval(syncOrderSilently, 2500);
+
+    const handleOrderEvent = (e: any) => {
+      const updatedOrder = e.detail as OrderRecord;
+      if (updatedOrder && (updatedOrder.id === order.id || updatedOrder.orderNumber === order.orderNumber)) {
+        if (updatedOrder.orderStatus === 'READY_FOR_PICKUP' && prevStatusRef.current !== 'READY_FOR_PICKUP') {
+          try {
+            confetti({ particleCount: 100, spread: 80, origin: { y: 0.5 } });
+          } catch {}
+          playReadyChime();
+        }
+        prevStatusRef.current = updatedOrder.orderStatus;
+        setOrder(updatedOrder);
+      }
+    };
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'rscc_orders_v2' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          const found = parsed.find((o: OrderRecord) => o.id === order.id || o.orderNumber === order.orderNumber);
+          if (found) {
+            if (found.orderStatus === 'READY_FOR_PICKUP' && prevStatusRef.current !== 'READY_FOR_PICKUP') {
+              try {
+                confetti({ particleCount: 100, spread: 80, origin: { y: 0.5 } });
+              } catch {}
+              playReadyChime();
+            }
+            prevStatusRef.current = found.orderStatus;
+            setOrder(found);
+          }
+        } catch {}
+      }
+    };
+
+    window.addEventListener('rscc_order_updated', handleOrderEvent);
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('rscc_order_updated', handleOrderEvent);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [order.id, order.orderNumber]);
 
   const copyOrderNumber = () => {
     navigator.clipboard.writeText(order.orderNumber);
@@ -165,8 +267,12 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
               <Printer className="w-3.5 h-3.5" />
               <span>Print Status</span>
             </div>
-            <div className="text-sm font-black text-slate-900 capitalize">
-              {order.orderStatus.replace(/_/g, ' ')}
+            <div className="text-sm font-black text-slate-900">
+              {order.orderStatus === 'PRINTING'
+                ? 'Getting Prepared'
+                : order.orderStatus === 'READY_FOR_PICKUP'
+                ? 'Ready to Pick Up'
+                : order.orderStatus.replace(/_/g, ' ')}
             </div>
             <div className="text-[11px] text-slate-500">
               Estimated pickup: Today ({settings.pickupTimings})
@@ -251,13 +357,65 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
           </div>
         </div>
 
+        {/* Celebratory Ready to Pick Up Banner when status is READY_FOR_PICKUP */}
+        {order.orderStatus === 'READY_FOR_PICKUP' && (
+          <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white p-5 rounded-2xl shadow-lg border border-emerald-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in zoom-in-95 print:hidden">
+            <div className="flex items-start gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-white/20 text-white flex items-center justify-center shrink-0 shadow-inner">
+                <PackageCheck className="w-7 h-7" />
+              </div>
+              <div>
+                <div className="inline-flex items-center gap-1.5 bg-amber-300 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider mb-1">
+                  <Sparkles className="w-3 h-3" />
+                  <span>PRINT JOB COMPLETE</span>
+                </div>
+                <h3 className="text-lg sm:text-xl font-black tracking-tight text-white">
+                  Your Order is READY TO PICK UP!
+                </h3>
+                <p className="text-xs text-emerald-100 mt-0.5 max-w-xl leading-relaxed">
+                  Your documents have been printed and packed. Please visit our shop counter at <strong>{settings.address}</strong> and show your 4-digit Delivery PIN: <strong className="font-mono bg-white/20 px-1.5 py-0.5 rounded text-white">{order.deliveryPin || '4921'}</strong> to collect.
+                </p>
+              </div>
+            </div>
+            <div className="bg-white text-slate-900 px-4 py-2.5 rounded-xl font-black text-center text-xs shrink-0 shadow">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Counter PIN</div>
+              <div className="font-mono text-xl text-emerald-700 font-black tracking-widest">{order.deliveryPin || '4921'}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Preparing In Progress Banner */}
+        {order.orderStatus === 'PRINTING' && (
+          <div className="bg-indigo-50 border border-indigo-200 text-indigo-950 p-4 rounded-2xl flex items-center gap-3 animate-in fade-in print:hidden">
+            <Printer className="w-6 h-6 text-indigo-600 animate-pulse shrink-0" />
+            <div className="text-xs">
+              <span className="font-black text-indigo-900 block text-sm">Getting Prepared (Printing on Press)</span>
+              <span>Our staff has downloaded your files and is preparing your physical print job now.</span>
+            </div>
+          </div>
+        )}
+
+        {/* Delivery Notice - Counter Pickup Only */}
+        <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-4 text-xs text-amber-950 flex items-start gap-3 print:hidden">
+          <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <span className="font-black text-amber-900 text-sm block">
+              ⚠️ Store Counter Pickup Only (Home Delivery Starting Soon!)
+            </span>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              Please note: We have not currently started doorstep delivery services. Home delivery will be started soon! Please visit our shop counter at <strong>{settings.address}</strong> to collect your printed documents.
+            </p>
+          </div>
+        </div>
+
         {/* Pickup Notice */}
         <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-200 flex items-start gap-3 text-xs text-emerald-950">
           <MapPin className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
           <div className="space-y-0.5">
-            <div className="font-bold text-sm">Shop Pickup Location</div>
+            <div className="font-bold text-sm">Shop Counter Pickup Location</div>
             <div>{settings.address}</div>
             <div className="text-emerald-800 font-medium">Timings: {settings.pickupTimings}</div>
+            <div className="text-[11px] text-emerald-700 pt-0.5">Note: Home delivery service will be started soon!</div>
           </div>
         </div>
 

@@ -18,6 +18,7 @@ import {
   FileSpreadsheet,
   Sliders,
   Lock,
+  MapPin,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -32,6 +33,12 @@ import {
 } from '../types';
 import { formatFileSize, processUploadedFile } from '../utils/fileProcessor';
 import { getSelectedPageCount } from '../utils/pageCalculator';
+import {
+  getSelectedPagesList,
+  getPageSelectionSummary,
+  extractSelectedPagesFromPdf,
+  formatTrimmedPdfFilename,
+} from '../utils/pdfExtractor';
 import {
   DEFAULT_PRICING,
   getDocumentRate,
@@ -63,6 +70,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   const isCustomerLoggedIn = !!(currentUser || customerProfile || loggedInCustomer);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = useState<boolean>(false);
+  const [isExtractingPdf, setIsExtractingPdf] = useState<boolean>(false);
   const [dragActive, setDragActive] = useState<boolean>(false);
 
   // Printing Preferences: Paper Size, Print Type, Paper Quality (GSM), Printing Side, Copies
@@ -317,7 +325,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     return Object.keys(errors).length === 0;
   };
 
-  const handleProceed = () => {
+  const handleProceed = async () => {
     if (settings.isAcceptingOrders === false) {
       alert(settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand.');
       return;
@@ -345,42 +353,125 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
       return;
     }
 
-    const orderPayload = {
-      mode: 'DOCUMENT',
-      paperSize,
-      paperQuality,
-      customer: {
-        name: customer.name.trim(),
-        mobile: customer.mobile.trim(),
-        email: customer.email?.trim() || undefined,
-      },
-      files: validFiles.map((f) => ({
-        id: f.id,
-        name: f.name,
-        size: f.size,
-        type: f.type,
-        pageCount: f.pageCount,
-        sets: f.sets || copies,
-        pageSelectionMode: f.pageSelectionMode || 'ALL',
-        customPageRange: f.customPageRange,
-        selectedPageCount: f.selectedPageCount || f.pageCount,
-        previewUrl: f.previewUrl,
-        moderationStatus: f.moderationStatus,
-        moderationReason: f.moderationReason,
-      })),
-      totalPages,
-      copies,
-      sets: copies,
-      printType,
-      printingSide,
-      ratePerPage,
-      copyRatePerPage,
-      totalAmount,
-      pricing,
-      specialInstructions: customer.specialInstructions?.trim() || undefined,
-    };
+    setIsExtractingPdf(true);
 
-    onProceedToPayment(orderPayload);
+    try {
+      // Process each file: If customer selected specific pages (Odd, Even, Custom like 1, 2)
+      // for a PDF, extract ONLY those selected pages into a new PDF!
+      // This ensures the staff portal sees and prints ONLY the chosen pages.
+      const finalizedFiles = await Promise.all(
+        validFiles.map(async (f) => {
+          const currentMode = f.pageSelectionMode || 'ALL';
+          const isPdf =
+            f.type === 'application/pdf' ||
+            f.name.toLowerCase().endsWith('.pdf') ||
+            (f.previewUrl && f.previewUrl.startsWith('data:application/pdf'));
+
+          const selectedPages = getSelectedPagesList(
+            f.pageCount,
+            currentMode,
+            f.customPageRange || ''
+          );
+
+          const summary = getPageSelectionSummary(
+            currentMode,
+            f.customPageRange || '',
+            selectedPages.length,
+            f.pageCount
+          );
+
+          const needsTrim =
+            isPdf &&
+            currentMode !== 'ALL' &&
+            selectedPages.length > 0 &&
+            selectedPages.length < f.pageCount;
+
+          if (needsTrim) {
+            try {
+              const srcData = f.file || f.previewUrl;
+              if (srcData) {
+                const extracted = await extractSelectedPagesFromPdf(srcData, selectedPages);
+                const trimmedFilename = formatTrimmedPdfFilename(
+                  f.name,
+                  currentMode,
+                  f.customPageRange
+                );
+
+                return {
+                  id: f.id,
+                  name: trimmedFilename,
+                  size: extracted.bytes.byteLength,
+                  type: 'application/pdf',
+                  pageCount: extracted.pageCount,
+                  originalPageCount: f.pageCount,
+                  sets: f.sets || copies,
+                  pageSelectionMode: currentMode,
+                  customPageRange: f.customPageRange,
+                  selectedPageCount: extracted.pageCount,
+                  selectedPagesList: selectedPages,
+                  selectedPagesSummary: summary,
+                  trimmedPdfCreated: true,
+                  previewUrl: extracted.dataUrl,
+                  moderationStatus: f.moderationStatus,
+                  moderationReason: f.moderationReason,
+                };
+              }
+            } catch (extractErr) {
+              console.error('Could not compile trimmed PDF for staff portal:', extractErr);
+            }
+          }
+
+          // Default / All Pages
+          return {
+            id: f.id,
+            name: f.name,
+            size: f.size,
+            type: f.type,
+            pageCount: f.pageCount,
+            originalPageCount: f.pageCount,
+            sets: f.sets || copies,
+            pageSelectionMode: currentMode,
+            customPageRange: f.customPageRange,
+            selectedPageCount: f.selectedPageCount || f.pageCount,
+            selectedPagesList: selectedPages,
+            selectedPagesSummary: summary,
+            trimmedPdfCreated: false,
+            previewUrl: f.previewUrl,
+            moderationStatus: f.moderationStatus,
+            moderationReason: f.moderationReason,
+          };
+        })
+      );
+
+      const orderPayload = {
+        mode: 'DOCUMENT',
+        paperSize,
+        paperQuality,
+        customer: {
+          name: customer.name.trim(),
+          mobile: customer.mobile.trim(),
+          email: customer.email?.trim() || undefined,
+        },
+        files: finalizedFiles,
+        totalPages,
+        copies,
+        sets: copies,
+        printType,
+        printingSide,
+        ratePerPage,
+        copyRatePerPage,
+        totalAmount,
+        pricing,
+        specialInstructions: customer.specialInstructions?.trim() || undefined,
+      };
+
+      onProceedToPayment(orderPayload);
+    } catch (err: any) {
+      console.error('Failed to prepare order payload:', err);
+      alert('An error occurred while preparing your document pages. Please try again.');
+    } finally {
+      setIsExtractingPdf(false);
+    }
   };
 
   const hasFlaggedFiles = uploadedFiles.some((f) => f.moderationStatus === 'FLAGGED');
@@ -722,21 +813,78 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
                           {/* Custom Page Input */}
                           {currentMode === 'CUSTOM' && (
-                            <div className="pt-1 space-y-1">
+                            <div className="pt-1 space-y-2">
                               <div className="flex items-center gap-2">
                                 <input
                                   type="text"
-                                  placeholder="e.g. 1-3, 5, 8-10"
+                                  placeholder="e.g. 1, 2 or 1-3, 5, 8"
                                   value={fileItem.customPageRange || ''}
                                   onChange={(e) =>
                                     updatePageSelection(fileItem.id, 'CUSTOM', e.target.value)
                                   }
-                                  className="w-full text-xs font-medium text-slate-900 px-3 py-1.5 bg-slate-50 border border-indigo-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                                  className="w-full text-xs font-medium text-slate-900 px-3 py-2 bg-slate-50 border border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                                 />
                               </div>
+
+                              {/* Quick Page Selection Chips */}
+                              <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                                <span className="text-slate-400 font-bold uppercase tracking-wider text-[9px]">
+                                  Quick Select:
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => updatePageSelection(fileItem.id, 'CUSTOM', '1')}
+                                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-200 transition cursor-pointer"
+                                >
+                                  Page 1 only
+                                </button>
+                                {fileItem.pageCount >= 2 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => updatePageSelection(fileItem.id, 'CUSTOM', '1, 2')}
+                                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-200 transition cursor-pointer"
+                                  >
+                                    Pages 1, 2
+                                  </button>
+                                )}
+                                {fileItem.pageCount >= 3 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => updatePageSelection(fileItem.id, 'CUSTOM', '1-3')}
+                                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-200 transition cursor-pointer"
+                                  >
+                                    Pages 1-3
+                                  </button>
+                                )}
+                                {fileItem.pageCount >= 5 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => updatePageSelection(fileItem.id, 'CUSTOM', '1-5')}
+                                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-200 transition cursor-pointer"
+                                  >
+                                    Pages 1-5
+                                  </button>
+                                )}
+                              </div>
+
                               <p className="text-[10px] text-slate-500">
-                                Enter individual page numbers and/or ranges separated by commas (Max: {fileItem.pageCount})
+                                Enter individual page numbers and/or ranges separated by commas (e.g. 1, 2 or 1-5, 8). Max: {fileItem.pageCount} pages.
                               </p>
+                            </div>
+                          )}
+
+                          {/* Staff Portal PDF Notice */}
+                          {currentMode !== 'ALL' && (
+                            <div className="bg-indigo-50/90 border border-indigo-200 rounded-xl p-2.5 text-[11px] text-indigo-950 flex items-start gap-2 shadow-2xs">
+                              <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                              <div className="leading-tight space-y-0.5">
+                                <span className="font-bold text-indigo-900 block">
+                                  ✂️ Staff Portal PDF Filter Active:
+                                </span>
+                                <span className="text-slate-700">
+                                  The shop counter staff will receive and print a clean PDF containing <strong>ONLY the {effectiveCount} selected pages</strong>. All other pages will be automatically excluded from the staff's print file.
+                                </span>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -883,11 +1031,19 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             </div>
 
             {/* Delivery Method notice */}
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700 flex items-center justify-between">
-              <span className="font-semibold">Delivery Method:</span>
-              <span className="bg-slate-200 text-slate-800 font-bold px-2.5 py-1 rounded-md text-[11px]">
-                Pickup From RSCC Counter ({settings.pickupTimings || '9:00 AM - 9:00 PM'})
-              </span>
+            <div className="bg-amber-50/80 p-3.5 rounded-2xl border border-amber-200 text-xs text-amber-950 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold flex items-center gap-1.5 text-amber-900">
+                  <MapPin className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Fulfillment Method:</span>
+                </span>
+                <span className="bg-amber-200/90 text-amber-950 font-black px-2.5 py-0.5 rounded-md text-[11px]">
+                  Store Counter Pickup
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-800 leading-tight">
+                ⚠️ We have not currently started home delivery services — doorstep delivery will be started soon! Please collect your prints from our shop counter ({settings.address}).
+              </p>
             </div>
           </div>
         </div>
@@ -1259,7 +1415,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   <button
                     type="button"
                     onClick={() => openAuthModal('login', 'Customer Login Required to Place Order', () => handleProceed())}
-                    disabled={validFiles.length === 0 || hasFlaggedFiles}
+                    disabled={validFiles.length === 0 || hasFlaggedFiles || isExtractingPdf}
                     className="bg-slate-950 hover:bg-slate-800 disabled:opacity-40 text-white font-extrabold text-sm px-5 py-3 rounded-xl transition shadow-lg flex items-center gap-2 cursor-pointer"
                   >
                     <Lock className="w-4 h-4 text-amber-400" />
@@ -1269,11 +1425,20 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   <button
                     type="button"
                     onClick={handleProceed}
-                    disabled={validFiles.length === 0 || hasFlaggedFiles}
+                    disabled={validFiles.length === 0 || hasFlaggedFiles || isExtractingPdf}
                     className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-sm px-5 py-3 rounded-xl transition shadow-lg flex items-center gap-2 cursor-pointer"
                   >
-                    <span>PROCEED TO PAYMENT</span>
-                    <ArrowRight className="w-4 h-4" />
+                    {isExtractingPdf ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                        <span>PREPARING SELECTED PAGES...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>PROCEED TO PAYMENT</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
                 )}
               </div>

@@ -71,15 +71,30 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
             {/* Left Col (7 cols): Editorial Typography & Direct CTAs */}
             <div className="lg:col-span-7 space-y-6 text-left">
-              {/* Studio Status Pill */}
-              <div className="inline-flex items-center gap-2 bg-slate-900/90 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-full font-medium shadow-2xs">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span className="text-slate-200">Choice Centre Print Lab</span>
-                <span className="text-slate-600">•</span>
-                <span className="text-amber-400 font-mono-code font-bold">Counter Open</span>
+              {/* Studio Status Pill & Shop Name */}
+              <div className="space-y-2.5">
+                <div className="inline-flex items-center gap-2 bg-slate-900/90 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-full font-medium shadow-2xs">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-slate-200 font-bold">{settings.shopName || 'Choice Centre Print Lab'}</span>
+                  <span className="text-slate-600">•</span>
+                  <span className="text-amber-400 font-mono-code font-bold">Counter Open</span>
+                </div>
+
+                {/* Delivery Starting Soon with Red Light Blinking */}
+                <div>
+                  <div className="inline-flex items-center gap-2.5 bg-red-950/90 border border-red-600/80 text-red-200 text-xs px-3.5 py-1.5 rounded-full font-black shadow-lg">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-90"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-600"></span>
+                    </span>
+                    <span className="text-red-400 uppercase tracking-wider font-extrabold text-[11px] sm:text-xs">
+                      Delivery Starting Soon
+                    </span>
+                  </div>
+                </div>
               </div>
 
               {/* Display Headline */}
@@ -126,22 +141,6 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                   <Search className="w-3.5 h-3.5" />
                   <span>Track Status</span>
                 </button>
-              </div>
-
-              {/* Proof Strip */}
-              <div className="pt-4 grid grid-cols-3 gap-4 border-t border-slate-900 text-xs">
-                <div>
-                  <div className="text-white font-bold font-mono-code text-sm sm:text-base">1200 DPI</div>
-                  <div className="text-slate-400 text-[11px]">Laser Precision</div>
-                </div>
-                <div>
-                  <div className="text-white font-bold font-mono-code text-sm sm:text-base">250 GSM</div>
-                  <div className="text-slate-400 text-[11px]">Lab Glossy Stock</div>
-                </div>
-                <div>
-                  <div className="text-white font-bold font-mono-code text-sm sm:text-base">Instant PIN</div>
-                  <div className="text-slate-400 text-[11px]">Secure Collection</div>
-                </div>
               </div>
             </div>
 
@@ -328,7 +327,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                     <ImageIcon className="w-6 h-6" />
                   </div>
                   <span className="bg-amber-400/20 text-amber-300 text-[10px] font-mono-code font-bold px-2 py-0.5 rounded border border-amber-400/40">
-                    A4 Photo Sheet
+                    A4 100 GSM Paper
                   </span>
                 </div>
 
@@ -337,7 +336,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                     A4 Photo Layout Sheets
                   </h3>
                   <p className="text-xs text-slate-300 leading-relaxed">
-                    Arrange mobile snapshots onto premium A4 photographic paper with interactive canvas rearrangement and multi-sheet support.
+                    Arrange mobile snapshots onto premium 100 GSM A4 paper with interactive canvas rearrangement and multi-sheet support.
                   </p>
                 </div>
 
@@ -365,44 +364,6 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
               <div className="mt-6 pt-4 border-t border-slate-800 flex items-center justify-between text-xs font-bold text-amber-400 group-hover:translate-x-1 transition-transform">
                 <span>Configure Layouts</span>
                 <ArrowRight className="w-4 h-4" />
-              </div>
-            </div>
-
-            {/* Bento Card 3: Standard Office & Document Printing (Full width 12 cols) */}
-            <div
-              onClick={() => onNavigate('upload')}
-              className="lg:col-span-12 bg-white rounded-3xl p-7 sm:p-8 border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-6 cursor-pointer group card-elevated"
-            >
-              <div className="space-y-2 max-w-2xl">
-                <div className="flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-900 border border-slate-200">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg sm:text-xl font-extrabold text-slate-950 tracking-tight group-hover:text-slate-800">
-                      General Document Printing (PDF, DOCX, PPTX)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Standard laser monochrome & vibrant colour printing for contracts, legal forms, college projects, and certificates.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-4 shrink-0">
-                <div className="text-left md:text-right">
-                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">Base Pricing</span>
-                  <span className="text-base font-extrabold text-slate-950 font-mono-code">
-                    B&W ₹{p.bwBoth} / Colour ₹{p.colorBoth}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="bg-slate-950 group-hover:bg-slate-800 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition flex items-center gap-2"
-                >
-                  <span>Upload Document</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
               </div>
             </div>
           </div>

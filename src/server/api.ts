@@ -183,7 +183,7 @@ const defaultSettings: ShopSettings = {
     bwBoth: 4,
     colorSingle: 10,
     colorBoth: 10,
-    photoSheet: 15,
+    photoSheet: 0,
   },
 };
 
@@ -230,17 +230,8 @@ function initDataStore() {
         }
       }
     } else {
-      // Seed initial shop/demo customer
-      customers = [
-        {
-          id: 'cust-default-001',
-          name: 'RSCC Valued Customer',
-          mobile: '8652411690',
-          email: 'rsiddhi.choice.2006@gmail.com',
-          passwordHash: 'pass123',
-          createdAt: new Date().toISOString(),
-        },
-      ];
+      // No dummy demo customers - real registered customers only
+      customers = [];
       saveCustomersToDisk();
     }
   } catch (err) {
@@ -337,10 +328,13 @@ export function calculateOrderPrice(params: {
     return { ratePerPage: rate, totalAmount };
   }
 
-  // Photo Collage mode (strictly A4 @ ₹10)
+  // Photo Collage mode (strictly A4 Photo Sheet rate)
   if (params.mode === 'PHOTO') {
     const sheets = Math.max(1, params.totalSheets || params.totalPages || 1);
-    const ratePerSheet = p.a4Color100Single || 10;
+    const ratePerSheet =
+      p.photoSheet !== undefined && p.photoSheet !== null
+        ? p.photoSheet
+        : (p.a4Color100Single ?? 0);
     const totalAmount = sheets * copies * ratePerSheet;
     return { ratePerPage: ratePerSheet, totalAmount };
   }
@@ -1043,44 +1037,42 @@ Return your judgment strictly in JSON format:
         password?: string;
       }>(req);
 
-      const rawIdentifier = (body.identifier || body.email || body.mobile || '').trim();
+      const rawIdentifier = (body.identifier || body.email || '').trim();
       if (!rawIdentifier) {
-        sendJson(res, 400, { success: false, error: 'Please enter your mobile number or email address' });
+        sendJson(res, 400, { success: false, error: 'Please enter your email address' });
         return true;
       }
 
-      const isEmail = rawIdentifier.includes('@');
-      const cleanMobile = rawIdentifier.replace(/\D/g, '').slice(-10);
+      // Customer shall NOT login through mobile number
+      const isPureMobile = /^\d{10,}$/.test(rawIdentifier.replace(/\D/g, '')) && !rawIdentifier.includes('@');
+      if (isPureMobile) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Customer login via mobile number is not allowed. Please enter your email address to sign in.',
+        });
+        return true;
+      }
 
+      if (!rawIdentifier.includes('@')) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Please enter a valid email address (e.g. name@example.com)',
+        });
+        return true;
+      }
+
+      const cleanEmail = rawIdentifier.toLowerCase();
       let found = customers.find((c) => {
-        if (isEmail && c.email) {
-          return c.email.toLowerCase() === rawIdentifier.toLowerCase();
-        }
-        if (cleanMobile.length >= 10) {
-          return c.mobile.endsWith(cleanMobile) || cleanMobile.endsWith(c.mobile.slice(-10));
+        if (c.email) {
+          return c.email.toLowerCase() === cleanEmail;
         }
         return false;
       });
 
-      // If not found in customers list, check if the input is a valid 10-digit mobile
-      // and auto-create customer to ensure customers are never locked out
-      if (!found && cleanMobile.length >= 10) {
-        found = {
-          id: 'cust-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-          name: 'Customer ' + cleanMobile.slice(-4),
-          mobile: cleanMobile,
-          email: `${cleanMobile}@customer.rscc.in`,
-          passwordHash: body.password?.trim() || 'pass123',
-          createdAt: new Date().toISOString(),
-        };
-        customers.push(found);
-        saveCustomersToDisk();
-      }
-
       if (!found) {
         sendJson(res, 404, {
           success: false,
-          error: 'No registered customer found. Please check your credentials or create a new account.',
+          error: 'No registered customer account found with this email. Please check your credentials or create a new account.',
         });
         return true;
       }

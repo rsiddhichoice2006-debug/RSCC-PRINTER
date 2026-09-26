@@ -52,15 +52,19 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
     e.preventDefault();
     const rawInput = loginMobile.trim();
     if (!rawInput) {
-      setErrorMsg('Please enter your mobile number or email address.');
+      setErrorMsg('Please enter your registered email address.');
       return;
     }
 
-    const isEmail = rawInput.includes('@');
-    const cleanMobile = rawInput.replace(/\D/g, '').slice(-10);
+    // Customer shall NOT login through mobile number
+    const isPureNumber = /^\d{10,}$/.test(rawInput.replace(/\D/g, '')) && !rawInput.includes('@');
+    if (isPureNumber) {
+      setErrorMsg('Customer login via mobile number is not allowed. Please enter your registered email address to sign in.');
+      return;
+    }
 
-    if (!isEmail && cleanMobile.length < 10) {
-      setErrorMsg('Please enter a valid 10-digit mobile number or email address.');
+    if (!rawInput.includes('@')) {
+      setErrorMsg('Please enter a valid email address (e.g. name@example.com).');
       return;
     }
 
@@ -70,9 +74,8 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
 
     try {
       const res = await apiClient.loginCustomer({
-        identifier: rawInput,
-        mobile: !isEmail ? cleanMobile : undefined,
-        email: isEmail ? rawInput.toLowerCase() : undefined,
+        identifier: rawInput.toLowerCase(),
+        email: rawInput.toLowerCase(),
         password: loginPassword,
       });
 
@@ -126,12 +129,6 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillQuickDemo = (mobile: string, name: string) => {
-    setLoginMobile(mobile);
-    setLoginPassword('pass123');
-    setErrorMsg('');
   };
 
   return (
@@ -208,19 +205,20 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Mobile Number or Email Address <span className="text-rose-500">*</span>
+                Email Address <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
-                  type="text"
-                  placeholder="e.g. 9876543210 or name@example.com"
+                  type="email"
+                  placeholder="e.g. yourname@gmail.com"
                   value={loginMobile}
                   onChange={(e) => setLoginMobile(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
                   required
                 />
               </div>
+              <p className="text-[11px] text-slate-500">Mobile number login is not allowed. Please enter your email.</p>
             </div>
 
             <div className="space-y-1.5">
@@ -257,41 +255,6 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
               <ArrowRight className="w-4 h-4 text-amber-400" />
             </button>
           </form>
-
-          {/* Quick Demo Logins */}
-          <div className="pt-4 border-t border-slate-100 space-y-2.5">
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-              Quick One-Click Test Accounts:
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => fillQuickDemo('9876543210', 'Amit Sharma')}
-                className="text-left p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition text-xs cursor-pointer"
-              >
-                <div className="font-bold text-slate-900">Amit Sharma</div>
-                <div className="text-[10px] text-slate-500 font-mono">9876543210</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fillQuickDemo('9822012345', 'Priya Patel')}
-                className="text-left p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition text-xs cursor-pointer"
-              >
-                <div className="font-bold text-slate-900">Priya Patel</div>
-                <div className="text-[10px] text-slate-500 font-mono">9822012345</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fillQuickDemo('9765432109', 'Rahul Deshmukh')}
-                className="text-left p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition text-xs cursor-pointer"
-              >
-                <div className="font-bold text-slate-900">Rahul Deshmukh</div>
-                <div className="text-[10px] text-slate-500 font-mono">9765432109</div>
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

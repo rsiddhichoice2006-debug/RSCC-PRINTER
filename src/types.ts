@@ -96,6 +96,10 @@ export interface UploadedFileItem {
   pageSelectionMode?: PageSelectionMode;
   customPageRange?: string;
   selectedPageCount?: number;
+  selectedPagesList?: number[];
+  trimmedPdfCreated?: boolean;
+  originalPageCount?: number;
+  selectedPagesSummary?: string;
   isProcessing: boolean;
   error?: string;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
@@ -112,6 +116,10 @@ export interface SerializableFileItem {
   pageSelectionMode?: PageSelectionMode;
   customPageRange?: string;
   selectedPageCount?: number;
+  selectedPagesList?: number[];
+  trimmedPdfCreated?: boolean;
+  originalPageCount?: number;
+  selectedPagesSummary?: string;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
   moderationReason?: string;
   previewUrl?: string;

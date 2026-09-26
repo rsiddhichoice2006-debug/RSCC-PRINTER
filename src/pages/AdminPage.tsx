@@ -49,6 +49,7 @@ import {
   WHATSAPP_TAB_TARGET,
 } from '../services/whatsappService';
 import { downloadWhatsAppExtensionZip } from '../services/whatsappExtensionHelper';
+import { extractSelectedPagesFromPdf, getSelectedPagesList } from '../utils/pdfExtractor';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -453,14 +454,111 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     return null;
   };
 
-  const handleDownloadSingleFile = async (file: SerializableFileItem, orderNumber: string) => {
+  // Helper: Ensures file is trimmed to customer's selected pages before serving to staff
+  const getTrimmedFilePreviewUrl = async (file: SerializableFileItem): Promise<string | undefined> => {
+    if (!file.previewUrl) return undefined;
+    if (file.trimmedPdfCreated) return file.previewUrl;
+
+    // If file has page selection (Odd, Even, Custom) but wasn't trimmed previously:
+    if (file.pageSelectionMode && file.pageSelectionMode !== 'ALL' && file.pageCount > 0) {
+      const isPdf =
+        file.name.toLowerCase().endsWith('.pdf') ||
+        (file.type && file.type.includes('pdf')) ||
+        file.previewUrl.startsWith('data:application/pdf');
+
+      if (isPdf) {
+        try {
+          const selectedPages = getSelectedPagesList(
+            file.pageCount,
+            file.pageSelectionMode,
+            file.customPageRange || ''
+          );
+          if (selectedPages.length > 0 && selectedPages.length < file.pageCount) {
+            const extracted = await extractSelectedPagesFromPdf(file.previewUrl, selectedPages);
+            return extracted.dataUrl;
+          }
+        } catch (err) {
+          console.warn('Could not trim PDF on-the-fly for staff download:', err);
+        }
+      }
+    }
+    return file.previewUrl;
+  };
+
+  const handleViewOrPrintSingleFile = async (file: SerializableFileItem, orderNumber: string, orderId?: string) => {
+    const targetOrderId = orderId || (selectedOrder?.orderNumber === orderNumber ? selectedOrder.id : orders.find(o => o.orderNumber === orderNumber)?.id);
+    if (targetOrderId) {
+      const targetOrd = orders.find(o => o.id === targetOrderId) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
+      if (targetOrd && targetOrd.orderStatus !== 'READY_FOR_PICKUP' && targetOrd.orderStatus !== 'COMPLETED' && targetOrd.orderStatus !== 'CANCELLED') {
+        try {
+          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING');
+          setOrders((prev) => prev.map((o) => (o.id === targetOrderId ? updated : o)));
+          if (selectedOrder && selectedOrder.id === targetOrderId) {
+            setSelectedOrder(updated);
+          }
+          loadDashboardData();
+          showToast(`Print status updated: Getting Prepared 🖨️ (Order #${orderNumber})`);
+        } catch (statusErr) {
+          console.error('Failed to update status to PRINTING on print view:', statusErr);
+        }
+      }
+    }
+
+    if (!file.previewUrl) {
+      showToast(`File "${file.name}" has no preview attached.`);
+      return;
+    }
+
+    try {
+      const effectiveUrl = await getTrimmedFilePreviewUrl(file);
+      if (!effectiveUrl) {
+        showToast(`Could not generate preview for "${file.name}".`);
+        return;
+      }
+
+      const resolved = await resolveFileBinary(effectiveUrl);
+      if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
+        const mimeType = file.type || 'application/pdf';
+        const blob = new Blob([resolved.data], { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank');
+        showToast(`Opened "${file.name}" in print viewer (${file.pageCount} pgs) 🖨️`);
+        return;
+      }
+      window.open(effectiveUrl, '_blank');
+    } catch {
+      window.open(file.previewUrl, '_blank');
+    }
+  };
+
+  const handleDownloadSingleFile = async (file: SerializableFileItem, orderNumber: string, orderId?: string) => {
+    // CRITICAL: When staff portal downloads the file, auto-update the print status to PRINTING ("Getting Prepared")
+    const targetOrderId = orderId || (selectedOrder?.orderNumber === orderNumber ? selectedOrder.id : orders.find(o => o.orderNumber === orderNumber)?.id);
+    if (targetOrderId) {
+      const targetOrd = orders.find(o => o.id === targetOrderId) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
+      if (targetOrd && targetOrd.orderStatus !== 'READY_FOR_PICKUP' && targetOrd.orderStatus !== 'COMPLETED' && targetOrd.orderStatus !== 'CANCELLED') {
+        try {
+          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING');
+          setOrders((prev) => prev.map((o) => (o.id === targetOrderId ? updated : o)));
+          if (selectedOrder && selectedOrder.id === targetOrderId) {
+            setSelectedOrder(updated);
+          }
+          loadDashboardData();
+          showToast(`Print status updated: Getting Prepared 🖨️ (Order #${orderNumber})`);
+        } catch (statusErr) {
+          console.error('Failed to update status to PRINTING on file download:', statusErr);
+        }
+      }
+    }
+
     if (!file.previewUrl) {
       showToast(`File "${file.name}" has no preview URL attached.`);
       return;
     }
 
     try {
-      const resolved = await resolveFileBinary(file.previewUrl);
+      const effectiveUrl = (await getTrimmedFilePreviewUrl(file)) || file.previewUrl;
+      const resolved = await resolveFileBinary(effectiveUrl);
       if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
         const mimeType = file.type || 'application/octet-stream';
         const blob = new Blob([resolved.data], { type: mimeType });
@@ -479,7 +577,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       }
 
       const link = document.createElement('a');
-      link.href = file.previewUrl;
+      link.href = effectiveUrl;
       link.download = file.name || `Order_${orderNumber}_file`;
       link.target = '_blank';
       document.body.appendChild(link);
@@ -496,6 +594,21 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const handleDownloadAllZip = async (order: OrderRecord) => {
     setDownloadingZipOrderId(order.id);
     try {
+      // CRITICAL: When staff portal downloads the file / ZIP, auto-update the print status to PRINTING ("Getting Prepared")
+      if (order.orderStatus !== 'READY_FOR_PICKUP' && order.orderStatus !== 'COMPLETED' && order.orderStatus !== 'CANCELLED') {
+        try {
+          const updated = await apiClient.updateOrderStatus(order.id, 'PRINTING');
+          setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
+          if (selectedOrder && selectedOrder.id === order.id) {
+            setSelectedOrder(updated);
+          }
+          loadDashboardData();
+          showToast(`Print status updated: Getting Prepared 🖨️ (Order #${order.orderNumber})`);
+        } catch (statusErr) {
+          console.error('Failed to update status to PRINTING on ZIP download:', statusErr);
+        }
+      }
+
       const zip = new JSZip();
 
       // 1. Add Order Summary manifest file
@@ -526,7 +639,11 @@ Payment Ref    : ${order.paymentReference || 'N/A'}
 
 =====================================================
 FILES LIST (${order.files.length} Total):
-${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: ${(f.size / 1024).toFixed(1)} KB)`).join('\n')}
+${order.files.map((f, i) => {
+  const isTrimmed = f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL');
+  const tag = isTrimmed ? ` [CONTAINS ONLY SELECTED PAGES: ${f.selectedPagesSummary || f.pageSelectionMode} (from original ${f.originalPageCount || f.pageCount} pgs)]` : '';
+  return `${i + 1}. ${f.name} (Pages to Print: ${f.pageCount}, Size: ${(f.size / 1024).toFixed(1)} KB)${tag}`;
+}).join('\n')}
 =====================================================
 `;
       zip.file('00_ORDER_SUMMARY.txt', summaryText);
@@ -539,7 +656,8 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
 
         let added = false;
         if (file.previewUrl) {
-          const resolved = await resolveFileBinary(file.previewUrl);
+          const effectiveUrl = (await getTrimmedFilePreviewUrl(file)) || file.previewUrl;
+          const resolved = await resolveFileBinary(effectiveUrl);
           if (resolved) {
             zip.file(filename, resolved.data);
             added = true;
@@ -646,7 +764,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
             showToast(`📲 Order #${updated.orderNumber} marked Ready! Opening WhatsApp...`);
           }
         } else {
-          showToast(`🎉 Order #${updated.orderNumber} marked Ready for Pickup!`);
+          showToast(`🎉 Order #${updated.orderNumber} marked Ready to Pick Up!`);
         }
 
         // Show prompt / preview modal so staff can also review, copy or re-send
@@ -655,6 +773,8 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
           message,
           url: webUrl,
         });
+      } else if (status === 'PRINTING') {
+        showToast(`🖨️ Order #${updated.orderNumber} status updated to: Getting Prepared`);
       } else {
         showToast(`Order #${updated.orderNumber} status updated to ${status.replace(/_/g, ' ')}`);
       }
@@ -1160,8 +1280,8 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                 <option value="ALL">All Statuses</option>
                 <option value="PLACED">Placed / Confirmed</option>
                 <option value="CONFIRMED">Confirmed</option>
-                <option value="PRINTING">Printing</option>
-                <option value="READY_FOR_PICKUP">Ready for Pickup</option>
+                <option value="PRINTING">Getting Prepared</option>
+                <option value="READY_FOR_PICKUP">Ready to Pick Up</option>
                 <option value="COMPLETED">Completed</option>
                 <option value="CANCELLED">Cancelled</option>
               </select>
@@ -1242,6 +1362,11 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                           <div className="text-[11px] text-slate-500">
                             {ord.totalPages} pgs × {ord.copies} copy
                           </div>
+                          {ord.files.some(f => f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL')) && (
+                            <span className="inline-block mt-0.5 text-[9px] font-black bg-indigo-100 text-indigo-900 border border-indigo-200 px-1.5 py-0.2 rounded">
+                              ✂️ Selected Pages Only
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3.5 px-4">
@@ -1289,13 +1414,17 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                               ord.orderStatus === 'COMPLETED'
                                 ? 'bg-slate-200 text-slate-800'
                                 : ord.orderStatus === 'READY_FOR_PICKUP'
-                                ? 'bg-blue-100 text-blue-900'
+                                ? 'bg-blue-100 text-blue-900 font-extrabold'
                                 : ord.orderStatus === 'PRINTING'
-                                ? 'bg-indigo-100 text-indigo-900'
+                                ? 'bg-indigo-100 text-indigo-900 font-extrabold'
                                 : 'bg-slate-100 text-slate-700'
                             }`}
                           >
-                            {ord.orderStatus.replace(/_/g, ' ')}
+                            {ord.orderStatus === 'PRINTING'
+                              ? 'GETTING PREPARED'
+                              : ord.orderStatus === 'READY_FOR_PICKUP'
+                              ? 'READY TO PICK UP'
+                              : ord.orderStatus.replace(/_/g, ' ')}
                           </span>
                         </td>
 
@@ -1892,12 +2021,12 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
               {/* Photo Sheet Rate */}
               <div className="bg-indigo-50/60 p-4 rounded-2xl border border-indigo-200 space-y-2">
                 <label className="font-bold text-indigo-950 block">
-                  A4 Glossy Photo Sheet Rate (₹)
+                  A4 100 GSM Photo Sheet Rate (₹)
                 </label>
                 <input
                   type="number"
                   step="1"
-                  value={editSettings.pricing.photoSheet ?? 15}
+                  value={editSettings.pricing.photoSheet ?? 0}
                   onChange={(e) =>
                     setEditSettings({
                       ...editSettings,
@@ -1909,7 +2038,7 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                   }
                   className="w-full px-3 py-2 rounded-xl border border-indigo-300 font-black text-indigo-900 text-base"
                 />
-                <span className="text-[10px] text-indigo-700">Default: ₹15 per photo sheet</span>
+                <span className="text-[10px] text-indigo-700">Default: ₹0 per 100 GSM photo sheet</span>
               </div>
             </div>
 
@@ -2423,12 +2552,27 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
           <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-6 relative">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono text-xl font-black text-slate-900">
                     {selectedOrder.orderNumber}
                   </span>
                   <span className="bg-slate-100 text-slate-800 text-xs font-bold px-2 py-0.5 rounded">
                     {selectedOrder.mode}
+                  </span>
+                  <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full ${
+                    selectedOrder.orderStatus === 'PRINTING'
+                      ? 'bg-indigo-100 text-indigo-900 border border-indigo-300'
+                      : selectedOrder.orderStatus === 'READY_FOR_PICKUP'
+                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                      : selectedOrder.orderStatus === 'COMPLETED'
+                      ? 'bg-slate-200 text-slate-800'
+                      : 'bg-slate-100 text-slate-700'
+                  }`}>
+                    {selectedOrder.orderStatus === 'PRINTING'
+                      ? 'Getting Prepared'
+                      : selectedOrder.orderStatus === 'READY_FOR_PICKUP'
+                      ? 'Ready to Pick Up'
+                      : selectedOrder.orderStatus.replace(/_/g, ' ')}
                   </span>
                 </div>
                 <div className="text-xs text-slate-500">
@@ -2608,7 +2752,11 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                         : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
-                    {st === 'READY_FOR_PICKUP' ? 'READY / PICKUP ✨' : st.replace(/_/g, ' ')}
+                    {st === 'READY_FOR_PICKUP'
+                      ? 'READY TO PICK UP ✨'
+                      : st === 'PRINTING'
+                      ? 'GETTING PREPARED 🖨️'
+                      : st.replace(/_/g, ' ')}
                   </button>
                 ))}
               </div>
@@ -2682,35 +2830,65 @@ ${order.files.map((f, i) => `${i + 1}. ${f.name} (Pages: ${f.pageCount}, Size: $
                       <span>Download ZIP Archive</span>
                     </button>
                   </div>
-                  {selectedOrder.files.map((f, i) => (
-                    <div key={i} className="flex justify-between items-center text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200 text-xs gap-2">
-                      <div className="min-w-0 flex items-center gap-2">
-                        <span className="w-5 h-5 rounded bg-slate-100 text-slate-700 font-mono font-bold flex items-center justify-center text-[10px] shrink-0">
-                          {i + 1}
-                        </span>
-                        <span className="font-semibold text-slate-900 truncate max-w-[220px] sm:max-w-[280px]">
-                          {f.name}
-                        </span>
-                        <span className="font-mono text-slate-400 text-[11px] shrink-0">
-                          ({f.pageCount} pgs • {(f.size / 1024).toFixed(1)} KB)
-                        </span>
-                      </div>
+                  {selectedOrder.files.map((f, i) => {
+                    const isTrimmed = f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL');
+                    return (
+                      <div key={i} className="flex flex-col sm:flex-row justify-between sm:items-center text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200 text-xs gap-2.5">
+                        <div className="min-w-0 flex items-start gap-2">
+                          <span className="w-5 h-5 rounded bg-slate-100 text-slate-700 font-mono font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">
+                            {i + 1}
+                          </span>
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-slate-900 truncate max-w-[200px] sm:max-w-[280px]">
+                                {f.name}
+                              </span>
+                              {isTrimmed && (
+                                <span className="bg-indigo-100 text-indigo-900 border border-indigo-200 text-[10px] font-black px-1.5 py-0.2 rounded-md">
+                                  ✂️ Only {f.selectedPagesSummary || f.pageSelectionMode}
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-slate-400 text-[11px] flex items-center gap-1.5">
+                              <span className="text-emerald-700 font-bold">
+                                {f.pageCount} pgs to print
+                              </span>
+                              {f.originalPageCount && f.originalPageCount !== f.pageCount && (
+                                <span>(of {f.originalPageCount} orig)</span>
+                              )}
+                              <span>•</span>
+                              <span>{(f.size / 1024).toFixed(1)} KB</span>
+                            </div>
+                          </div>
+                        </div>
 
-                      <div className="flex items-center gap-1 shrink-0">
-                        {f.previewUrl && (
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadSingleFile(f, selectedOrder.orderNumber)}
-                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 transition flex items-center gap-1 text-[11px] font-bold cursor-pointer"
-                            title="Download this file directly"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Download</span>
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                          {f.previewUrl && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleViewOrPrintSingleFile(f, selectedOrder.orderNumber, selectedOrder.id)}
+                                className="p-1.5 px-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 hover:border-indigo-300 transition flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                                title="Open clean PDF in browser print viewer"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>View / Print</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadSingleFile(f, selectedOrder.orderNumber, selectedOrder.id)}
+                                className="p-1.5 px-2 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 transition flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                                title="Download this file directly"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Download</span>
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
