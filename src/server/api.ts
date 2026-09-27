@@ -68,10 +68,16 @@ export interface OrderFileItem {
   size: number;
   type: string;
   pageCount: number;
+  originalPageCount?: number;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
   moderationReason?: string;
+  previewUrl?: string;
   dataUrl?: string; // For previewing images
   thumbnailUrl?: string;
+  pageSelectionMode?: string;
+  customPageRange?: string;
+  selectedPageCount?: number;
+  trimmedPdfCreated?: boolean;
 }
 
 export interface OrderItem {
@@ -1269,6 +1275,16 @@ Return your judgment strictly in JSON format:
       verifiedOrder.verifiedAt = new Date().toISOString();
       verifiedOrder.updatedAt = new Date().toISOString();
 
+      if (body.order && Array.isArray(body.order.files)) {
+        verifiedOrder.files = body.order.files.map((newF, idx) => {
+          const oldF = verifiedOrder.files && verifiedOrder.files[idx];
+          return {
+            ...newF,
+            previewUrl: newF.previewUrl || oldF?.previewUrl,
+          };
+        });
+      }
+
       saveOrdersToDisk();
 
       auditLogs.unshift({
@@ -1316,6 +1332,57 @@ Return your judgment strictly in JSON format:
         deletedOrderId: deleted.id,
       });
       return true;
+    }
+
+    // 7c. GET /api/orders/:id/files/:fileIndex/download or /view - Stream exact original customer file (PDF, JPG, PNG, etc.)
+    const fileStreamMatch = pathname.match(/^\/api\/orders\/([^\/]+)\/files\/(\d+)\/(download|view)$/);
+    if (fileStreamMatch && method === 'GET') {
+      const orderId = fileStreamMatch[1];
+      const fileIndex = parseInt(fileStreamMatch[2], 10);
+      const isDownload = fileStreamMatch[3] === 'download';
+
+      const order = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
+      if (!order || !order.files || !order.files[fileIndex]) {
+        sendJson(res, 404, { success: false, error: 'File not found' });
+        return true;
+      }
+
+      const file = order.files[fileIndex];
+      if (!file.previewUrl) {
+        sendJson(res, 404, { success: false, error: 'File binary not available on server' });
+        return true;
+      }
+
+      try {
+        let buffer: Buffer;
+        let mimeType = file.type || 'application/octet-stream';
+
+        if (file.previewUrl.startsWith('data:')) {
+          const commaIdx = file.previewUrl.indexOf(',');
+          const meta = file.previewUrl.substring(0, commaIdx);
+          const rawB64 = file.previewUrl.substring(commaIdx + 1);
+          const mimeMatch = meta.match(/^data:([^;,]+)/i);
+          if (mimeMatch) mimeType = mimeMatch[1].toLowerCase();
+          buffer = Buffer.from(rawB64, 'base64');
+        } else {
+          buffer = Buffer.from(file.previewUrl, 'base64');
+        }
+
+        const safeFilename = encodeURIComponent(file.name || `file_${fileIndex + 1}`);
+        res.writeHead(200, {
+          'Content-Type': mimeType,
+          'Content-Length': buffer.length,
+          'Access-Control-Allow-Origin': '*',
+          'Content-Disposition': isDownload
+            ? `attachment; filename="${file.name || 'document'}"; filename*=UTF-8''${safeFilename}`
+            : `inline; filename="${file.name || 'document'}"`,
+        });
+        res.end(buffer);
+        return true;
+      } catch (streamErr: any) {
+        sendJson(res, 500, { success: false, error: 'Failed to stream file: ' + streamErr.message });
+        return true;
+      }
     }
 
     // 8. PUT /api/orders/:id/verify-payment - Admin payment verification

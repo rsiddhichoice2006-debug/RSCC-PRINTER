@@ -2,6 +2,7 @@ import { AdminStats, CustomerUser, OrderRecord, ShopSettings, PaperSize, PrintTy
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { triggerMakeWebhook, DEFAULT_MAKE_WEBHOOK_URL } from './webhookService';
 import { getDocumentRate, getAdditionalSetRate, calculateDocumentOrderAmount } from '../utils/pricingCalculator';
+import { saveOrderFilesToStorage, resolveFileFromStorage } from '../utils/fileStorage';
 import {
   collection,
   doc,
@@ -596,13 +597,21 @@ export const apiClient = {
       photoLayout: payload.photoLayout,
       photoOrientation: payload.photoOrientation,
       files: (payload.files || []).map((f: any) => ({
-        id: f.id || 'f-' + Math.random(),
-        name: f.name || 'Document.pdf',
+        id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
+        name: f.name || 'document',
         size: f.size || 1024,
-        type: f.type || 'application/pdf',
+        type: f.type || 'application/octet-stream',
         pageCount: f.pageCount || 1,
+        originalPageCount: f.originalPageCount,
         previewUrl: f.previewUrl,
-        moderationStatus: 'SAFE',
+        moderationStatus: f.moderationStatus || 'SAFE',
+        moderationReason: f.moderationReason,
+        pageSelectionMode: f.pageSelectionMode,
+        customPageRange: f.customPageRange,
+        selectedPageCount: f.selectedPageCount,
+        selectedPagesList: f.selectedPagesList,
+        selectedPagesSummary: f.selectedPagesSummary,
+        trimmedPdfCreated: f.trimmedPdfCreated,
       })),
       totalPages: payload.totalPages || 1,
       totalSheets: payload.totalSheets,
@@ -620,6 +629,11 @@ export const apiClient = {
       updatedAt: now.toISOString(),
     };
 
+    // Cache files in IndexedDB for 100% reliable staff access in original format
+    saveOrderFilesToStorage(draftOrder.id, draftOrder.files).catch((err) => {
+      console.warn('saveOrderFilesToStorage draft error:', err);
+    });
+
     return draftOrder;
   },
 
@@ -628,7 +642,7 @@ export const apiClient = {
     draftOrder: OrderRecord,
     paymentDetails: {
       transactionId: string;
-      paymentMethod: string;
+      paymentMethod?: string;
       amount?: number;
       paymentScreenshot?: string;
       paymentScreenshotFilename?: string;
@@ -637,7 +651,7 @@ export const apiClient = {
     const now = new Date().toISOString();
     const refId = paymentDetails.transactionId?.trim() || `UPI-${Date.now().toString().slice(-8)}`;
 
-    const lightweightDraft = sanitizeOrderForStorage({
+    const fullConfirmedOrder: OrderRecord = {
       ...draftOrder,
       id: draftOrder.id || 'ord-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
       orderNumber: draftOrder.orderNumber || generateOrderNumber(),
@@ -649,33 +663,36 @@ export const apiClient = {
       paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
       verifiedAt: now,
       updatedAt: now,
-    });
+    };
 
-    let finalOrder: OrderRecord = lightweightDraft;
+    // Guarantee full original files are permanently cached in IndexedDB
+    saveOrderFilesToStorage(fullConfirmedOrder.id, fullConfirmedOrder.files).catch(() => {});
 
-    // 1. Attempt server-side authoritative order confirmation
+    let finalOrder: OrderRecord = fullConfirmedOrder;
+
+    // 1. Attempt server-side authoritative order confirmation sending FULL order with original files
     try {
       const serverResult = await safeFetchJson<{ success: boolean; order?: OrderRecord; message?: string; error?: string }>(
-        `/api/orders/${lightweightDraft.id}/confirm-payment`,
+        `/api/orders/${fullConfirmedOrder.id}/confirm-payment`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            orderId: lightweightDraft.id,
+            orderId: fullConfirmedOrder.id,
             paymentReference: refId,
             transactionId: refId,
             paymentMethod: paymentDetails.paymentMethod || 'UPI Payment',
-            amount: paymentDetails.amount || lightweightDraft.totalAmount,
+            amount: paymentDetails.amount || fullConfirmedOrder.totalAmount,
             paymentScreenshot: paymentDetails.paymentScreenshot,
             paymentScreenshotFilename: paymentDetails.paymentScreenshotFilename,
-            order: lightweightDraft,
+            order: fullConfirmedOrder,
           }),
         },
         8000
       );
 
       if (serverResult?.order) {
-        finalOrder = sanitizeOrderForStorage(serverResult.order);
+        finalOrder = serverResult.order;
       }
     } catch (serverErr) {
       console.warn('Server payment confirmation notice, using robust local & firestore pipeline:', serverErr);
@@ -785,13 +802,21 @@ export const apiClient = {
       photoLayout: payload.photoLayout,
       photoOrientation: payload.photoOrientation,
       files: (payload.files || []).map((f: any) => ({
-        id: f.id || 'f-' + Math.random(),
-        name: f.name || 'Document.pdf',
+        id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
+        name: f.name || 'document',
         size: f.size || 1024,
-        type: f.type || 'application/pdf',
+        type: f.type || 'application/octet-stream',
         pageCount: f.pageCount || 1,
+        originalPageCount: f.originalPageCount,
         previewUrl: f.previewUrl,
-        moderationStatus: 'SAFE',
+        moderationStatus: f.moderationStatus || 'SAFE',
+        moderationReason: f.moderationReason,
+        pageSelectionMode: f.pageSelectionMode,
+        customPageRange: f.customPageRange,
+        selectedPageCount: f.selectedPageCount,
+        selectedPagesList: f.selectedPagesList,
+        selectedPagesSummary: f.selectedPagesSummary,
+        trimmedPdfCreated: f.trimmedPdfCreated,
       })),
       totalPages: payload.totalPages || 1,
       totalSheets: payload.totalSheets,

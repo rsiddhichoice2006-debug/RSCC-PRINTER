@@ -31,7 +31,7 @@ import {
   ShopSettings,
   UploadedFileItem,
 } from '../types';
-import { formatFileSize, processUploadedFile } from '../utils/fileProcessor';
+import { formatFileSize, processUploadedFile, fileToDataUrl } from '../utils/fileProcessor';
 import { getSelectedPageCount } from '../utils/pageCalculator';
 import {
   getSelectedPagesList,
@@ -421,12 +421,21 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             }
           }
 
-          // Default / All Pages
+          // Default / All Pages (PDF, JPG, PNG, DOCX, etc. in exact original format)
+          let finalPreviewUrl = f.previewUrl;
+          if (!finalPreviewUrl && f.file) {
+            try {
+              finalPreviewUrl = await fileToDataUrl(f.file);
+            } catch (readErr) {
+              console.warn('Could not read file data URL:', readErr);
+            }
+          }
+
           return {
             id: f.id,
-            name: f.name,
-            size: f.size,
-            type: f.type,
+            name: f.file?.name || f.name,
+            size: f.file?.size || f.size,
+            type: f.file?.type || f.type || 'application/octet-stream',
             pageCount: f.pageCount,
             originalPageCount: f.pageCount,
             sets: f.sets || copies,
@@ -436,7 +445,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             selectedPagesList: selectedPages,
             selectedPagesSummary: summary,
             trimmedPdfCreated: false,
-            previewUrl: f.previewUrl,
+            previewUrl: finalPreviewUrl,
             moderationStatus: f.moderationStatus,
             moderationReason: f.moderationReason,
           };
