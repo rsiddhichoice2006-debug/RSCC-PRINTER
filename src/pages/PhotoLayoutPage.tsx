@@ -20,6 +20,9 @@ import {
   Check,
   Lock,
   MapPin,
+  RotateCw,
+  Maximize2,
+  Crop,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -34,6 +37,74 @@ import {
 import { PHOTO_LAYOUTS, calculateRequiredSheets, generateSheetSlots } from '../utils/photoLayouts';
 import { formatFileSize, processUploadedFile } from '../utils/fileProcessor';
 import { useAuth } from '../context/AuthContext';
+
+export interface LayoutPhotoItem {
+  id: string;
+  file: File;
+  name: string;
+  size: number;
+  previewUrl: string;
+  width?: number;
+  height?: number;
+  isLandscape?: boolean;
+  rotation?: number; // 0, 90, 180, 270 degrees
+  fitMode?: 'cover' | 'contain';
+}
+
+const SheetSlotPhotoView: React.FC<{
+  previewUrl: string;
+  fileName?: string;
+  slotIndex: number;
+  rotation: number;
+}> = ({ previewUrl, fileName, slotIndex, rotation }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateSize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setDims({ w: rect.width, h: rect.height });
+        }
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const isRotated90or270 = rotation % 180 !== 0;
+
+  return (
+    <div
+      ref={containerRef}
+      className="w-full h-full flex items-center justify-center p-1 overflow-hidden bg-white select-none relative"
+    >
+      <div
+        style={{
+          width: isRotated90or270 && dims.h > 0 ? `${dims.h}px` : '100%',
+          height: isRotated90or270 && dims.w > 0 ? `${dims.w}px` : '100%',
+          transform: rotation ? `rotate(${rotation}deg)` : undefined,
+          transformOrigin: 'center center',
+          transition: 'transform 0.2s ease',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <img
+          src={previewUrl}
+          alt={fileName || `Photo ${slotIndex + 1}`}
+          className="max-w-full max-h-full object-contain pointer-events-none select-none"
+        />
+      </div>
+    </div>
+  );
+};
 
 interface PhotoLayoutPageProps {
   settings: ShopSettings;
@@ -51,14 +122,15 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
   const [paperSize, setPaperSize] = useState<PaperSize>('A4');
   const [selectedLayout, setSelectedLayout] = useState<PhotoLayoutType>('4_PHOTOS');
   const [photoOrientation, setPhotoOrientation] = useState<PhotoOrientation>('PORTRAIT');
-  const [uploadedPhotos, setUploadedPhotos] = useState<
-    { id: string; file: File; name: string; size: number; previewUrl: string }[]
-  >([]);
+  const [uploadedPhotos, setUploadedPhotos] = useState<LayoutPhotoItem[]>([]);
   const [activeSheetIndex, setActiveSheetIndex] = useState<number>(0);
   const [copies, setCopies] = useState<number>(1);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [draggedSlotIndex, setDraggedSlotIndex] = useState<number | null>(null);
-  const [fitMode, setFitMode] = useState<'cover' | 'contain'>('cover');
+
+  // Fit to Page Option (Default true = 'contain' so photos never get cropped or cut)
+  const [fitToPage, setFitToPage] = useState<boolean>(true);
+  const globalFitMode: 'cover' | 'contain' = fitToPage ? 'contain' : 'cover';
 
   // Customer Details Form (auto-prefill if logged in)
   const [customer, setCustomer] = useState<CustomerDetails>({
@@ -93,7 +165,12 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
     setActiveSheetIndex(requiredSheets - 1);
   }
 
-  const currentSheetSlots = generateSheetSlots(uploadedPhotos, selectedLayout, activeSheetIndex);
+  const currentSheetSlots = generateSheetSlots(
+    uploadedPhotos,
+    selectedLayout,
+    activeSheetIndex,
+    globalFitMode
+  );
 
   // Pricing: A4 Photo Sheet Rate (configured via photoSheet)
   const ratePerSheet =
@@ -103,13 +180,44 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
   const totalAmount = requiredSheets * copies * ratePerSheet;
 
-  // Handle Image Upload
+  // Rotate photo 90 degrees clockwise
+  const handleRotatePhoto = (photoId: string) => {
+    setUploadedPhotos((prev) =>
+      prev.map((p) => {
+        if (p.id !== photoId) return p;
+        const nextRot = ((p.rotation || 0) + 90) % 360;
+        const effectivelyLandscape = nextRot % 180 !== 0 ? !p.isLandscape : p.isLandscape;
+        return {
+          ...p,
+          rotation: nextRot,
+          isLandscape: effectivelyLandscape,
+        };
+      })
+    );
+  };
+
+  // Toggle individual photo fit mode between full fit (no crop) and fill (cropped)
+  const handleTogglePhotoFit = (photoId: string) => {
+    setUploadedPhotos((prev) =>
+      prev.map((p) => {
+        if (p.id !== photoId) return p;
+        const current = p.fitMode || globalFitMode;
+        const next = current === 'contain' ? 'cover' : 'contain';
+        return {
+          ...p,
+          fitMode: next,
+        };
+      })
+    );
+  };
+
+  // Handle Image Upload & natural dimension detection
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     setIsUploading(true);
-    const newPhotos: { id: string; file: File; name: string; size: number; previewUrl: string }[] = [];
+    const newPhotos: LayoutPhotoItem[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
@@ -117,12 +225,36 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
       const processed = await processUploadedFile(f, settings.maxFileSizeMb);
       if (processed.previewUrl && processed.moderationStatus !== 'FLAGGED') {
+        let width = 800;
+        let height = 600;
+        let isLandscape = false;
+        try {
+          const img = new Image();
+          img.src = processed.previewUrl;
+          await new Promise<void>((resolve) => {
+            img.onload = () => {
+              width = img.naturalWidth || 800;
+              height = img.naturalHeight || 600;
+              isLandscape = width > height;
+              resolve();
+            };
+            img.onerror = () => resolve();
+          });
+        } catch {
+          // fallback
+        }
+
         newPhotos.push({
           id: processed.id,
           file: f,
           name: f.name,
           size: f.size,
           previewUrl: processed.previewUrl,
+          width,
+          height,
+          isLandscape,
+          rotation: isLandscape ? 90 : 0,
+          fitMode: 'contain', // Default contain: never cropped!
         });
       }
     }
@@ -222,9 +354,11 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
       ratePerPage: ratePerSheet,
       totalAmount,
       pricing: settings.pricing,
+      fitMode: globalFitMode,
+      fitToPage,
       specialInstructions: customer.specialInstructions?.trim()
-        ? `[${paperSize} 100 GSM Photo Print - ₹${ratePerSheet}/page] ${customer.specialInstructions.trim()}`
-        : `Paper: ${paperSize} 100 GSM Paper (₹${ratePerSheet}/page) | Layout: ${selectedLayout}`,
+        ? `[${paperSize} Photo Sheet - Layout: ${selectedLayout} | ${fitToPage ? 'Fit to Page (NO CROPPING)' : 'Fill Frame'}] ${customer.specialInstructions.trim()}`
+        : `Paper: ${paperSize} 100 GSM Photo Sheet | Layout: ${selectedLayout} | ${fitToPage ? 'Fit to Page (NO CROPPING - Respect Landscape/Portrait)' : 'Fill Frame (Cropped)'}`,
     };
 
     onProceedToPayment(orderPayload);
@@ -494,32 +628,51 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-4 gap-2 max-h-56 overflow-y-auto p-1 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto p-1.5 bg-slate-50 rounded-xl border border-slate-200">
                   {uploadedPhotos.map((photo, idx) => (
                     <div
                       key={photo.id}
-                      className="relative group rounded-lg overflow-hidden border border-slate-300 aspect-square bg-white shadow-2xs"
+                      className="relative group rounded-lg overflow-hidden border border-slate-300 aspect-square bg-white shadow-2xs flex items-center justify-center p-0.5"
                     >
                       {photo.previewUrl ? (
                         <img
                           src={photo.previewUrl}
                           alt={photo.name}
-                          className="w-full h-full object-cover"
+                          style={{
+                            transform: photo.rotation ? `rotate(${photo.rotation}deg)` : undefined,
+                            transition: 'transform 0.2s ease',
+                          }}
+                          className="max-w-full max-h-full object-contain"
                         />
                       ) : null}
-                      <div className="absolute top-1 left-1 bg-slate-900/80 text-white text-[9px] font-bold px-1 rounded">
-                        #{idx + 1}
+                      <div className="absolute top-1 left-1 bg-slate-900/80 text-white text-[8px] font-bold px-1 rounded flex items-center gap-0.5">
+                        <span>#{idx + 1}</span>
+                        <span className="opacity-70">{photo.isLandscape ? 'L' : 'P'}</span>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removePhoto(photo.id);
-                        }}
-                        className="absolute top-1 right-1 bg-rose-600 hover:bg-rose-700 text-white p-1 rounded opacity-0 group-hover:opacity-100 transition shadow"
-                        title="Remove photo"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+                      <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRotatePhoto(photo.id);
+                          }}
+                          className="bg-slate-900/90 hover:bg-slate-800 text-amber-300 p-1 rounded shadow transition"
+                          title="Rotate photo 90°"
+                        >
+                          <RotateCw className="w-2.5 h-2.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removePhoto(photo.id);
+                          }}
+                          className="bg-rose-600 hover:bg-rose-700 text-white p-1 rounded shadow transition"
+                          title="Remove photo"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -647,46 +800,41 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                 </div>
               </div>
 
-              {/* Fit Mode Toggle & Sheet Navigation */}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFitMode(fitMode === 'cover' ? 'contain' : 'cover')}
-                  className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition"
-                  title="Toggle image crop mode"
-                >
-                  Fit: <span className="font-bold text-amber-400 capitalize">{fitMode}</span>
-                </button>
-
-                {requiredSheets > 1 && (
-                  <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-1 border border-slate-700">
-                    <button
-                      disabled={activeSheetIndex === 0}
-                      onClick={() => setActiveSheetIndex((i) => Math.max(0, i - 1))}
-                      className="p-1 rounded hover:bg-slate-700 disabled:opacity-30"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <span className="text-xs font-bold px-1 text-slate-300">
-                      {activeSheetIndex + 1}/{requiredSheets}
-                    </span>
-                    <button
-                      disabled={activeSheetIndex >= requiredSheets - 1}
-                      onClick={() => setActiveSheetIndex((i) => Math.min(requiredSheets - 1, i + 1))}
-                      className="p-1 rounded hover:bg-slate-700 disabled:opacity-30"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
+              {/* Sheet Navigation */}
+              {requiredSheets > 1 && (
+                <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-1 border border-slate-700">
+                  <button
+                    disabled={activeSheetIndex === 0}
+                    onClick={() => setActiveSheetIndex((i) => Math.max(0, i - 1))}
+                    className="p-1 rounded hover:bg-slate-700 disabled:opacity-30"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-xs font-bold px-1 text-slate-300">
+                    {activeSheetIndex + 1}/{requiredSheets}
+                  </span>
+                  <button
+                    disabled={activeSheetIndex >= requiredSheets - 1}
+                    onClick={() => setActiveSheetIndex((i) => Math.min(requiredSheets - 1, i + 1))}
+                    className="p-1 rounded hover:bg-slate-700 disabled:opacity-30"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Realistic Sheet Frame */}
             <div className="flex justify-center p-2 sm:p-4 bg-slate-950/60 rounded-2xl border border-slate-800/80">
               <div
                 className={`w-full max-w-lg bg-white text-slate-900 rounded-xl shadow-2xl p-4 transition-all duration-300 relative ${
-                  paperSize === 'A3' ? 'aspect-[297/420]' : 'aspect-[210/297]'
+                  paperSize === 'A3'
+                    ? selectedLayout === '1_PHOTO' && photoOrientation === 'LANDSCAPE'
+                      ? 'aspect-[420/297]'
+                      : 'aspect-[297/420]'
+                    : selectedLayout === '1_PHOTO' && photoOrientation === 'LANDSCAPE'
+                    ? 'aspect-[297/210]'
+                    : 'aspect-[210/297]'
                 }`}
               >
                 {/* Visual Paper Gloss Effect */}
@@ -707,6 +855,10 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                   >
                     {currentSheetSlots.map((slot) => {
                       const hasPhoto = !!slot.previewUrl;
+                      const photo = uploadedPhotos.find((p) => p.id === slot.fileId);
+                      const rotation = photo?.rotation ?? (photo?.isLandscape ? 90 : 0);
+                      const isLandscape = photo?.isLandscape ?? false;
+
                       return (
                         <div
                           key={slot.slotIndex}
@@ -714,25 +866,55 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                           onDrop={() => handleDropOnSlot(slot.slotIndex)}
                           draggable={hasPhoto}
                           onDragStart={() => setDraggedSlotIndex(slot.slotIndex)}
-                          className={`rounded-lg border-2 border-dashed flex items-center justify-center overflow-hidden relative transition-all ${
+                          className={`rounded-lg border-2 border-dashed flex items-center justify-center overflow-hidden relative transition-all bg-white group ${
                             hasPhoto
-                              ? 'border-slate-300 bg-slate-50 cursor-grab active:cursor-grabbing hover:border-indigo-500 shadow-2xs'
+                              ? 'border-slate-300 cursor-grab active:cursor-grabbing hover:border-indigo-500 shadow-2xs'
                               : 'border-slate-200 bg-slate-50/50'
                           }`}
                         >
                           {hasPhoto && slot.previewUrl ? (
                             <>
-                              <img
-                                src={slot.previewUrl}
-                                alt={slot.fileName || `Photo ${slot.slotIndex + 1}`}
-                                className={`w-full h-full ${
-                                  fitMode === 'cover' ? 'object-cover' : 'object-contain'
-                                }`}
+                              {/* Photo Canvas - Respects Landscape / Portrait and Never Crops in Fit Mode */}
+                              <SheetSlotPhotoView
+                                previewUrl={slot.previewUrl}
+                                fileName={slot.fileName}
+                                slotIndex={slot.slotIndex}
+                                rotation={rotation}
                               />
-                              {/* Slot Tag Badge */}
-                              <div className="absolute top-1 left-1 bg-slate-950/70 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-xs">
-                                Slot {slot.slotIndex + 1}
+
+                              {/* Slot Info Badges */}
+                              <div className="absolute top-1 left-1 flex items-center gap-1">
+                                <div className="bg-slate-950/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-xs shadow">
+                                  Slot {slot.slotIndex + 1}
+                                </div>
+                                {isLandscape ? (
+                                  <span className="bg-indigo-900/80 text-indigo-200 text-[8px] font-bold px-1 py-0.5 rounded backdrop-blur-xs">
+                                    Landscape {rotation % 180 !== 0 ? '90°' : ''}
+                                  </span>
+                                ) : (
+                                  <span className="bg-emerald-900/80 text-emerald-200 text-[8px] font-bold px-1 py-0.5 rounded backdrop-blur-xs">
+                                    Portrait
+                                  </span>
+                                )}
                               </div>
+
+                              {/* Interactive Slot Overlay Controls (Rotate 90°) */}
+                              {photo && (
+                                <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-slate-950/90 backdrop-blur-xs p-1 rounded-lg shadow-lg">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRotatePhoto(photo.id);
+                                    }}
+                                    className="p-1 hover:bg-slate-800 text-amber-300 hover:text-amber-200 rounded text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                                    title="Rotate photo 90° clockwise"
+                                  >
+                                    <RotateCw className="w-3 h-3 text-amber-400" />
+                                    <span>Rotate 90°</span>
+                                  </button>
+                                </div>
+                              )}
                             </>
                           ) : (
                             <div className="text-center p-2 space-y-1">

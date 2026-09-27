@@ -109,9 +109,17 @@ export function calculateRequiredSheets(
  * Generates slots distributed across multiple sheets.
  */
 export function generateSheetSlots(
-  photos: { id: string; previewUrl: string; name: string }[],
+  photos: {
+    id: string;
+    previewUrl: string;
+    name: string;
+    fitMode?: 'cover' | 'contain';
+    rotation?: number;
+    isLandscape?: boolean;
+  }[],
   layoutType: PhotoLayoutType,
-  sheetIndex: number
+  sheetIndex: number,
+  defaultFitMode: 'cover' | 'contain' = 'contain'
 ): PhotoSlotItem[] {
   const layout = PHOTO_LAYOUTS[layoutType];
   const capacity = layout.photoCount;
@@ -126,12 +134,12 @@ export function generateSheetSlots(
         fileId: photos[photoIdx].id,
         previewUrl: photos[photoIdx].previewUrl,
         fileName: photos[photoIdx].name,
-        fitMode: 'cover',
+        fitMode: photos[photoIdx].fitMode || defaultFitMode,
       });
     } else {
       slots.push({
         slotIndex: i,
-        fitMode: 'cover',
+        fitMode: defaultFitMode,
       });
     }
   }

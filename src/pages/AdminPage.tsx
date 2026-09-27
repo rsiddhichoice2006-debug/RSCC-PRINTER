@@ -427,18 +427,20 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
   const handleVerifyPayment = async (orderId: string, verified: boolean) => {
     try {
+      const targetOrder = orders.find((o) => o.id === orderId || o.orderNumber === orderId) || (selectedOrder?.id === orderId || selectedOrder?.orderNumber === orderId ? selectedOrder : undefined);
       const updated = await apiClient.verifyPayment(
         orderId,
         verified,
-        verified ? 'Verified on UPI merchant statement' : 'Payment failed / rejected by shop admin: order cancelled'
+        verified ? 'Verified on UPI merchant statement' : 'Payment failed / rejected by shop admin: order cancelled',
+        targetOrder
       );
-      setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
-      if (selectedOrder && selectedOrder.id === orderId) {
+      setOrders((prev) => prev.map((o) => (o.id === orderId || o.orderNumber === orderId ? updated : o)));
+      if (selectedOrder && (selectedOrder.id === orderId || selectedOrder.orderNumber === orderId)) {
         setSelectedOrder(updated);
       }
       loadDashboardData();
     } catch (err: any) {
-      alert('Error verifying payment: ' + err.message);
+      showToast('Error verifying payment: ' + (err.message || 'Operation failed'));
     }
   };
 
@@ -710,15 +712,24 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       // CRITICAL: When staff portal downloads the file / ZIP, auto-update the print status to PRINTING ("Getting Prepared")
       if (order.orderStatus !== 'READY_FOR_PICKUP' && order.orderStatus !== 'COMPLETED' && order.orderStatus !== 'CANCELLED') {
         try {
-          const updated = await apiClient.updateOrderStatus(order.id, 'PRINTING');
-          setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
-          if (selectedOrder && selectedOrder.id === order.id) {
+          const updated = await apiClient.updateOrderStatus(order.id, 'PRINTING', undefined, order);
+          setOrders((prev) => prev.map((o) => (o.id === order.id || o.orderNumber === order.orderNumber ? updated : o)));
+          if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
             setSelectedOrder(updated);
           }
           loadDashboardData();
           showToast(`Print status updated: Getting Prepared 🖨️ (Order #${order.orderNumber})`);
         } catch (statusErr) {
-          console.error('Failed to update status to PRINTING on ZIP download:', statusErr);
+          console.warn('Status update fallback on ZIP download:', statusErr);
+          const fallbackUpdated: OrderRecord = {
+            ...order,
+            orderStatus: 'PRINTING',
+            updatedAt: new Date().toISOString(),
+          };
+          setOrders((prev) => prev.map((o) => (o.id === order.id || o.orderNumber === order.orderNumber ? fallbackUpdated : o)));
+          if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
+            setSelectedOrder(fallbackUpdated);
+          }
         }
       }
 
@@ -855,11 +866,12 @@ ${order.files.map((f, i) => {
     }
   };
 
-  const handleUpdateStatus = async (orderId: string, status: OrderRecord['orderStatus']) => {
+  const handleUpdateStatus = async (orderId: string, status: OrderRecord['orderStatus'], fallbackOrder?: OrderRecord) => {
     try {
-      const updated = await apiClient.updateOrderStatus(orderId, status);
-      setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
-      if (selectedOrder && selectedOrder.id === orderId) {
+      const targetOrder = fallbackOrder || orders.find((o) => o.id === orderId || o.orderNumber === orderId) || (selectedOrder?.id === orderId || selectedOrder?.orderNumber === orderId ? selectedOrder : undefined);
+      const updated = await apiClient.updateOrderStatus(orderId, status, undefined, targetOrder);
+      setOrders((prev) => prev.map((o) => (o.id === orderId || o.orderNumber === orderId ? updated : o)));
+      if (selectedOrder && (selectedOrder.id === orderId || selectedOrder.orderNumber === orderId)) {
         setSelectedOrder(updated);
       }
       loadDashboardData();
@@ -942,12 +954,12 @@ ${order.files.map((f, i) => {
     if (!selectedOrder || !newNote.trim()) return;
 
     try {
-      const updated = await apiClient.addInternalNote(selectedOrder.id, newNote.trim());
+      const updated = await apiClient.addInternalNote(selectedOrder.id, newNote.trim(), selectedOrder);
       setSelectedOrder(updated);
-      setOrders((prev) => prev.map((o) => (o.id === selectedOrder.id ? updated : o)));
+      setOrders((prev) => prev.map((o) => (o.id === selectedOrder.id || o.orderNumber === selectedOrder.orderNumber ? updated : o)));
       setNewNote('');
     } catch (err: any) {
-      alert('Error adding note: ' + err.message);
+      showToast('Error adding note: ' + (err.message || 'Operation failed'));
     }
   };
 

@@ -1389,9 +1389,13 @@ Return your judgment strictly in JSON format:
     if (pathname.match(/^\/api\/orders\/[^\/]+\/verify-payment$/) && method === 'PUT') {
       const parts = pathname.split('/');
       const orderId = parts[3];
-      const body = await parseJsonBody<{ verified: boolean; notes?: string }>(req);
+      const body = await parseJsonBody<{ verified: boolean; notes?: string; orderData?: any }>(req);
 
-      const orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
+      let orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
+      if (orderIndex === -1 && body.orderData) {
+        orders.unshift(body.orderData);
+        orderIndex = 0;
+      }
       if (orderIndex === -1) {
         sendJson(res, 404, { success: false, error: 'Order not found' });
         return true;
@@ -1452,9 +1456,14 @@ Return your judgment strictly in JSON format:
         note?: string;
         whatsappNotified?: boolean;
         whatsappNotifiedAt?: string;
+        orderData?: any;
       }>(req);
 
-      const orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
+      let orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
+      if (orderIndex === -1 && body.orderData) {
+        orders.unshift(body.orderData);
+        orderIndex = 0;
+      }
       if (orderIndex === -1) {
         sendJson(res, 404, { success: false, error: 'Order not found' });
         return true;
@@ -1495,9 +1504,13 @@ Return your judgment strictly in JSON format:
     if (pathname.match(/^\/api\/orders\/[^\/]+\/note$/) && method === 'POST') {
       const parts = pathname.split('/');
       const orderId = parts[3];
-      const body = await parseJsonBody<{ note: string }>(req);
+      const body = await parseJsonBody<{ note: string; orderData?: any }>(req);
 
-      const orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
+      let orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
+      if (orderIndex === -1 && body.orderData) {
+        orders.unshift(body.orderData);
+        orderIndex = 0;
+      }
       if (orderIndex === -1) {
         sendJson(res, 404, { success: false, error: 'Order not found' });
         return true;

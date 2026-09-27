@@ -1346,27 +1346,31 @@ export const apiClient = {
   },
 
   // Admin: Verify or Reject Payment
-  async verifyPayment(orderId: string, verified: boolean, notes?: string): Promise<OrderRecord> {
+  async verifyPayment(orderId: string, verified: boolean, notes?: string, fallbackOrder?: OrderRecord): Promise<OrderRecord> {
     const backendData = await safeFetchJson<{ success: boolean; order: OrderRecord }>(
       `/api/orders/${orderId}/verify-payment`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ verified, notes }),
+        body: JSON.stringify({ verified, notes, orderData: fallbackOrder }),
       }
     );
 
     if (backendData?.order) {
       const orders = Storage.getOrders();
-      const idx = orders.findIndex((o) => o.id === orderId);
+      const idx = orders.findIndex(
+        (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
+      );
       if (idx >= 0) {
         orders[idx] = backendData.order;
-        Storage.saveOrders(orders);
+      } else {
+        orders.unshift(backendData.order);
       }
+      Storage.saveOrders(orders);
       // Firestore sync
       try {
         const sanitized = sanitizeForFirestore(backendData.order);
-        await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
+        await setDoc(doc(db, 'orders', backendData.order.id || orderId), sanitized, { merge: true });
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
       }
@@ -1374,27 +1378,34 @@ export const apiClient = {
     }
 
     const orders = Storage.getOrders();
-    const idx = orders.findIndex((o) => o.id === orderId);
-    if (idx < 0) throw new Error('Order not found');
+    const idx = orders.findIndex(
+      (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
+    );
+    const baseOrder = idx >= 0 ? orders[idx] : fallbackOrder;
+    if (!baseOrder) throw new Error('Order not found');
 
     const updated: OrderRecord = {
-      ...orders[idx],
+      ...baseOrder,
       paymentStatus: verified ? 'PAYMENT_VERIFIED' : 'PAYMENT_FAILED',
       orderStatus: verified ? 'CONFIRMED' : 'CANCELLED',
       verifiedAt: verified ? new Date().toISOString() : undefined,
       internalNotes: notes
-        ? [...(orders[idx].internalNotes || []), `[Admin ${verified ? 'Verified' : 'Rejected'}] ${notes}`]
-        : orders[idx].internalNotes,
+        ? [...(baseOrder.internalNotes || []), `[Admin ${verified ? 'Verified' : 'Rejected'}] ${notes}`]
+        : baseOrder.internalNotes,
       updatedAt: new Date().toISOString(),
     };
 
-    orders[idx] = updated;
+    if (idx >= 0) {
+      orders[idx] = updated;
+    } else {
+      orders.unshift(updated);
+    }
     Storage.saveOrders(orders);
 
     // Sync update to Firestore
     try {
       const sanitized = sanitizeForFirestore(updated);
-      await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
+      await setDoc(doc(db, 'orders', updated.id || orderId), sanitized, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -1403,26 +1414,35 @@ export const apiClient = {
   },
 
   // Admin: Update Order Status
-  async updateOrderStatus(orderId: string, status: OrderRecord['orderStatus'], note?: string): Promise<OrderRecord> {
+  async updateOrderStatus(
+    orderId: string,
+    status: OrderRecord['orderStatus'],
+    note?: string,
+    fallbackOrder?: OrderRecord
+  ): Promise<OrderRecord> {
     const backendData = await safeFetchJson<{ success: boolean; order: OrderRecord }>(
       `/api/orders/${orderId}/status`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, note }),
+        body: JSON.stringify({ status, note, orderData: fallbackOrder }),
       }
     );
 
     if (backendData?.order) {
       const orders = Storage.getOrders();
-      const idx = orders.findIndex((o) => o.id === orderId);
+      const idx = orders.findIndex(
+        (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
+      );
       if (idx >= 0) {
         orders[idx] = backendData.order;
-        Storage.saveOrders(orders);
+      } else {
+        orders.unshift(backendData.order);
       }
+      Storage.saveOrders(orders);
       try {
         const sanitized = sanitizeForFirestore(backendData.order);
-        await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
+        await setDoc(doc(db, 'orders', backendData.order.id || orderId), sanitized, { merge: true });
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
       }
@@ -1435,24 +1455,31 @@ export const apiClient = {
     }
 
     const orders = Storage.getOrders();
-    const idx = orders.findIndex((o) => o.id === orderId);
-    if (idx < 0) throw new Error('Order not found');
+    const idx = orders.findIndex(
+      (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
+    );
+    const baseOrder = idx >= 0 ? orders[idx] : fallbackOrder;
+    if (!baseOrder) throw new Error('Order not found');
 
     const updated: OrderRecord = {
-      ...orders[idx],
+      ...baseOrder,
       orderStatus: status,
       internalNotes: note
-        ? [...(orders[idx].internalNotes || []), `[Status: ${status}] ${note}`]
-        : orders[idx].internalNotes,
+        ? [...(baseOrder.internalNotes || []), `[Status: ${status}] ${note}`]
+        : baseOrder.internalNotes,
       updatedAt: new Date().toISOString(),
     };
 
-    orders[idx] = updated;
+    if (idx >= 0) {
+      orders[idx] = updated;
+    } else {
+      orders.unshift(updated);
+    }
     Storage.saveOrders(orders);
 
     try {
       const sanitized = sanitizeForFirestore(updated);
-      await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
+      await setDoc(doc(db, 'orders', updated.id || orderId), sanitized, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -1466,40 +1493,47 @@ export const apiClient = {
   },
 
   // Admin: Add Internal Note
-  async addInternalNote(orderId: string, note: string): Promise<OrderRecord> {
+  async addInternalNote(orderId: string, note: string, fallbackOrder?: OrderRecord): Promise<OrderRecord> {
     const backendData = await safeFetchJson<{ success: boolean; order: OrderRecord }>(
       `/api/orders/${orderId}/note`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note }),
+        body: JSON.stringify({ note, orderData: fallbackOrder }),
       }
     );
 
     if (backendData?.order) {
       try {
         const sanitized = sanitizeForFirestore(backendData.order);
-        await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
+        await setDoc(doc(db, 'orders', backendData.order.id || orderId), sanitized, { merge: true });
       } catch (e) {}
       return backendData.order;
     }
 
     const orders = Storage.getOrders();
-    const idx = orders.findIndex((o) => o.id === orderId);
-    if (idx < 0) throw new Error('Order not found');
+    const idx = orders.findIndex(
+      (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
+    );
+    const baseOrder = idx >= 0 ? orders[idx] : fallbackOrder;
+    if (!baseOrder) throw new Error('Order not found');
 
     const updated: OrderRecord = {
-      ...orders[idx],
-      internalNotes: [...(orders[idx].internalNotes || []), `[${new Date().toLocaleTimeString()}] ${note}`],
+      ...baseOrder,
+      internalNotes: [...(baseOrder.internalNotes || []), `[${new Date().toLocaleTimeString()}] ${note}`],
       updatedAt: new Date().toISOString(),
     };
 
-    orders[idx] = updated;
+    if (idx >= 0) {
+      orders[idx] = updated;
+    } else {
+      orders.unshift(updated);
+    }
     Storage.saveOrders(orders);
 
     try {
       const sanitized = sanitizeForFirestore(updated);
-      await setDoc(doc(db, 'orders', orderId), sanitized, { merge: true });
+      await setDoc(doc(db, 'orders', updated.id || orderId), sanitized, { merge: true });
     } catch (fsErr) {
       handleFirestoreError(fsErr, OperationType.UPDATE, `orders/${orderId}`);
     }
