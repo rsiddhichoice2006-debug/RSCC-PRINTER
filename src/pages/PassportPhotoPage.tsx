@@ -123,7 +123,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       try {
         const bgConfig = PASSPORT_BG_COLORS.find((b) => b.id === selectedBgColor) || PASSPORT_BG_COLORS[0];
         
-        // 1. Generate 35x45mm chest-level cropped passport photo with seamless studio background
+        // 1. Generate 32x40mm chest-level cropped passport photo with seamless studio background
         const passportDataUrl = await generatePassportPhoto(originalPreview, {
           bgColor: selectedBgColor,
           customHex: bgConfig.hex,
@@ -450,7 +450,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                   </div>
                   <div>
                     <strong className="font-bold text-emerald-950 block">We Crop It Automatically:</strong>
-                    <span className="text-emerald-900">Do not crop the photo yourself. Our studio system automatically detects facial landmarks and crops it to official ISO/ICAO (35×45mm) chest-level standard.</span>
+                    <span className="text-emerald-900">Do not crop the photo yourself. Our studio system automatically detects facial landmarks and crops it to official (32×40mm) chest-level standard.</span>
                   </div>
                 </div>
               </div>
@@ -663,13 +663,13 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                     </div>
                   </div>
                 ) : previewMode === 'single' ? (
-                  /* SINGLE PASSPORT PHOTO PREVIEW (35mm x 45mm ISO standard) */
+                  /* SINGLE PASSPORT PHOTO PREVIEW (32mm x 40mm standard) */
                   <div className="bg-slate-900 text-white rounded-3xl p-6 border border-slate-800 space-y-4">
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-1.5">
                         <Sparkles className="w-4 h-4 text-amber-400" />
                         <span className="font-black text-amber-400 uppercase tracking-wider">
-                          Final Passport Output (35 × 45 mm)
+                          Final Passport Output (32 × 40 mm)
                         </span>
                       </div>
 
@@ -685,8 +685,8 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                     {/* Passport Card Display with cutting guides and dimensions */}
                     <div className="flex flex-col items-center justify-center p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3">
                       <div className="relative">
-                        {/* 35mm x 45mm frame */}
-                        <div className="w-52 h-[267px] sm:w-60 sm:h-[308px] bg-white rounded-md p-1.5 shadow-2xl border border-slate-300 relative overflow-hidden group">
+                        {/* 32mm x 40mm frame */}
+                        <div className="w-52 h-[260px] sm:w-60 sm:h-[300px] bg-white rounded-md p-1.5 shadow-2xl border border-slate-300 relative overflow-hidden group">
                           {(showOriginalComparison ? originalPreview : processedPhotoUrl) ? (
                             <img
                               src={showOriginalComparison ? originalPreview : processedPhotoUrl}
@@ -700,13 +700,13 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
 
                           {/* Dimension labels */}
                           <div className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[9px] font-mono px-1.5 py-0.5 rounded">
-                            35×45 mm
+                            32×40 mm
                           </div>
                         </div>
 
                         {/* Outer dimension guide markers */}
                         <div className="absolute -bottom-5 inset-x-0 text-center text-[10px] text-slate-400 font-mono">
-                          Width: 35 mm (3.5 cm)
+                          Width: 32 mm (3.2 cm)
                         </div>
                       </div>
 
@@ -843,7 +843,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                 >
                   <div className="space-y-0.5">
                     <div className="font-extrabold text-sm text-slate-900">
-                      10 × Standard Passport (35 × 45 mm)
+                      10 × Standard Passport (32 × 40 mm)
                     </div>
                     <div className="text-xs text-slate-500">
                       Standard size for all official government & bank forms
@@ -867,7 +867,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
                       Mixed Set (6 Passport + 4 Stamp Size)
                     </div>
                     <div className="text-xs text-slate-500">
-                      6 Passport (35×45mm) + 4 Stamp (25×30mm)
+                      6 Passport (32×40mm) + 4 Stamp (25×30mm)
                     </div>
                   </div>
                   <div className="text-base font-black text-indigo-700">
@@ -1081,7 +1081,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-              <span>Layout: {serviceType === 'STANDARD_PASSPORT' ? '10 Standard Passport (35×45mm)' : '6 Passport + 4 Stamp'}</span>
+              <span>Layout: {serviceType === 'STANDARD_PASSPORT' ? '10 Standard Passport (32×40mm)' : '6 Passport + 4 Stamp'}</span>
               <button
                 type="button"
                 onClick={() => setIsFullscreenSheet(false)}

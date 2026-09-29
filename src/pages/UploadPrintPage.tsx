@@ -19,6 +19,14 @@ import {
   Sliders,
   Lock,
   MapPin,
+  Eye,
+  Columns,
+  Maximize2,
+  Minimize2,
+  Scissors,
+  SplitSquareVertical,
+  X,
+  FileCheck,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -28,6 +36,8 @@ import {
   PaperSize,
   PrintType,
   PrintingSide,
+  PagesPerSheet,
+  NupOrientation,
   ShopSettings,
   UploadedFileItem,
 } from '../types';
@@ -39,6 +49,11 @@ import {
   extractSelectedPagesFromPdf,
   formatTrimmedPdfFilename,
 } from '../utils/pdfExtractor';
+import {
+  generateNupPdf,
+  calculateEffectiveSheets,
+} from '../utils/nupProcessor';
+import { DocumentPageView } from '../components/DocumentPageView';
 import {
   DEFAULT_PRICING,
   getDocumentRate,
@@ -79,6 +94,16 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   const [paperQuality, setPaperQuality] = useState<PaperQuality>('75_GSM');
   const [printingSide, setPrintingSide] = useState<PrintingSide>(sampleParams?.printingSide || 'SINGLE');
   const [copies, setCopies] = useState<number>(sampleParams?.copies || 1);
+
+  // Pages Per Sheet / Multi-Page N-Up Layout: 1 (Standard 1-Up) | 2 (Both on Same Side / Half-and-Half) | 4 (Quad Grid)
+  const [pagesPerSheet, setPagesPerSheet] = useState<PagesPerSheet>(1);
+  const [nupOrientation, setNupOrientation] = useState<NupOrientation>('SIDE_BY_SIDE');
+  const [activePreviewSheet, setActivePreviewSheet] = useState<number>(1);
+  const [previewMode, setPreviewMode] = useState<'SHEET' | 'PDF'>('SHEET');
+  const [selectedPreviewFileId, setSelectedPreviewFileId] = useState<string | null>(null);
+  const [showFullscreenPreview, setShowFullscreenPreview] = useState<boolean>(false);
+  const [liveNupPdfUrl, setLiveNupPdfUrl] = useState<string | null>(null);
+  const [isGeneratingNupPreview, setIsGeneratingNupPreview] = useState<boolean>(false);
 
   // Customer Details Form (prefill if logged in)
   const [customer, setCustomer] = useState<CustomerDetails>({
@@ -151,15 +176,100 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     0
   );
 
-  // STRICT RULE: ONLY WHEN FILE CONTAINS MORE THAN 1 PAGE ENABLE BOTH SIDE PRINT OPTION
-  const isBothSideAllowed = totalPages > 1;
+  // Effective printed impressions based on pages per sheet (1-up, 2-up, 4-up)
+  const effectivePrintPages = pagesPerSheet > 1
+    ? Math.max(1, Math.ceil(totalPages / pagesPerSheet))
+    : totalPages;
 
-  // Auto-switch to SINGLE if totalPages <= 1 and BOTH was selected
+  const totalPhysicalSheets = printingSide === 'BOTH'
+    ? Math.max(1, Math.ceil(effectivePrintPages / 2))
+    : effectivePrintPages;
+
+  // STRICT RULE: ONLY WHEN EFFECTIVE PRINTED PAGE SIDES EXCEED 1 ENABLE BOTH SIDE PRINT OPTION
+  const isBothSideAllowed = effectivePrintPages > 1;
+
+  // Auto-switch to SINGLE if effective printed pages <= 1 and BOTH was selected
   useEffect(() => {
     if (!isBothSideAllowed && printingSide === 'BOTH') {
       setPrintingSide('SINGLE');
     }
   }, [isBothSideAllowed, printingSide]);
+
+  // Clamp active preview sheet within valid range
+  useEffect(() => {
+    if (activePreviewSheet > effectivePrintPages) {
+      setActivePreviewSheet(Math.max(1, effectivePrintPages));
+    }
+  }, [effectivePrintPages, activePreviewSheet]);
+
+  // Active file being inspected in Document Print Preview
+  const activePreviewFile =
+    validFiles.find((f) => f.id === selectedPreviewFileId) || validFiles[0];
+
+  // Generate live compiled N-Up PDF for preview when a PDF is uploaded
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function updateNupPreview() {
+      const targetDoc =
+        activePreviewFile &&
+        (activePreviewFile.type === 'application/pdf' ||
+          activePreviewFile.name.toLowerCase().endsWith('.pdf') ||
+          (activePreviewFile.previewUrl && activePreviewFile.previewUrl.startsWith('data:application/pdf')))
+          ? activePreviewFile
+          : validFiles.find(
+              (f) =>
+                f.type === 'application/pdf' ||
+                f.name.toLowerCase().endsWith('.pdf') ||
+                (f.previewUrl && f.previewUrl.startsWith('data:application/pdf'))
+            );
+
+      if (!targetDoc) {
+        setLiveNupPdfUrl(null);
+        return;
+      }
+
+      const src = targetDoc.file || targetDoc.previewUrl;
+      if (!src) return;
+
+      setIsGeneratingNupPreview(true);
+      try {
+        const selectedPages = getSelectedPagesList(
+          targetDoc.pageCount,
+          targetDoc.pageSelectionMode || 'ALL',
+          targetDoc.customPageRange || ''
+        );
+
+        const res = await generateNupPdf({
+          input: src,
+          pagesPerSheet,
+          selectedPages,
+          paperSize,
+          orientation: nupOrientation,
+        });
+
+        if (!isCancelled) {
+          setLiveNupPdfUrl(res.dataUrl);
+        }
+      } catch (err) {
+        console.warn('Could not generate live N-up preview PDF:', err);
+      } finally {
+        if (!isCancelled) {
+          setIsGeneratingNupPreview(false);
+        }
+      }
+    }
+
+    if (validFiles.length > 0) {
+      updateNupPreview();
+    } else {
+      setLiveNupPdfUrl(null);
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [validFiles.length, selectedPreviewFileId, pagesPerSheet, nupOrientation, paperSize]);
 
   // Price Calculation according to RSCC Dynamic Pricing Engine
   const pricing = settings.pricing || DEFAULT_PRICING;
@@ -168,7 +278,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
   // Set-based pricing: Set 1 @ standard rate; Sets 2+ @ discounted copy rate
   const { totalAmount, firstSetCost, additionalSetsCost, additionalSetsCount } =
-    calculateDocumentOrderAmount(totalPages, copies, ratePerPage, copyRatePerPage);
+    calculateDocumentOrderAmount(effectivePrintPages, copies, ratePerPage, copyRatePerPage);
 
   const handleFileSetsChange = (fileId: string, newSets: number) => {
     const validSets = Math.max(1, newSets);
@@ -380,16 +490,52 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             f.pageCount
           );
 
-          const needsTrim =
+          const needsNupOrTrim =
             isPdf &&
-            currentMode !== 'ALL' &&
-            selectedPages.length > 0 &&
-            selectedPages.length < f.pageCount;
+            (pagesPerSheet > 1 ||
+              (currentMode !== 'ALL' && selectedPages.length > 0 && selectedPages.length < f.pageCount));
 
-          if (needsTrim) {
+          if (needsNupOrTrim) {
             try {
               const srcData = f.file || f.previewUrl;
               if (srcData) {
+                // If N-Up is selected (e.g. 2 pages per sheet), generate composite N-up PDF
+                if (pagesPerSheet > 1) {
+                  const nupResult = await generateNupPdf({
+                    input: srcData,
+                    pagesPerSheet,
+                    selectedPages,
+                    paperSize,
+                    orientation: nupOrientation,
+                  });
+
+                  const cleanBase = f.name.replace(/\.pdf$/i, '');
+                  const nupFilename = `${cleanBase}_${pagesPerSheet}in1_layout.pdf`;
+                  const nupSummary = `${summary} • ${pagesPerSheet} Pages on 1 Side (${nupOrientation === 'SIDE_BY_SIDE' ? 'Side-by-Side' : 'Top & Bottom'})`;
+
+                  return {
+                    id: f.id,
+                    name: nupFilename,
+                    size: nupResult.bytes.byteLength,
+                    type: 'application/pdf',
+                    pageCount: nupResult.sheetCount,
+                    originalPageCount: f.pageCount,
+                    sets: f.sets || copies,
+                    pageSelectionMode: currentMode,
+                    customPageRange: f.customPageRange,
+                    selectedPageCount: nupResult.sheetCount,
+                    selectedPagesList: selectedPages,
+                    selectedPagesSummary: nupSummary,
+                    trimmedPdfCreated: true,
+                    pagesPerSheet,
+                    nupOrientation,
+                    previewUrl: nupResult.dataUrl,
+                    moderationStatus: f.moderationStatus,
+                    moderationReason: f.moderationReason,
+                  };
+                }
+
+                // Otherwise standard trimming for selected pages
                 const extracted = await extractSelectedPagesFromPdf(srcData, selectedPages);
                 const trimmedFilename = formatTrimmedPdfFilename(
                   f.name,
@@ -411,13 +557,14 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   selectedPagesList: selectedPages,
                   selectedPagesSummary: summary,
                   trimmedPdfCreated: true,
+                  pagesPerSheet: 1,
                   previewUrl: extracted.dataUrl,
                   moderationStatus: f.moderationStatus,
                   moderationReason: f.moderationReason,
                 };
               }
             } catch (extractErr) {
-              console.error('Could not compile trimmed PDF for staff portal:', extractErr);
+              console.error('Could not compile trimmed/N-Up PDF for staff portal:', extractErr);
             }
           }
 
@@ -445,6 +592,8 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             selectedPagesList: selectedPages,
             selectedPagesSummary: summary,
             trimmedPdfCreated: false,
+            pagesPerSheet,
+            nupOrientation,
             previewUrl: finalPreviewUrl,
             moderationStatus: f.moderationStatus,
             moderationReason: f.moderationReason,
@@ -456,6 +605,8 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         mode: 'DOCUMENT',
         paperSize,
         paperQuality,
+        pagesPerSheet,
+        nupOrientation,
         customer: {
           name: customer.name.trim(),
           mobile: customer.mobile.trim(),
@@ -463,6 +614,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         },
         files: finalizedFiles,
         totalPages,
+        totalSheets: totalPhysicalSheets,
         copies,
         sets: copies,
         printType,
@@ -928,6 +1080,413 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             </div>
           )}
 
+          {/* LIVE DOCUMENT PRINT PREVIEW SECTION */}
+          {validFiles.length > 0 && (
+            <div className="bg-slate-950 text-white rounded-3xl p-5 sm:p-6 border border-slate-800 shadow-2xl space-y-4">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <h3 className="font-black text-white text-base tracking-tight flex items-center gap-2">
+                      <Printer className="w-4 h-4 text-amber-400" />
+                      <span>Live Print Sheet Preview</span>
+                    </h3>
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-slate-800 text-amber-300 px-2.5 py-0.5 rounded-md border border-slate-700">
+                      {pagesPerSheet === 2 ? '2 Pages on 1 Side' : '1 Page / Sheet'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Simulated {paperSize} {pagesPerSheet === 2 && nupOrientation === 'SIDE_BY_SIDE' ? 'Landscape' : 'Portrait'} Sheet • {printType === 'BW' ? 'Black & White' : 'Colour'} Print • {paperQuality === '75_GSM' ? '75 GSM' : '100 GSM Paper'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 self-start sm:self-center flex-wrap">
+                  {/* View Mode Switcher */}
+                  <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewMode('SHEET')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        previewMode === 'SHEET'
+                          ? 'bg-amber-400 text-slate-950 shadow-xs'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="View simulated physical printed sheet"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Sheet View</span>
+                    </button>
+                    {liveNupPdfUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewMode('PDF')}
+                        className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                          previewMode === 'PDF'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                        title="View interactive compiled PDF"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>PDF Viewer</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Fullscreen Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowFullscreenPreview(true)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+                    title="Open Fullscreen Preview"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>Fullscreen</span>
+                  </button>
+
+                  {liveNupPdfUrl && (
+                    <a
+                      href={liveNupPdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                      title="Open full compiled PDF in new window"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>View PDF</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* Multi-file selector pills if customer uploaded multiple documents */}
+              {validFiles.length > 1 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+                  <span className="text-slate-400 font-medium text-[11px] shrink-0">Inspecting Document:</span>
+                  {validFiles.map((vf, idx) => (
+                    <button
+                      key={vf.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedPreviewFileId(vf.id);
+                        setActivePreviewSheet(1);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition shrink-0 cursor-pointer flex items-center gap-1 ${
+                        (selectedPreviewFileId === vf.id || (!selectedPreviewFileId && idx === 0))
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span className="max-w-[120px] truncate">{vf.name}</span>
+                      <span className="opacity-75">({vf.pageCount} pgs)</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Notice Banner when 2 Pages on 1 Side is Active */}
+              {pagesPerSheet === 2 && (
+                <div className="bg-emerald-950/80 border border-emerald-500/40 rounded-2xl p-3 text-xs text-emerald-200 flex items-start gap-2.5 shadow-inner">
+                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <div className="font-extrabold text-white text-[12px]">
+                      2-in-1 Half Sheet Layout Active
+                    </div>
+                    <div className="text-[11px] text-emerald-300 leading-relaxed">
+                      Half page contains the 1st page, other half contains the 2nd page on the <strong>exact same side</strong> of this sheet.
+                      You save 50% paper & only pay for <strong>{effectivePrintPages} printed page side{effectivePrintPages > 1 ? 's' : ''}</strong>!
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Interactive Physical Sheet Container */}
+              <div className="flex flex-col items-center justify-center p-3 sm:p-5 bg-slate-900/90 rounded-2xl border border-slate-800/80 min-h-[360px]">
+                {previewMode === 'PDF' && liveNupPdfUrl ? (
+                  <div className="w-full max-w-2xl h-[440px] bg-slate-900 rounded-xl overflow-hidden border border-slate-700 shadow-2xl flex flex-col">
+                    <div className="bg-slate-800 text-slate-300 px-3 py-1.5 text-xs font-mono flex items-center justify-between border-b border-slate-700">
+                      <span>Live Compiled 2-in-1 PDF Stream</span>
+                      <span className="text-[10px] text-amber-300">Ready to Print</span>
+                    </div>
+                    <iframe
+                      src={`${liveNupPdfUrl}#toolbar=0&navpanes=0`}
+                      title="Live Document Print Preview"
+                      className="w-full h-full rounded-b-xl bg-white"
+                    />
+                  </div>
+                ) : pagesPerSheet === 2 ? (
+                  nupOrientation === 'SIDE_BY_SIDE' ? (
+                    /* 2-UP SIDE BY SIDE (LANDSCAPE SHEET) */
+                    <div className="w-full max-w-xl aspect-[1.414/1] bg-white rounded-xl shadow-2xl p-3 sm:p-4 text-slate-900 relative overflow-hidden flex flex-col justify-between border border-slate-200">
+                      {/* Top Sheet Header Strip */}
+                      <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono pb-1 border-b border-slate-100">
+                        <span>RSCC Studio Print • {paperSize} Landscape Sheet {activePreviewSheet} of {effectivePrintPages}</span>
+                        <span className="font-bold text-slate-600">2-in-1 Side-by-Side</span>
+                      </div>
+
+                      {/* Split Halves Container */}
+                      <div className="grid grid-cols-2 gap-2 flex-1 pt-2 relative">
+                        {/* Center Dividing Dotted Line */}
+                        <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex flex-col items-center justify-center pointer-events-none z-10">
+                          <div className="h-full border-r-2 border-dashed border-slate-300 relative flex items-center justify-center">
+                            <span className="bg-slate-100 text-slate-500 rounded-full p-1 border border-slate-200 shadow-2xs">
+                              <Scissors className="w-3 h-3 text-slate-500" />
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Left Half (1st Page of Pair) */}
+                        <div className="bg-slate-50/90 rounded-lg p-2 border border-slate-200/90 flex flex-col justify-between relative shadow-inner overflow-hidden min-h-[170px]">
+                          <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                            <span className="bg-indigo-600 text-white font-extrabold text-[9px] sm:text-[10px] px-2 py-0.5 rounded shadow-2xs">
+                              Page {(activePreviewSheet - 1) * 2 + 1}
+                            </span>
+                            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                              Left Half
+                            </span>
+                          </div>
+
+                          {/* Render Actual Uploaded Document Page */}
+                          <div className="flex-1 w-full my-1 overflow-hidden rounded bg-white border border-slate-200 shadow-2xs flex items-center justify-center min-h-[140px] sm:min-h-[180px]">
+                            <DocumentPageView
+                              file={activePreviewFile?.file}
+                              previewUrl={activePreviewFile?.previewUrl}
+                              fileName={activePreviewFile?.name}
+                              pageNumber={(activePreviewSheet - 1) * 2 + 1}
+                              printType={printType}
+                              showBadge={false}
+                              className="w-full h-full"
+                            />
+                          </div>
+
+                          <div className="text-[8px] text-slate-400 text-center font-mono pt-1 border-t border-slate-200">
+                            Half Page 1 • {paperSize} Left
+                          </div>
+                        </div>
+
+                        {/* Right Half (2nd Page of Pair) */}
+                        <div className="bg-slate-50/90 rounded-lg p-2 border border-slate-200/90 flex flex-col justify-between relative shadow-inner overflow-hidden min-h-[170px]">
+                          {(activePreviewSheet - 1) * 2 + 2 <= (activePreviewFile?.selectedPageCount || activePreviewFile?.pageCount || totalPages) ? (
+                            <>
+                              <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                                <span className="bg-indigo-600 text-white font-extrabold text-[9px] sm:text-[10px] px-2 py-0.5 rounded shadow-2xs">
+                                  Page {(activePreviewSheet - 1) * 2 + 2}
+                                </span>
+                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                                  Right Half
+                                </span>
+                              </div>
+
+                              {/* Render Actual Uploaded Document Page */}
+                              <div className="flex-1 w-full my-1 overflow-hidden rounded bg-white border border-slate-200 shadow-2xs flex items-center justify-center min-h-[140px] sm:min-h-[180px]">
+                                <DocumentPageView
+                                  file={activePreviewFile?.file}
+                                  previewUrl={activePreviewFile?.previewUrl}
+                                  fileName={activePreviewFile?.name}
+                                  pageNumber={(activePreviewSheet - 1) * 2 + 2}
+                                  printType={printType}
+                                  showBadge={false}
+                                  className="w-full h-full"
+                                />
+                              </div>
+
+                              <div className="text-[8px] text-slate-400 text-center font-mono pt-1 border-t border-slate-200">
+                                Half Page 2 • {paperSize} Right
+                              </div>
+                            </>
+                          ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-center p-3 text-slate-400 bg-slate-100/50 rounded border border-dashed border-slate-300">
+                              <span className="text-xs font-bold text-slate-500">Blank Half</span>
+                              <span className="text-[9px] text-slate-400">Document ends on odd page</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bottom Sheet Footer */}
+                      <div className="text-[9px] text-slate-400 text-center font-mono pt-1 border-t border-slate-100">
+                        Both pages printed together on 1 physical sheet side • RSCC Choice Centre
+                      </div>
+                    </div>
+                  ) : (
+                    /* 2-UP TOP & BOTTOM (PORTRAIT SHEET) */
+                    <div className="w-full max-w-sm aspect-[1/1.414] bg-white rounded-xl shadow-2xl p-3 sm:p-4 text-slate-900 relative overflow-hidden flex flex-col justify-between border border-slate-200">
+                      <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono pb-1 border-b border-slate-100">
+                        <span>RSCC Print • {paperSize} Portrait Sheet {activePreviewSheet}</span>
+                        <span className="font-bold text-slate-600">2-in-1 Top/Bottom</span>
+                      </div>
+
+                      <div className="grid grid-rows-2 gap-2 flex-1 py-1.5 relative">
+                        {/* Horizontal Dividing Dotted Line */}
+                        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none z-10">
+                          <div className="w-full border-t-2 border-dashed border-slate-300 relative flex items-center justify-center">
+                            <span className="bg-slate-100 text-slate-500 rounded-full p-1 border border-slate-200">
+                              <Scissors className="w-3 h-3 text-slate-500" />
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Top Half */}
+                        <div className="bg-slate-50/90 rounded-lg p-2 border border-slate-200/90 flex flex-col justify-between shadow-inner overflow-hidden min-h-[110px]">
+                          <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                            <span className="bg-indigo-600 text-white font-extrabold text-[9px] px-2 py-0.5 rounded">
+                              Page {(activePreviewSheet - 1) * 2 + 1}
+                            </span>
+                            <span className="text-[9px] font-bold text-slate-500 uppercase">Top Half</span>
+                          </div>
+
+                          <div className="flex-1 w-full my-0.5 overflow-hidden rounded bg-white border border-slate-200 shadow-2xs flex items-center justify-center min-h-[90px] sm:min-h-[110px]">
+                            <DocumentPageView
+                              file={activePreviewFile?.file}
+                              previewUrl={activePreviewFile?.previewUrl}
+                              fileName={activePreviewFile?.name}
+                              pageNumber={(activePreviewSheet - 1) * 2 + 1}
+                              printType={printType}
+                              showBadge={false}
+                              className="w-full h-full"
+                            />
+                          </div>
+
+                          <div className="text-[8px] text-slate-400 text-center font-mono pt-0.5 border-t border-slate-100">
+                            Half Page 1 • Top
+                          </div>
+                        </div>
+
+                        {/* Bottom Half */}
+                        <div className="bg-slate-50/90 rounded-lg p-2 border border-slate-200/90 flex flex-col justify-between shadow-inner overflow-hidden min-h-[110px]">
+                          {(activePreviewSheet - 1) * 2 + 2 <= (activePreviewFile?.selectedPageCount || activePreviewFile?.pageCount || totalPages) ? (
+                            <>
+                              <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                                <span className="bg-indigo-600 text-white font-extrabold text-[9px] px-2 py-0.5 rounded">
+                                  Page {(activePreviewSheet - 1) * 2 + 2}
+                                </span>
+                                <span className="text-[9px] font-bold text-slate-500 uppercase">Bottom Half</span>
+                              </div>
+
+                              <div className="flex-1 w-full my-0.5 overflow-hidden rounded bg-white border border-slate-200 shadow-2xs flex items-center justify-center min-h-[90px] sm:min-h-[110px]">
+                                <DocumentPageView
+                                  file={activePreviewFile?.file}
+                                  previewUrl={activePreviewFile?.previewUrl}
+                                  fileName={activePreviewFile?.name}
+                                  pageNumber={(activePreviewSheet - 1) * 2 + 2}
+                                  printType={printType}
+                                  showBadge={false}
+                                  className="w-full h-full"
+                                />
+                              </div>
+
+                              <div className="text-[8px] text-slate-400 text-center font-mono pt-0.5 border-t border-slate-100">
+                                Half Page 2 • Bottom
+                              </div>
+                            </>
+                          ) : (
+                            <div className="h-full flex items-center justify-center text-xs font-bold text-slate-400 bg-slate-100/50 rounded border border-dashed border-slate-300">
+                              Blank Half
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-[9px] text-slate-400 text-center font-mono pt-1 border-t border-slate-100">
+                        Both pages printed together on 1 physical sheet
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  /* 1-UP STANDARD FULL PAGE PREVIEW */
+                  <div className="w-full max-w-sm aspect-[1/1.414] bg-white rounded-xl shadow-2xl p-3 sm:p-4 text-slate-900 relative overflow-hidden flex flex-col justify-between border border-slate-200">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono pb-2 border-b border-slate-100">
+                      <span>RSCC Standard Print • {paperSize} Portrait</span>
+                      <span className="bg-slate-900 text-white font-bold px-2 py-0.5 rounded">
+                        Page {activePreviewSheet} of {totalPages}
+                      </span>
+                    </div>
+
+                    {/* Render Actual Uploaded Document Page */}
+                    <div className="flex-1 w-full my-2 overflow-hidden rounded-lg bg-white border border-slate-200 shadow-2xs flex items-center justify-center min-h-[260px] sm:min-h-[340px]">
+                      <DocumentPageView
+                        file={activePreviewFile?.file}
+                        previewUrl={activePreviewFile?.previewUrl}
+                        fileName={activePreviewFile?.name}
+                        pageNumber={activePreviewSheet}
+                        printType={printType}
+                        showBadge={false}
+                        className="w-full h-full"
+                      />
+                    </div>
+
+                    <div className="text-[10px] text-slate-400 text-center font-mono pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span>1 Page Per Sheet (Standard 1-Up)</span>
+                      <span>Sheet {activePreviewSheet}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Sheet Switcher & Layout Toolbar */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                <div className="flex items-center gap-2">
+                  {effectivePrintPages > 1 && (
+                    <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl p-1">
+                      <button
+                        type="button"
+                        onClick={() => setActivePreviewSheet((prev) => Math.max(1, prev - 1))}
+                        disabled={activePreviewSheet <= 1}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white font-bold text-xs transition cursor-pointer"
+                      >
+                        ← Prev Sheet
+                      </button>
+                      <span className="text-xs font-bold text-slate-300 px-2 font-mono">
+                        Sheet {activePreviewSheet} of {effectivePrintPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActivePreviewSheet((prev) => Math.min(effectivePrintPages, prev + 1))}
+                        disabled={activePreviewSheet >= effectivePrintPages}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white font-bold text-xs transition cursor-pointer"
+                      >
+                        Next Sheet →
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick orientation toggle if 2-up is selected */}
+                {pagesPerSheet === 2 && (
+                  <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl p-1 text-xs">
+                    <span className="text-[11px] text-slate-400 pl-1.5 font-medium">Layout:</span>
+                    <button
+                      type="button"
+                      onClick={() => setNupOrientation('SIDE_BY_SIDE')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer ${
+                        nupOrientation === 'SIDE_BY_SIDE'
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Columns className="w-3 h-3" />
+                      <span>Side-by-Side</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNupOrientation('TOP_BOTTOM')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer ${
+                        nupOrientation === 'TOP_BOTTOM'
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <SplitSquareVertical className="w-3 h-3" />
+                      <span>Top/Bottom</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Customer Details Form */}
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
@@ -1259,7 +1818,123 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               </div>
             </div>
 
-            {/* 5. NUMBER OF SETS REQUIRED */}
+            {/* 5. PAGES PER SHEET (LAYOUT) */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                  Pages Per Sheet (Layout)
+                </label>
+                {pagesPerSheet === 2 && (
+                  <span className="text-[10px] text-emerald-800 bg-emerald-100 font-bold px-2 py-0.5 rounded-full border border-emerald-300">
+                    ✨ 2-in-1: Save 50% Paper & Cost
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPagesPerSheet(1);
+                    setActivePreviewSheet(1);
+                  }}
+                  className={`p-3 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
+                    pagesPerSheet === 1
+                      ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-slate-900/20'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                  }`}
+                >
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>1 Page / Sheet</span>
+                    </div>
+                    <div className={`text-[11px] ${pagesPerSheet === 1 ? 'text-slate-300' : 'text-slate-500'}`}>
+                      Standard 1-Up Full Page
+                    </div>
+                  </div>
+                  <div
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      pagesPerSheet === 1 ? 'border-amber-400 bg-amber-400' : 'border-slate-400'
+                    }`}
+                  >
+                    {pagesPerSheet === 1 && <div className="w-1.5 h-1.5 rounded-full bg-slate-950" />}
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPagesPerSheet(2);
+                    setActivePreviewSheet(1);
+                  }}
+                  className={`p-3 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
+                    pagesPerSheet === 2
+                      ? 'bg-emerald-700 text-white border-emerald-800 shadow-md ring-2 ring-emerald-600/20'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                  }`}
+                >
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <Columns className="w-3.5 h-3.5 text-amber-300" />
+                      <span>2 Pages on 1 Side</span>
+                    </div>
+                    <div className={`text-[11px] ${pagesPerSheet === 2 ? 'text-emerald-100' : 'text-slate-500'}`}>
+                      Half 1st & Half 2nd Page
+                    </div>
+                  </div>
+                  <div
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      pagesPerSheet === 2 ? 'border-white bg-white' : 'border-slate-400'
+                    }`}
+                  >
+                    {pagesPerSheet === 2 && <div className="w-1.5 h-1.5 rounded-full bg-emerald-700" />}
+                  </div>
+                </button>
+              </div>
+
+              {/* 2-in-1 Arrangement Options */}
+              {pagesPerSheet === 2 && (
+                <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-3 space-y-2">
+                  <div className="flex items-center justify-between text-[11px] text-emerald-950">
+                    <span className="font-bold">2-in-1 Page Arrangement:</span>
+                    <span className="text-emerald-800 font-medium">Both pages on same sheet side</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setNupOrientation('SIDE_BY_SIDE')}
+                      className={`py-2 px-3 rounded-xl border text-center font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        nupOrientation === 'SIDE_BY_SIDE'
+                          ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
+                          : 'bg-white text-slate-700 hover:bg-emerald-100 border-emerald-200'
+                      }`}
+                    >
+                      <Columns className="w-3.5 h-3.5" />
+                      <span>Side-by-Side</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setNupOrientation('TOP_BOTTOM')}
+                      className={`py-2 px-3 rounded-xl border text-center font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        nupOrientation === 'TOP_BOTTOM'
+                          ? 'bg-emerald-800 text-white border-emerald-900 shadow-xs'
+                          : 'bg-white text-slate-700 hover:bg-emerald-100 border-emerald-200'
+                      }`}
+                    >
+                      <SplitSquareVertical className="w-3.5 h-3.5" />
+                      <span>Top & Bottom</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-emerald-800 leading-tight">
+                    ✨ <strong>Both Pages on 1 Side:</strong> The 1st page is printed on one half, and the 2nd page on the other half of the single sheet side.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* 6. NUMBER OF SETS REQUIRED */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
@@ -1365,8 +2040,22 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Total Pages (1 Set):</span>
+                  <span className="text-slate-400">Pages Per Sheet:</span>
+                  <span className="font-bold text-amber-300">
+                    {pagesPerSheet === 2
+                      ? `2-in-1 (${nupOrientation === 'SIDE_BY_SIDE' ? 'Side-by-Side' : 'Top/Bottom'})`
+                      : '1 Page / Sheet'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Document Pages:</span>
                   <span className="font-bold text-white font-mono">{totalPages} pages</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Printed Page Sides:</span>
+                  <span className="font-bold text-emerald-400 font-mono">
+                    {effectivePrintPages} side{effectivePrintPages > 1 ? 's' : ''} ({totalPhysicalSheets} sheet{totalPhysicalSheets > 1 ? 's' : ''})
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Sets Required:</span>
@@ -1376,12 +2065,12 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">1st Set Rate:</span>
-                  <span className="font-bold text-white font-mono">₹{ratePerPage}/page</span>
+                  <span className="font-bold text-white font-mono">₹{ratePerPage}/printed side</span>
                 </div>
                 {copies > 1 && (
                   <div className="flex justify-between">
                     <span className="text-slate-400">2nd+ Sets Copy Rate:</span>
-                    <span className="font-bold text-emerald-400 font-mono">₹{copyRatePerPage}/page</span>
+                    <span className="font-bold text-emerald-400 font-mono">₹{copyRatePerPage}/printed side</span>
                   </div>
                 )}
               </div>
@@ -1390,12 +2079,12 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               <div className="pt-3 border-t border-slate-800 space-y-2.5">
                 <div className="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800 space-y-1 text-[11px] font-mono">
                   <div className="flex justify-between text-slate-300">
-                    <span>• 1st Set ({totalPages} pgs × ₹{ratePerPage}):</span>
+                    <span>• 1st Set ({effectivePrintPages} printed side{effectivePrintPages > 1 ? 's' : ''} × ₹{ratePerPage}):</span>
                     <span className="text-white font-bold">₹{firstSetCost}</span>
                   </div>
                   {copies > 1 && (
                     <div className="flex justify-between text-emerald-300">
-                      <span>• Extra {additionalSetsCount} Set{additionalSetsCount > 1 ? 's' : ''} ({totalPages * additionalSetsCount} pgs × ₹{copyRatePerPage}):</span>
+                      <span>• Extra {additionalSetsCount} Set{additionalSetsCount > 1 ? 's' : ''} ({effectivePrintPages * additionalSetsCount} sides × ₹{copyRatePerPage}):</span>
                       <span className="font-bold">+₹{additionalSetsCost}</span>
                     </div>
                   )}
@@ -1461,12 +2150,261 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               <span>RSCC Transparent Pricing Policy:</span>
             </div>
             <p>
-              Price is strictly computed as <strong>1st Set @ ₹{ratePerPage}/pg</strong> and <strong>additional sets @ ₹{copyRatePerPage}/pg</strong> for your chosen paper size ({paperSize}) and print type ({printType === 'BW' ? 'B&W' : 'Colour'}).
+              Price is strictly computed as <strong>1st Set @ ₹{ratePerPage}/printed side</strong> and <strong>additional sets @ ₹{copyRatePerPage}/printed side</strong> for your chosen paper size ({paperSize}) and print type ({printType === 'BW' ? 'B&W' : 'Colour'}).
             </p>
           </div>
         </div>
         </div>
       </div>
+
+      {/* FULLSCREEN PRINT PREVIEW MODAL */}
+      {showFullscreenPreview && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex flex-col justify-between p-3 sm:p-6 animate-in fade-in duration-200">
+          {/* Modal Header */}
+          <div className="flex items-center justify-between bg-slate-900/90 p-4 rounded-2xl border border-slate-800 text-white shadow-xl flex-wrap gap-2">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-black">
+                <Printer className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="font-black text-sm sm:text-base flex items-center gap-2 flex-wrap">
+                  <span>Full Screen Print Sheet Preview</span>
+                  <span className="text-[10px] font-bold bg-slate-800 text-amber-400 border border-slate-700 px-2 py-0.5 rounded">
+                    {pagesPerSheet === 2 ? '2 Pages on 1 Side' : '1 Page / Sheet'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {paperSize} {pagesPerSheet === 2 && nupOrientation === 'SIDE_BY_SIDE' ? 'Landscape' : 'Portrait'} • {printType === 'BW' ? 'Black & White' : 'Colour'} Print • {paperQuality === '75_GSM' ? '75 GSM' : '100 GSM'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Fullscreen View Mode Toggle */}
+              {liveNupPdfUrl && (
+                <div className="flex items-center bg-slate-800 border border-slate-700 rounded-xl p-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('SHEET')}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer ${
+                      previewMode === 'SHEET'
+                        ? 'bg-amber-400 text-slate-950 shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Sheet</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('PDF')}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer ${
+                      previewMode === 'PDF'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>PDF</span>
+                  </button>
+                </div>
+              )}
+
+              {liveNupPdfUrl && (
+                <a
+                  href={liveNupPdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Open PDF</span>
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowFullscreenPreview(false)}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                title="Close Fullscreen"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Modal Sheet Canvas Body */}
+          <div className="flex-1 flex items-center justify-center p-2 sm:p-6 overflow-auto">
+            {previewMode === 'PDF' && liveNupPdfUrl ? (
+              <div className="w-full max-w-4xl h-[70vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex flex-col">
+                <iframe
+                  src={`${liveNupPdfUrl}#toolbar=0&navpanes=0`}
+                  title="PDF Print Preview"
+                  className="w-full h-full rounded-2xl bg-white"
+                />
+              </div>
+            ) : pagesPerSheet === 2 ? (
+              <div className="w-full max-w-3xl aspect-[1.414/1] bg-white rounded-2xl shadow-2xl p-6 text-slate-900 relative overflow-hidden flex flex-col justify-between border-2 border-slate-300">
+                <div className="flex items-center justify-between text-xs text-slate-500 font-mono pb-2 border-b border-slate-200">
+                  <span>RSCC Professional Print Simulator • {paperSize} Landscape Sheet {activePreviewSheet} of {effectivePrintPages}</span>
+                  <span className="font-bold text-slate-800">2-in-1 Side-by-Side</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 flex-1 py-3 relative">
+                  {/* Center Dividing Dotted Line */}
+                  <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex flex-col items-center justify-center pointer-events-none z-10">
+                    <div className="h-full border-r-2 border-dashed border-slate-300 relative flex items-center justify-center">
+                      <span className="bg-slate-100 text-slate-600 rounded-full p-1.5 border border-slate-300 shadow-xs">
+                        <Scissors className="w-4 h-4" />
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Left Half (1st Page) */}
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex flex-col justify-between overflow-hidden">
+                    <div className="flex items-center justify-between pb-1 mb-1 border-b border-slate-200">
+                      <span className="bg-indigo-600 text-white font-extrabold text-xs px-2.5 py-1 rounded shadow-xs">
+                        Page {(activePreviewSheet - 1) * 2 + 1}
+                      </span>
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                        Left Half Page
+                      </span>
+                    </div>
+
+                    <div className="flex-1 w-full my-1 overflow-hidden rounded bg-white border border-slate-200 shadow-xs flex items-center justify-center min-h-[220px]">
+                      <DocumentPageView
+                        file={activePreviewFile?.file}
+                        previewUrl={activePreviewFile?.previewUrl}
+                        fileName={activePreviewFile?.name}
+                        pageNumber={(activePreviewSheet - 1) * 2 + 1}
+                        printType={printType}
+                        showBadge={false}
+                        className="w-full h-full"
+                      />
+                    </div>
+
+                    <div className="text-[10px] text-slate-400 text-center font-mono pt-2 border-t border-slate-200">
+                      Half Page 1 of Sheet {activePreviewSheet}
+                    </div>
+                  </div>
+
+                  {/* Right Half (2nd Page) */}
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex flex-col justify-between overflow-hidden">
+                    {(activePreviewSheet - 1) * 2 + 2 <= (activePreviewFile?.selectedPageCount || activePreviewFile?.pageCount || totalPages) ? (
+                      <>
+                        <div className="flex items-center justify-between pb-1 mb-1 border-b border-slate-200">
+                          <span className="bg-indigo-600 text-white font-extrabold text-xs px-2.5 py-1 rounded shadow-xs">
+                            Page {(activePreviewSheet - 1) * 2 + 2}
+                          </span>
+                          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                            Right Half Page
+                          </span>
+                        </div>
+
+                        <div className="flex-1 w-full my-1 overflow-hidden rounded bg-white border border-slate-200 shadow-xs flex items-center justify-center min-h-[220px]">
+                          <DocumentPageView
+                            file={activePreviewFile?.file}
+                            previewUrl={activePreviewFile?.previewUrl}
+                            fileName={activePreviewFile?.name}
+                            pageNumber={(activePreviewSheet - 1) * 2 + 2}
+                            printType={printType}
+                            showBadge={false}
+                            className="w-full h-full"
+                          />
+                        </div>
+
+                        <div className="text-[10px] text-slate-400 text-center font-mono pt-2 border-t border-slate-200">
+                          Half Page 2 of Sheet {activePreviewSheet}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-400 bg-slate-100/50 rounded border border-dashed border-slate-300">
+                        <span className="text-sm font-bold text-slate-600">Blank Half</span>
+                        <span className="text-xs">Document ends on odd page</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-400 text-center font-mono pt-2 border-t border-slate-200">
+                  Both pages printed together on 1 physical sheet side • RSCC Digital Printing
+                </div>
+              </div>
+            ) : (
+              <div className="w-full max-w-md aspect-[1/1.414] bg-white rounded-2xl shadow-2xl p-6 text-slate-900 relative overflow-hidden flex flex-col justify-between border-2 border-slate-300">
+                <div className="flex items-center justify-between text-xs text-slate-500 font-mono pb-2 border-b border-slate-200">
+                  <span>Standard 1-Up Print • {paperSize}</span>
+                  <span className="bg-slate-900 text-white font-bold px-2.5 py-0.5 rounded">
+                    Page {activePreviewSheet} of {totalPages}
+                  </span>
+                </div>
+
+                <div className="flex-1 w-full my-4 overflow-hidden rounded bg-white border border-slate-200 shadow-xs flex items-center justify-center min-h-[350px]">
+                  <DocumentPageView
+                    file={activePreviewFile?.file}
+                    previewUrl={activePreviewFile?.previewUrl}
+                    fileName={activePreviewFile?.name}
+                    pageNumber={activePreviewSheet}
+                    printType={printType}
+                    showBadge={false}
+                    className="w-full h-full"
+                  />
+                </div>
+
+                <div className="text-xs text-slate-400 text-center font-mono pt-2 border-t border-slate-200">
+                  Full Page Output
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Modal Footer Controls */}
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 text-white flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xl">
+            <div className="text-xs text-slate-300 font-medium">
+              {pagesPerSheet === 2 ? (
+                <span>
+                  💡 <strong>2-in-1 Mode:</strong> Page 1 is on the left half, and Page 2 is on the right half of the <strong>same side</strong>.
+                </span>
+              ) : (
+                <span>Standard single page per sheet print.</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              {effectivePrintPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActivePreviewSheet((prev) => Math.max(1, prev - 1))}
+                    disabled={activePreviewSheet <= 1}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white font-bold text-xs cursor-pointer transition"
+                  >
+                    ← Prev Sheet
+                  </button>
+                  <span className="text-xs font-mono font-bold text-slate-300">
+                    Sheet {activePreviewSheet} of {effectivePrintPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setActivePreviewSheet((prev) => Math.min(effectivePrintPages, prev + 1))}
+                    disabled={activePreviewSheet >= effectivePrintPages}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white font-bold text-xs cursor-pointer transition"
+                  >
+                    Next Sheet →
+                  </button>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowFullscreenPreview(false)}
+                className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-xl transition cursor-pointer shadow-md"
+              >
+                Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

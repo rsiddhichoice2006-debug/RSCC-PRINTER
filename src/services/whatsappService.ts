@@ -27,7 +27,7 @@ export function formatPickupReadyWhatsAppMessage(order: OrderRecord, settings?: 
     ? 'Passport Size Photos'
     : order.mode === 'PHOTO'
     ? 'High Quality Photo Sheet'
-    : `${order.printType === 'COLOUR' ? 'Color' : 'B&W'} Document (${order.totalPages} pages, ${order.copies} copy)`;
+    : `${order.printType === 'COLOUR' ? 'Color' : 'B&W'} Document (${order.totalPages} pages${order.pagesPerSheet === 2 ? ' • 2-in-1 Same Side' : ''}, ${order.copies} copy)`;
 
   return `🎉 *YOUR PRINT ORDER IS READY FOR PICKUP!*
 

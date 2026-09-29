@@ -20,9 +20,6 @@ import {
   Check,
   Lock,
   MapPin,
-  RotateCw,
-  Maximize2,
-  Crop,
 } from 'lucide-react';
 import {
   CustomerDetails,
@@ -179,37 +176,6 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
       : 0;
 
   const totalAmount = requiredSheets * copies * ratePerSheet;
-
-  // Rotate photo 90 degrees clockwise
-  const handleRotatePhoto = (photoId: string) => {
-    setUploadedPhotos((prev) =>
-      prev.map((p) => {
-        if (p.id !== photoId) return p;
-        const nextRot = ((p.rotation || 0) + 90) % 360;
-        const effectivelyLandscape = nextRot % 180 !== 0 ? !p.isLandscape : p.isLandscape;
-        return {
-          ...p,
-          rotation: nextRot,
-          isLandscape: effectivelyLandscape,
-        };
-      })
-    );
-  };
-
-  // Toggle individual photo fit mode between full fit (no crop) and fill (cropped)
-  const handleTogglePhotoFit = (photoId: string) => {
-    setUploadedPhotos((prev) =>
-      prev.map((p) => {
-        if (p.id !== photoId) return p;
-        const current = p.fitMode || globalFitMode;
-        const next = current === 'contain' ? 'cover' : 'contain';
-        return {
-          ...p,
-          fitMode: next,
-        };
-      })
-    );
-  };
 
   // Handle Image Upload & natural dimension detection
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -654,20 +620,9 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleRotatePhoto(photo.id);
-                          }}
-                          className="bg-slate-900/90 hover:bg-slate-800 text-amber-300 p-1 rounded shadow transition"
-                          title="Rotate photo 90°"
-                        >
-                          <RotateCw className="w-2.5 h-2.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
                             removePhoto(photo.id);
                           }}
-                          className="bg-rose-600 hover:bg-rose-700 text-white p-1 rounded shadow transition"
+                          className="bg-rose-600 hover:bg-rose-700 text-white p-1 rounded shadow transition cursor-pointer"
                           title="Remove photo"
                         >
                           <Trash2 className="w-2.5 h-2.5" />
@@ -897,24 +852,6 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
                                   </span>
                                 )}
                               </div>
-
-                              {/* Interactive Slot Overlay Controls (Rotate 90°) */}
-                              {photo && (
-                                <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-slate-950/90 backdrop-blur-xs p-1 rounded-lg shadow-lg">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleRotatePhoto(photo.id);
-                                    }}
-                                    className="p-1 hover:bg-slate-800 text-amber-300 hover:text-amber-200 rounded text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
-                                    title="Rotate photo 90° clockwise"
-                                  >
-                                    <RotateCw className="w-3 h-3 text-amber-400" />
-                                    <span>Rotate 90°</span>
-                                  </button>
-                                </div>
-                              )}
                             </>
                           ) : (
                             <div className="text-center p-2 space-y-1">

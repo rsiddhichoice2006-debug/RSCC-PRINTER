@@ -279,7 +279,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                     Passport Size Photo Studio
                   </h3>
                   <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-xl">
-                    Upload any uncropped picture. Our studio engine removes background cleanly, frames at official 35×45mm chest level, and produces a physical 10-piece glossy photo sheet.
+                    Upload any uncropped picture. Our studio engine removes background cleanly, frames at official 32×40mm chest level, and produces a physical 10-piece glossy photo sheet.
                   </p>
                 </div>
 
@@ -295,7 +295,7 @@ export const HomePage: React.FC<HomePageProps> = ({ settings, onNavigate }) => {
                   </div>
                   <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                     <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                    <span>Auto ISO 35×45mm facial centering</span>
+                    <span>Auto 32×40mm facial centering</span>
                   </div>
                   <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                     <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />

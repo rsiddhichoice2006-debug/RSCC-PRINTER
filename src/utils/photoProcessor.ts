@@ -10,8 +10,8 @@
  *    - No background color (blue, red, white) bleeds into the person's body or clothing.
  * 3. Smooth Organic Edge Contours & Anti-Halo Matting:
  *    - Eliminates haloing, fringe lighting, and color spill at the hair and shoulder edges.
- * 4. ISO/ICAO 35mm x 45mm Chest-Level Cropping:
- *    - Standard 826 x 1062 px at 300 DPI high-resolution output.
+ * 4. ISO/ICAO 32mm x 40mm Chest-Level Cropping:
+ *    - Standard 756 x 945 px at 600 DPI / 300 DPI high-resolution output.
  */
 
 export interface BackgroundColorOption {
@@ -480,7 +480,7 @@ const generateAnatomicalPortraitMask = (
 };
 
 /**
- * Calculates optimal chest-level passport framing bounding box (ISO/ICAO 35:45 ratio)
+ * Calculates optimal chest-level passport framing bounding box (32:40 ratio)
  */
 const calculatePassportFraming = (
   mask: Float32Array,
@@ -511,11 +511,11 @@ const calculatePassportFraming = (
   const crownY = hasPerson ? minY : srcH * 0.12;
   const personH = hasPerson ? maxY - minY : srcH * 0.7;
 
-  // ISO/ICAO Passport Standard (35mm x 45mm):
+  // ISO/ICAO Passport Standard (32mm x 40mm):
   // Headroom: ~8-10% of total height above hair crown
   // Head & Chin: ~60-65%
   // Chest & Shoulders: ~25-30%
-  const targetAspect = 35 / 45;
+  const targetAspect = 32 / 40;
   const estimatedHeadH = Math.max(srcH * 0.25, personH * 0.55);
   let cropH = estimatedHeadH * 1.60;
   let cropW = cropH * targetAspect;
@@ -547,14 +547,14 @@ const calculatePassportFraming = (
  * 1. 100% Solid Uniform Studio Background with ZERO leftover patches or background shadows.
  * 2. 100% Person & Clothing Protection (Face, skin, eyes, hair, clothes, white shirts remain 100% untouched).
  * 3. Anti-Halo Defringing (Decontaminates light/white halos around hair and shoulders when placing onto blue/red backgrounds).
- * 4. ISO/ICAO 35mm x 45mm Chest-Level Cropping at 300 DPI (826 x 1062 px).
+ * 4. ISO/ICAO 32mm x 40mm Chest-Level Cropping at 300/600 DPI (756 x 945 px).
  */
 export const generatePassportPhoto = async (
   imageSrc: string,
   options: ProcessPassportOptions
 ): Promise<string> => {
-  const targetW = 826;  // 35mm @ 600 DPI / 300 DPI high-res standard
-  const targetH = 1062; // 45mm @ 600 DPI / 300 DPI high-res standard
+  const targetW = 756;  // 32mm @ 600 DPI high-res standard
+  const targetH = 945;  // 40mm @ 600 DPI high-res standard
 
   const bgConfig = PASSPORT_BG_COLORS.find((b) => b.id === options.bgColor) || PASSPORT_BG_COLORS[0];
   const targetBgHex = options.customHex || bgConfig.hex;
@@ -768,8 +768,8 @@ export const generatePrintSheetDataUrl = async (
   ctx.font = '16px system-ui, -apple-system, sans-serif';
   ctx.fillText(
     serviceType === 'STANDARD_PASSPORT'
-      ? '10 × Standard Passport Size (35mm × 45mm) with Cutting Borders'
-      : '6 × Standard Passport (35×45mm) + 4 × Stamp Size (25×30mm)',
+      ? '10 × Standard Passport Size (32mm × 40mm) with Cutting Borders'
+      : '6 × Standard Passport (32×40mm) + 4 × Stamp Size (25×30mm)',
     60,
     78
   );
@@ -782,12 +782,12 @@ export const generatePrintSheetDataUrl = async (
   if (serviceType === 'STANDARD_PASSPORT') {
     const cols = 5;
     const rows = 2;
-    const photoW = 310;
-    const photoH = 398;
-    const gapX = 32;
+    const photoW = 312; // 32mm at proportional scale (312 / 390 = 0.8)
+    const photoH = 390; // 40mm at proportional scale
+    const gapX = 35;
     const gapY = 55;
     const startX = (sheetW - (cols * photoW + (cols - 1) * gapX)) / 2;
-    const startY = 120;
+    const startY = 125;
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -818,8 +818,8 @@ export const generatePrintSheetDataUrl = async (
       }
     }
   } else {
-    const stdW = 310;
-    const stdH = 398;
+    const stdW = 312;
+    const stdH = 390;
     const stampW = 220;
     const stampH = 265;
 

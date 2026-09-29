@@ -6,6 +6,8 @@ export type OrderMode = 'DOCUMENT' | 'PHOTO' | 'PASSPORT_PHOTO';
 export type PassportServiceType = 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
 export type PhotoLayoutType = '9_PHOTOS' | '4_PHOTOS' | '2_PHOTOS' | '1_PHOTO';
 export type PhotoOrientation = 'PORTRAIT' | 'LANDSCAPE';
+export type PagesPerSheet = 1 | 2 | 4;
+export type NupOrientation = 'SIDE_BY_SIDE' | 'TOP_BOTTOM';
 
 export type PaymentStatus =
   | 'PAYMENT_PENDING'
@@ -79,6 +81,8 @@ export interface ShopSettings {
   whatsAppSenderPhone?: string;
   whatsappSingleTabMode?: boolean;
   whatsAppDispatchMode?: 'EXTENSION_SINGLE_TAB' | 'DESKTOP_APP' | 'WEB_WHATSAPP' | 'CLIPBOARD_PASTE' | 'MAKE_WEBHOOK_ONLY';
+  lastAllAlarmsSilencedAt?: string;
+  silencedOrderIds?: string[];
   pricing: ShopPricing;
 }
 
@@ -100,6 +104,8 @@ export interface UploadedFileItem {
   trimmedPdfCreated?: boolean;
   originalPageCount?: number;
   selectedPagesSummary?: string;
+  pagesPerSheet?: PagesPerSheet;
+  nupOrientation?: NupOrientation;
   isProcessing: boolean;
   error?: string;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
@@ -120,6 +126,8 @@ export interface SerializableFileItem {
   trimmedPdfCreated?: boolean;
   originalPageCount?: number;
   selectedPagesSummary?: string;
+  pagesPerSheet?: PagesPerSheet;
+  nupOrientation?: NupOrientation;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
   moderationReason?: string;
   previewUrl?: string;
@@ -158,6 +166,8 @@ export interface OrderRecord {
   passportService?: PassportServiceType;
   photoLayout?: PhotoLayoutType;
   photoOrientation?: PhotoOrientation;
+  pagesPerSheet?: PagesPerSheet;
+  nupOrientation?: NupOrientation;
   files: SerializableFileItem[];
   totalPages: number;
   totalSheets?: number;
@@ -183,6 +193,11 @@ export interface OrderRecord {
   whatsappNotifiedAt?: string;
   specialInstructions?: string;
   internalNotes?: string[];
+  alarmSilenced?: boolean;
+  alarmSilencedAt?: string;
+  alarmSilencedBy?: string;
+  zipDownloaded?: boolean;
+  zipDownloadedAt?: string;
   createdAt: string;
   updatedAt: string;
   verifiedAt?: string;

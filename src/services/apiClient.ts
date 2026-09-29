@@ -227,6 +227,8 @@ function calculateOrderPrice(params: {
   paperSize?: 'A4' | 'A3';
   paperQuality?: '75_GSM' | '100_GSM';
   passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
+  pagesPerSheet?: number;
+  nupOrientation?: string;
   totalPages?: number;
   totalSheets?: number;
   copies?: number;
@@ -267,7 +269,9 @@ function calculateOrderPrice(params: {
     };
   }
 
-  const pages = Math.max(1, params.totalPages || 1);
+  const nup = params.pagesPerSheet && params.pagesPerSheet > 1 ? params.pagesPerSheet : 1;
+  const rawPages = Math.max(1, params.totalPages || 1);
+  const pages = Math.max(1, Math.ceil(rawPages / nup));
   const rate = getDocumentRate(
     paperSize as PaperSize,
     (params.printType || 'BW') as PrintType,
@@ -558,6 +562,8 @@ export const apiClient = {
       paperSize: payload.paperSize || 'A4',
       paperQuality: payload.paperQuality || (payload.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
       passportService: payload.passportService,
+      pagesPerSheet: payload.pagesPerSheet,
+      nupOrientation: payload.nupOrientation,
       totalPages: payload.totalPages,
       totalSheets: payload.totalSheets,
       copies: payload.copies || 1,
@@ -596,6 +602,8 @@ export const apiClient = {
       passportService: payload.passportService,
       photoLayout: payload.photoLayout,
       photoOrientation: payload.photoOrientation,
+      pagesPerSheet: payload.pagesPerSheet,
+      nupOrientation: payload.nupOrientation,
       files: (payload.files || []).map((f: any) => ({
         id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
         name: f.name || 'document',
@@ -773,6 +781,8 @@ export const apiClient = {
       paperSize: payload.paperSize || 'A4',
       paperQuality: payload.paperQuality || (payload.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
       passportService: payload.passportService,
+      pagesPerSheet: payload.pagesPerSheet,
+      nupOrientation: payload.nupOrientation,
       totalPages: payload.totalPages,
       totalSheets: payload.totalSheets,
       copies: payload.copies || 1,
@@ -801,6 +811,8 @@ export const apiClient = {
       passportService: payload.passportService,
       photoLayout: payload.photoLayout,
       photoOrientation: payload.photoOrientation,
+      pagesPerSheet: payload.pagesPerSheet,
+      nupOrientation: payload.nupOrientation,
       files: (payload.files || []).map((f: any) => ({
         id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
         name: f.name || 'document',
@@ -910,21 +922,17 @@ export const apiClient = {
       }
     });
 
-    // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
-    const paidOnlyOrders = Array.from(ordersMap.values()).filter(
-      (o) =>
-        o.paymentStatus === 'PAYMENT_VERIFIED' ||
-        o.paymentStatus === 'VERIFIED'
-    );
+    // All orders are retrieved for the staff portal desk to inspect, verify, and print
+    const allOrders = Array.from(ordersMap.values());
 
     // Deduplicate and sort newest first
-    paidOnlyOrders.sort(
+    allOrders.sort(
       (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
 
-    Storage.saveOrders(paidOnlyOrders);
+    Storage.saveOrders(allOrders);
 
-    let filtered = paidOnlyOrders;
+    let filtered = allOrders;
     if (params?.search) {
       const q = params.search.toLowerCase();
       filtered = filtered.filter(
@@ -952,13 +960,7 @@ export const apiClient = {
 
     const emitMergedOrders = () => {
       if (!isSubscribed) return;
-      // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
       const sorted = Array.from(knownOrdersMap.values())
-        .filter(
-          (o) =>
-            o.paymentStatus === 'PAYMENT_VERIFIED' ||
-            o.paymentStatus === 'VERIFIED'
-        )
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       callback(sorted);
     };
@@ -1011,7 +1013,9 @@ export const apiClient = {
               new Date(data.updatedAt || data.createdAt || 0).getTime() >=
                 new Date(existing.updatedAt || existing.createdAt || 0).getTime() ||
               data.orderStatus !== existing.orderStatus ||
-              data.paymentStatus !== existing.paymentStatus
+              data.paymentStatus !== existing.paymentStatus ||
+              Boolean(data.alarmSilenced) !== Boolean(existing.alarmSilenced) ||
+              Boolean(data.zipDownloaded) !== Boolean(existing.zipDownloaded)
             ) {
               knownOrdersMap.set(data.id, data);
               hasChanges = true;
@@ -1044,7 +1048,9 @@ export const apiClient = {
                 new Date(serverOrd.updatedAt || serverOrd.createdAt || 0).getTime() >=
                   new Date(current.updatedAt || current.createdAt || 0).getTime() ||
                 serverOrd.orderStatus !== current.orderStatus ||
-                serverOrd.paymentStatus !== current.paymentStatus
+                serverOrd.paymentStatus !== current.paymentStatus ||
+                Boolean(serverOrd.alarmSilenced) !== Boolean(current.alarmSilenced) ||
+                Boolean(serverOrd.zipDownloaded) !== Boolean(current.zipDownloaded)
               ) {
                 knownOrdersMap.set(serverOrd.id, serverOrd);
                 hasNewOrUpdated = true;
@@ -1362,7 +1368,19 @@ export const apiClient = {
         (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
       );
       if (idx >= 0) {
-        orders[idx] = backendData.order;
+        const existing = orders[idx];
+        const mergedFiles = (existing.files || []).map((origF, fIdx) => {
+          const newF = backendData.order.files?.[fIdx] || origF;
+          return {
+            ...newF,
+            previewUrl: origF.previewUrl || newF.previewUrl,
+            dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
+          };
+        });
+        orders[idx] = {
+          ...backendData.order,
+          files: mergedFiles.length > 0 ? mergedFiles : (backendData.order.files || existing.files),
+        };
       } else {
         orders.unshift(backendData.order);
       }
@@ -1435,7 +1453,19 @@ export const apiClient = {
         (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
       );
       if (idx >= 0) {
-        orders[idx] = backendData.order;
+        const existing = orders[idx];
+        const mergedFiles = (existing.files || []).map((origF, fIdx) => {
+          const newF = backendData.order.files?.[fIdx] || origF;
+          return {
+            ...newF,
+            previewUrl: origF.previewUrl || newF.previewUrl,
+            dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
+          };
+        });
+        orders[idx] = {
+          ...backendData.order,
+          files: mergedFiles.length > 0 ? mergedFiles : (backendData.order.files || existing.files),
+        };
       } else {
         orders.unshift(backendData.order);
       }
@@ -1603,6 +1633,123 @@ export const apiClient = {
       success: true,
       message: 'Order deleted successfully',
     };
+  },
+
+  // Admin: Silence/Stop Alarm for a Single Order across all devices
+  async stopOrderAlarm(orderId: string, orderNumber?: string, zipDownloaded?: boolean): Promise<OrderRecord> {
+    const nowIso = new Date().toISOString();
+
+    // 1. Server API Call
+    const backendData = await safeFetchJson<{ success: boolean; order: OrderRecord }>(
+      `/api/orders/${orderId}/silence-alarm`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zipDownloaded: Boolean(zipDownloaded) }),
+      }
+    );
+
+    // 2. Local Storage Sync
+    const orders = Storage.getOrders();
+    const idx = orders.findIndex(
+      (o) => o.id === orderId || o.orderNumber === orderId || (orderNumber && o.orderNumber === orderNumber)
+    );
+    let updated: OrderRecord;
+
+    if (idx >= 0) {
+      updated = {
+        ...orders[idx],
+        alarmSilenced: true,
+        alarmSilencedAt: nowIso,
+        updatedAt: nowIso,
+        ...(zipDownloaded ? { zipDownloaded: true, zipDownloadedAt: nowIso } : {}),
+      };
+      orders[idx] = updated;
+      Storage.saveOrders(orders);
+    } else if (backendData?.order) {
+      updated = backendData.order;
+      orders.unshift(updated);
+      Storage.saveOrders(orders);
+    } else {
+      updated = {
+        id: orderId,
+        orderNumber: orderNumber || orderId,
+        alarmSilenced: true,
+        alarmSilencedAt: nowIso,
+        updatedAt: nowIso,
+      } as any;
+    }
+
+    // 3. Firestore Real-Time Sync to all listening devices
+    try {
+      const payload: any = {
+        alarmSilenced: true,
+        alarmSilencedAt: nowIso,
+        updatedAt: nowIso,
+      };
+      if (zipDownloaded) {
+        payload.zipDownloaded = true;
+        payload.zipDownloadedAt = nowIso;
+      }
+      await setDoc(doc(db, 'orders', orderId), payload, { merge: true });
+      if (orderNumber && orderNumber !== orderId) {
+        setDoc(doc(db, 'orders', orderNumber), payload, { merge: true }).catch(() => {});
+      }
+    } catch (fsErr) {
+      console.warn('Firestore silence alarm notice:', fsErr);
+    }
+
+    return backendData?.order || updated;
+  },
+
+  // Admin: Stop ALL Active Order Alarms across all devices
+  async stopAllOrderAlarms(): Promise<{ success: boolean; silencedCount: number }> {
+    const nowIso = new Date().toISOString();
+
+    // 1. Server API Call
+    const backendRes = await safeFetchJson<{ success: boolean; silencedCount: number; orders?: OrderRecord[] }>(
+      '/api/orders/silence-all-alarms',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }
+    );
+
+    // 2. Local Storage Sync
+    const orders = Storage.getOrders();
+    let count = 0;
+    const activeOrderIds: string[] = [];
+
+    orders.forEach((o) => {
+      const isActive = o.orderStatus !== 'CANCELLED' && o.orderStatus !== 'COMPLETED';
+      if (isActive && !o.alarmSilenced) {
+        o.alarmSilenced = true;
+        o.alarmSilencedAt = nowIso;
+        o.updatedAt = nowIso;
+        activeOrderIds.push(o.id);
+        if (o.orderNumber) activeOrderIds.push(o.orderNumber);
+        count++;
+      }
+    });
+    Storage.saveOrders(orders);
+
+    // 3. Real-Time Firestore Sync for all active orders
+    try {
+      for (const id of activeOrderIds) {
+        setDoc(doc(db, 'orders', id), { alarmSilenced: true, alarmSilencedAt: nowIso, updatedAt: nowIso }, { merge: true }).catch(() => {});
+      }
+      // Also update global settings in firestore to record the timestamp when all alarms were silenced
+      setDoc(doc(db, 'settings', 'global'), { lastAllAlarmsSilencedAt: nowIso }, { merge: true }).catch(() => {});
+    } catch (fsErr) {
+      console.warn('Firestore silence-all notice:', fsErr);
+    }
+
+    return {
+      success: true,
+      silencedCount: backendRes?.silencedCount ?? count,
+    };
+  },
+
+  // Admin: Mark Order ZIP Downloaded and Silence Alarm
+  async markOrderZipDownloaded(orderId: string, orderNumber?: string): Promise<OrderRecord> {
+    return this.stopOrderAlarm(orderId, orderNumber, true);
   },
 
   // Admin: Get Dashboard Stats

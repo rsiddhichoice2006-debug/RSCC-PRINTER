@@ -78,6 +78,8 @@ export interface OrderFileItem {
   customPageRange?: string;
   selectedPageCount?: number;
   trimmedPdfCreated?: boolean;
+  pagesPerSheet?: 1 | 2 | 4 | number;
+  nupOrientation?: 'SIDE_BY_SIDE' | 'TOP_BOTTOM' | string;
 }
 
 export interface OrderItem {
@@ -96,6 +98,8 @@ export interface OrderItem {
   passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR' | string;
   photoLayout?: string;
   photoOrientation?: 'PORTRAIT' | 'LANDSCAPE';
+  pagesPerSheet?: 1 | 2 | 4 | number;
+  nupOrientation?: 'SIDE_BY_SIDE' | 'TOP_BOTTOM' | string;
   files: OrderFileItem[];
   totalPages: number;
   totalSheets?: number;
@@ -104,7 +108,7 @@ export interface OrderItem {
   printingSide: 'SINGLE' | 'BOTH';
   ratePerPage: number;
   totalAmount: number;
-  paymentStatus: 'PAYMENT_PENDING' | 'PAYMENT_VERIFICATION_REQUIRED' | 'PAYMENT_VERIFIED' | 'PAYMENT_FAILED';
+  paymentStatus: 'PAYMENT_PENDING' | 'PAYMENT_VERIFICATION_REQUIRED' | 'PAYMENT_VERIFIED' | 'PAYMENT_FAILED' | 'VERIFIED';
   orderStatus: 'PENDING' | 'PLACED' | 'CONFIRMED' | 'PRINTING' | 'READY_FOR_PICKUP' | 'COMPLETED' | 'CANCELLED';
   paymentReference?: string;
   paymentMethod?: string;
@@ -119,6 +123,10 @@ export interface OrderItem {
   whatsappNotifiedAt?: string;
   specialInstructions?: string;
   internalNotes?: string[];
+  alarmSilenced?: boolean;
+  alarmSilencedAt?: string;
+  zipDownloaded?: boolean;
+  zipDownloadedAt?: string;
   createdAt: string;
   updatedAt: string;
   verifiedAt?: string;
@@ -307,6 +315,8 @@ export function calculateOrderPrice(params: {
   paperSize?: 'A4' | 'A3';
   paperQuality?: '75_GSM' | '100_GSM';
   passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
+  pagesPerSheet?: number;
+  nupOrientation?: string;
   totalPages: number;
   totalSheets?: number;
   copies: number;
@@ -346,7 +356,9 @@ export function calculateOrderPrice(params: {
   }
 
   // Document printing with granular matrix: Paper Size (A4/A3) -> Type (BW/Color) -> GSM (75/100) -> Side (Single/Both)
-  const pages = Math.max(1, params.totalPages || 1);
+  const nup = params.pagesPerSheet && params.pagesPerSheet > 1 ? params.pagesPerSheet : 1;
+  const rawPages = Math.max(1, params.totalPages || 1);
+  const pages = Math.max(1, Math.ceil(rawPages / nup));
   let rate = 0;
 
   if (paperSize === 'A4') {
@@ -673,6 +685,8 @@ Return your judgment strictly in JSON format:
         passportService?: 'STANDARD_PASSPORT' | 'MIXED_SIZE' | 'A4_IMAGE_COLOR' | 'A3_IMAGE_COLOR';
         photoLayout?: '9_PHOTOS' | '4_PHOTOS' | '2_PHOTOS' | '1_PHOTO';
         photoOrientation?: 'PORTRAIT' | 'LANDSCAPE';
+        pagesPerSheet?: 1 | 2 | 4 | number;
+        nupOrientation?: 'SIDE_BY_SIDE' | 'TOP_BOTTOM' | string;
         files: OrderFileItem[];
         totalPages: number;
         totalSheets?: number;
@@ -710,6 +724,8 @@ Return your judgment strictly in JSON format:
         paperSize: body.paperSize || 'A4',
         paperQuality: body.paperQuality || (body.printType === 'COLOUR' ? '100_GSM' : '75_GSM'),
         passportService: body.passportService,
+        pagesPerSheet: body.pagesPerSheet,
+        nupOrientation: body.nupOrientation,
         totalPages: body.totalPages,
         totalSheets: body.totalSheets,
         copies: body.copies || 1,
@@ -738,6 +754,8 @@ Return your judgment strictly in JSON format:
         passportService: body.passportService,
         photoLayout: body.photoLayout,
         photoOrientation: body.photoOrientation,
+        pagesPerSheet: body.pagesPerSheet,
+        nupOrientation: body.nupOrientation,
         files: body.files,
         totalPages: body.totalPages,
         totalSheets: body.totalSheets,
@@ -779,19 +797,19 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
-    // 4. GET /api/orders - List orders for Admin Portal (CRITICAL: DO NOT SHOW ORDER IN STAFF PORTAL UNLESS PAYMENT IS SUCCESSFUL)
+    // 4. GET /api/orders - List orders for Admin Portal (Shows all placed orders so counter staff can print and verify)
     if (pathname === '/api/orders' && method === 'GET') {
       const search = url.searchParams.get('search')?.toLowerCase();
       const status = url.searchParams.get('status');
       const paymentStatus = url.searchParams.get('paymentStatus');
-      const includeUnpaid = url.searchParams.get('includeUnpaid') === 'true';
+      const includeUnpaid = url.searchParams.get('includeUnpaid');
 
       let filtered = [...orders];
 
-      // CRITICAL RULE: Staff portal must only show orders with successful payment
-      if (!includeUnpaid) {
+      // If client explicitly requests only paid/verified orders
+      if (includeUnpaid === 'false') {
         filtered = filtered.filter(
-          (o) => o.paymentStatus === 'PAYMENT_VERIFIED'
+          (o) => o.paymentStatus === 'PAYMENT_VERIFIED' || o.paymentStatus === 'VERIFIED'
         );
       }
 
@@ -1348,7 +1366,8 @@ Return your judgment strictly in JSON format:
       }
 
       const file = order.files[fileIndex];
-      if (!file.previewUrl) {
+      const sourceData = file.previewUrl || file.dataUrl;
+      if (!sourceData) {
         sendJson(res, 404, { success: false, error: 'File binary not available on server' });
         return true;
       }
@@ -1357,15 +1376,19 @@ Return your judgment strictly in JSON format:
         let buffer: Buffer;
         let mimeType = file.type || 'application/octet-stream';
 
-        if (file.previewUrl.startsWith('data:')) {
-          const commaIdx = file.previewUrl.indexOf(',');
-          const meta = file.previewUrl.substring(0, commaIdx);
-          const rawB64 = file.previewUrl.substring(commaIdx + 1);
+        if (sourceData.startsWith('data:')) {
+          const commaIdx = sourceData.indexOf(',');
+          const meta = sourceData.substring(0, commaIdx);
+          const rawB64 = sourceData.substring(commaIdx + 1);
           const mimeMatch = meta.match(/^data:([^;,]+)/i);
           if (mimeMatch) mimeType = mimeMatch[1].toLowerCase();
           buffer = Buffer.from(rawB64, 'base64');
+        } else if (sourceData.startsWith('http://') || sourceData.startsWith('https://')) {
+          const fetched = await fetch(sourceData);
+          const arrayBuf = await fetched.arrayBuffer();
+          buffer = Buffer.from(arrayBuf);
         } else {
-          buffer = Buffer.from(file.previewUrl, 'base64');
+          buffer = Buffer.from(sourceData, 'base64');
         }
 
         const safeFilename = encodeURIComponent(file.name || `file_${fileIndex + 1}`);
@@ -1473,6 +1496,19 @@ Return your judgment strictly in JSON format:
       orders[orderIndex].orderStatus = body.status;
       orders[orderIndex].updatedAt = new Date().toISOString();
 
+      // Preserve full file binaries across status changes
+      if (body.orderData?.files && Array.isArray(body.orderData.files)) {
+        const existingFiles = orders[orderIndex].files || [];
+        orders[orderIndex].files = body.orderData.files.map((newF: any, fIdx: number) => {
+          const oldF = existingFiles[fIdx];
+          return {
+            ...newF,
+            previewUrl: oldF?.previewUrl || newF.previewUrl,
+            dataUrl: oldF?.dataUrl || newF.dataUrl,
+          };
+        });
+      }
+
       if (body.whatsappNotified || body.status === 'READY_FOR_PICKUP') {
         orders[orderIndex].whatsappNotifiedAt = body.whatsappNotifiedAt || new Date().toISOString();
       }
@@ -1523,6 +1559,76 @@ Return your judgment strictly in JSON format:
       saveOrdersToDisk();
 
       sendJson(res, 200, { success: true, order: orders[orderIndex] });
+      return true;
+    }
+
+    // 10b. PUT /api/orders/:id/silence-alarm - Silence alarm for a specific order across all devices
+    if (pathname.match(/^\/api\/orders\/[^\/]+\/silence-alarm$/) && method === 'PUT') {
+      const parts = pathname.split('/');
+      const orderId = parts[3];
+      const body = await parseJsonBody<{ zipDownloaded?: boolean; actor?: string }>(req);
+
+      const orderIndex = orders.findIndex((o) => o.id === orderId || o.orderNumber === orderId);
+      if (orderIndex === -1) {
+        sendJson(res, 404, { success: false, error: 'Order not found' });
+        return true;
+      }
+
+      const nowIso = new Date().toISOString();
+      orders[orderIndex].alarmSilenced = true;
+      orders[orderIndex].alarmSilencedAt = nowIso;
+      orders[orderIndex].updatedAt = nowIso;
+
+      if (body.zipDownloaded) {
+        orders[orderIndex].zipDownloaded = true;
+        orders[orderIndex].zipDownloadedAt = nowIso;
+      }
+
+      saveOrdersToDisk();
+
+      auditLogs.unshift({
+        id: 'log-' + Date.now(),
+        timestamp: nowIso,
+        action: body.zipDownloaded ? 'ORDER_ZIP_DOWNLOADED' : 'ORDER_ALARM_SILENCED',
+        actor: body.actor || 'Admin',
+        orderNumber: orders[orderIndex].orderNumber,
+        details: body.zipDownloaded
+          ? `ZIP downloaded & alarm silenced across all devices for Order #${orders[orderIndex].orderNumber}.`
+          : `Alarm manually silenced across all devices for Order #${orders[orderIndex].orderNumber}.`,
+      });
+
+      sendJson(res, 200, { success: true, order: orders[orderIndex] });
+      return true;
+    }
+
+    // 10c. POST /api/orders/silence-all-alarms - Stop all alarms across all devices simultaneously
+    if (pathname === '/api/orders/silence-all-alarms' && method === 'POST') {
+      const body = await parseJsonBody<{ actor?: string }>(req);
+      const nowIso = new Date().toISOString();
+      let count = 0;
+
+      orders.forEach((o) => {
+        const isActive = o.orderStatus !== 'CANCELLED' && o.orderStatus !== 'COMPLETED';
+        if (isActive && !o.alarmSilenced) {
+          o.alarmSilenced = true;
+          o.alarmSilencedAt = nowIso;
+          o.updatedAt = nowIso;
+          count++;
+        }
+      });
+
+      saveOrdersToDisk();
+
+      auditLogs.unshift({
+        id: 'log-' + Date.now(),
+        timestamp: nowIso,
+        action: 'ALL_ALARMS_SILENCED',
+        actor: body.actor || 'Owner',
+        orderNumber: 'ALL_ACTIVE',
+        details: `Stopped and silenced all active order alarms (${count} order${count === 1 ? '' : 's'}) across all connected devices.`,
+      });
+
+      sendJson(res, 200, { success: true, silencedCount: count, orders });
       return true;
     }
 

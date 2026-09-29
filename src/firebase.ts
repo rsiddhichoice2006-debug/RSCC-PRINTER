@@ -1,6 +1,9 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
+  initializeAuth,
+  browserLocalPersistence,
+  browserPopupRedirectResolver,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithEmailAndPassword,
@@ -41,7 +44,20 @@ export const firebaseConfig = {
 
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+
+// Initialize Firebase Auth using browserLocalPersistence (localStorage)
+// This avoids using IndexedDB for auth, eliminating "Database is closing/hidden" errors
+// when tabs are backgrounded, hidden, or transitioning.
+let authInstance: ReturnType<typeof getAuth>;
+try {
+  authInstance = initializeAuth(app, {
+    persistence: [browserLocalPersistence],
+    popupRedirectResolver: browserPopupRedirectResolver,
+  });
+} catch {
+  authInstance = getAuth(app);
+}
+export const auth = authInstance;
 
 // Resilient Firestore initialization with long-polling autodetect & multi-tab persistence
 let firestoreInstance: Firestore;

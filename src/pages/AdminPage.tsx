@@ -29,6 +29,7 @@ import {
   Trash2,
   Bell,
   BellRing,
+  BellOff,
   Volume2,
   VolumeX,
   X,
@@ -245,17 +246,75 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     });
   };
 
-  // Pending orders with files that require staff to click "Download ZIP" to silence the continuous alarm
+  // Helper to determine if an order's alarm has been silenced on ANY connected device
+  const isOrderAlarmSilenced = (o: OrderRecord) => {
+    return (
+      Boolean(o.alarmSilenced) ||
+      Boolean(o.zipDownloaded) ||
+      downloadedZipIds.has(o.id) ||
+      downloadedZipIds.has(o.orderNumber)
+    );
+  };
+
+  // Pending orders with files that require staff to silence alarm or download ZIP
   const pendingZipOrders = useMemo(() => {
     return orders.filter((o) => {
       const hasFiles = o.files && o.files.length > 0;
       const isActive = o.orderStatus !== 'CANCELLED' && o.orderStatus !== 'COMPLETED';
-      const isNotDownloaded = !downloadedZipIds.has(o.id) && !downloadedZipIds.has(o.orderNumber);
-      return hasFiles && isActive && isNotDownloaded;
+      return hasFiles && isActive && !isOrderAlarmSilenced(o);
     });
   }, [orders, downloadedZipIds]);
 
-  // Continuous Repeating Notification Alarm: Rings every 7 seconds until "Download ZIP" is clicked!
+  // Loading states for stopping alarms
+  const [stoppingAlarmOrderIds, setStoppingAlarmOrderIds] = useState<Set<string>>(new Set());
+  const [isStoppingAllAlarms, setIsStoppingAllAlarms] = useState<boolean>(false);
+
+  // Stop Alarm for a Single Order across all devices
+  const handleStopSingleAlarm = async (order: OrderRecord) => {
+    setStoppingAlarmOrderIds((prev) => new Set(prev).add(order.id));
+    // Immediately silence locally for zero-latency feedback
+    markZipDownloaded(order.id, order.orderNumber);
+    setNewOrderAlerts((prev) => prev.filter((o) => o.id !== order.id && o.orderNumber !== order.orderNumber));
+    try {
+      await apiClient.stopOrderAlarm(order.id, order.orderNumber);
+      showToast(`🔕 Alarm stopped for Order #${order.orderNumber} (synced across all devices)!`);
+    } catch (err: any) {
+      console.warn('Error stopping single alarm:', err);
+      showToast(`Alarm silenced locally for #${order.orderNumber}`);
+    } finally {
+      setStoppingAlarmOrderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(order.id);
+        return next;
+      });
+    }
+  };
+
+  // Stop ALL Active Order Alarms simultaneously across all logged-in devices
+  const handleStopAllAlarms = async () => {
+    if (pendingZipOrders.length === 0) {
+      showToast('No active order alarms to stop.');
+      return;
+    }
+    setIsStoppingAllAlarms(true);
+    // 1. Immediately silence all pending alarms locally
+    pendingZipOrders.forEach((o) => {
+      markZipDownloaded(o.id, o.orderNumber);
+    });
+    setNewOrderAlerts([]);
+
+    try {
+      const res = await apiClient.stopAllOrderAlarms();
+      showToast(`🔕 Stopped all alarms (${res.silencedCount || pendingZipOrders.length} orders) across all devices!`);
+    } catch (err: any) {
+      console.warn('Error stopping all alarms:', err);
+      showToast('All order alarms silenced on this device.');
+    } finally {
+      setIsStoppingAllAlarms(false);
+    }
+  };
+
+  // Continuous Repeating Notification Alarm: Rings every 7 seconds until alarm is stopped or ZIP is downloaded!
   useEffect(() => {
     if (!isAdminLoggedIn) return;
 
@@ -276,7 +335,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       }
       toggleTitle = !toggleTitle;
       document.title = toggleTitle
-        ? `🚨 (${pendingZipOrders.length}) NEW ORDER - DOWNLOAD ZIP!`
+        ? `🚨 (${pendingZipOrders.length}) NEW ORDER - STOP ALARM / ZIP!`
         : `🔔 (${pendingZipOrders.length}) PENDING ORDERS WAITING`;
     }, 7000);
 
@@ -531,14 +590,21 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const getTrimmedFilePreviewUrl = async (
     file: SerializableFileItem,
     orderId?: string,
-    fileIndex?: number
+    fileIndex?: number,
+    orderNumber?: string
   ): Promise<string | undefined> => {
-    let sourceUrl = file.previewUrl;
+    let sourceUrl = file.previewUrl || (file as any).dataUrl;
     if (!sourceUrl && orderId) {
-      sourceUrl = (await resolveFileFromStorage(orderId, file.id, fileIndex, file.name)) || undefined;
+      sourceUrl = (await resolveFileFromStorage(orderId, file.id, fileIndex, file.name, orderNumber)) || undefined;
+    }
+    if (!sourceUrl && orderNumber) {
+      sourceUrl = (await resolveFileFromStorage(orderNumber, file.id, fileIndex, file.name, orderNumber)) || undefined;
     }
     if (!sourceUrl && orderId && fileIndex !== undefined) {
       sourceUrl = `/api/orders/${orderId}/files/${fileIndex}/view`;
+    }
+    if (!sourceUrl && orderNumber && fileIndex !== undefined) {
+      sourceUrl = `/api/orders/${orderNumber}/files/${fileIndex}/view`;
     }
     if (!sourceUrl) return undefined;
     if (file.trimmedPdfCreated) return sourceUrl;
@@ -677,7 +743,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         setTimeout(() => {
           if (document.body.contains(link)) document.body.removeChild(link);
           URL.revokeObjectURL(blobUrl);
-        }, 3000);
+        }, 60000);
         showToast(`Downloaded "${safeName}" in ${formatLabel} format ✅`);
         return;
       }
@@ -691,7 +757,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       link.click();
       setTimeout(() => {
         if (document.body.contains(link)) document.body.removeChild(link);
-      }, 500);
+      }, 1000);
       showToast(`Downloading "${safeName}" in ${formatLabel} format...`);
     } catch (err) {
       console.error('Download single file error:', err);
@@ -702,18 +768,37 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   };
 
   const handleDownloadAllZip = async (order: OrderRecord) => {
-    // Silence repeating alarm immediately on Download ZIP click
+    // Silence repeating alarm immediately on Download ZIP click and sync across all devices
     markZipDownloaded(order.id, order.orderNumber);
+    apiClient.markOrderZipDownloaded(order.id, order.orderNumber).catch(() => {});
     setNewOrderAlerts((prev) => prev.filter((o) => o.id !== order.id && o.orderNumber !== order.orderNumber));
     setDownloadingZipOrderId(order.id);
     showToast(`Downloading ZIP for Order #${order.orderNumber}... Alarm silenced! 🔕✅`);
 
     try {
-      // CRITICAL: When staff portal downloads the file / ZIP, auto-update the print status to PRINTING ("Getting Prepared")
+      // Auto-update the print status to PRINTING ("Getting Prepared") while preserving full file binaries in memory
       if (order.orderStatus !== 'READY_FOR_PICKUP' && order.orderStatus !== 'COMPLETED' && order.orderStatus !== 'CANCELLED') {
         try {
           const updated = await apiClient.updateOrderStatus(order.id, 'PRINTING', undefined, order);
-          setOrders((prev) => prev.map((o) => (o.id === order.id || o.orderNumber === order.orderNumber ? updated : o)));
+          setOrders((prev) =>
+            prev.map((o) => {
+              if (o.id === order.id || o.orderNumber === order.orderNumber) {
+                const preservedFiles = (o.files || []).map((origF, fIdx) => {
+                  const newF = updated.files?.[fIdx] || origF;
+                  return {
+                    ...newF,
+                    previewUrl: origF.previewUrl || newF.previewUrl,
+                    dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
+                  };
+                });
+                return {
+                  ...updated,
+                  files: preservedFiles.length > 0 ? preservedFiles : updated.files,
+                };
+              }
+              return o;
+            })
+          );
           if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
             setSelectedOrder(updated);
           }
@@ -753,6 +838,7 @@ Special Notes  : ${order.specialInstructions || 'None'}
 PRINT SPECIFICATIONS:
 Print Type     : ${order.printType}
 Printing Side  : ${order.printingSide}
+Layout Mode    : ${order.pagesPerSheet === 2 ? `2 Pages on 1 Side (${order.nupOrientation === 'SIDE_BY_SIDE' ? 'Side-by-Side' : 'Top & Bottom'})` : '1 Page / Sheet'}
 Copies         : ${order.copies}
 Total Sheets   : ${order.totalSheets || order.totalPages}
 Rate Per Page  : ₹${order.ratePerPage}
@@ -777,12 +863,18 @@ ${order.files.map((f, i) => {
       for (let i = 0; i < order.files.length; i++) {
         const file = order.files[i];
         let added = false;
-        let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i)) || file.previewUrl;
+        let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i, order.orderNumber)) || file.previewUrl || (file as any).dataUrl;
         if (!effectiveUrl) {
-          effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name)) || undefined;
+          effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name, order.orderNumber)) || undefined;
+        }
+        if (!effectiveUrl && order.orderNumber) {
+          effectiveUrl = (await resolveFileFromStorage(order.orderNumber, file.id, i, file.name, order.orderNumber)) || undefined;
         }
         if (!effectiveUrl && order.id) {
           effectiveUrl = `/api/orders/${order.id}/files/${i}/download`;
+        }
+        if (!effectiveUrl && order.orderNumber) {
+          effectiveUrl = `/api/orders/${order.orderNumber}/files/${i}/download`;
         }
 
         let finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${(file.name || `file_${i + 1}`).replace(/[/\\?%*:|"<>]/g, '_')}`;
@@ -820,9 +912,10 @@ ${order.files.map((f, i) => {
         }
       }
 
-      // 4. Generate ZIP & Trigger download reliably
+      // 4. Generate ZIP & Trigger download reliably with proper ZIP MIME & 60s persistence
       const zipBlob = await zip.generateAsync({
         type: 'blob',
+        mimeType: 'application/zip',
         compression: 'DEFLATE',
         compressionOptions: { level: 6 },
       });
@@ -837,12 +930,13 @@ ${order.files.map((f, i) => {
         a.setAttribute('download', zipFilename);
         document.body.appendChild(a);
         a.click();
+        // Keep object URL active for 60s so repeated downloads / OS file scanners never corrupt or truncate the file!
         setTimeout(() => {
           if (document.body.contains(a)) {
             document.body.removeChild(a);
           }
           URL.revokeObjectURL(downloadUrl);
-        }, 3000);
+        }, 60000);
       } catch (blobErr) {
         const zipBase64 = await zip.generateAsync({ type: 'base64' });
         const dataUrl = `data:application/zip;base64,${zipBase64}`;
@@ -854,7 +948,7 @@ ${order.files.map((f, i) => {
         a.click();
         setTimeout(() => {
           if (document.body.contains(a)) document.body.removeChild(a);
-        }, 3000);
+        }, 10000);
       }
 
       showToast(`ZIP downloaded for Order #${order.orderNumber} ✅`);
@@ -1001,17 +1095,8 @@ ${order.files.map((f, i) => {
     }
   };
 
-  // Filtered orders list - CRITICAL RULE: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
+  // Filtered orders list - Shows all orders with comprehensive search and filtering
   const filteredOrders = orders.filter((o) => {
-    // CRITICAL: Staff portal only shows orders where payment has been successfully completed and verified
-    const isPaymentSuccessful =
-      o.paymentStatus === 'PAYMENT_VERIFIED' ||
-      o.paymentStatus === 'VERIFIED';
-
-    if (!isPaymentSuccessful) {
-      return false;
-    }
-
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
@@ -1166,11 +1251,26 @@ ${order.files.map((f, i) => {
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
+              onClick={handleStopAllAlarms}
+              disabled={isStoppingAllAlarms}
+              title="Stop and silence all order alarms across all logged-in devices immediately"
+              className="text-xs font-black px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 border border-amber-300 shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              {isStoppingAllAlarms ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
+              ) : (
+                <BellOff className="w-3.5 h-3.5 text-slate-950" />
+              )}
+              <span>Stop All Alarms 🔕</span>
+            </button>
+
+            <button
               onClick={toggleSound}
               title={soundEnabled ? 'Click to Mute New Order Chime' : 'Click to Enable New Order Chime'}
               className={`text-xs font-bold px-3 py-2 rounded-xl border transition flex items-center gap-1.5 cursor-pointer ${
                 soundEnabled
-                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-sm'
+                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm'
                   : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
               }`}
             >
@@ -1200,28 +1300,43 @@ ${order.files.map((f, i) => {
           </div>
         </div>
 
-        {/* Continuous Repeating Notification Banner - Stays active and alarms until "Download ZIP" is clicked */}
+        {/* Continuous Repeating Notification Banner - Stays active and alarms until alarms are stopped or ZIP is downloaded */}
         {pendingZipOrders.length > 0 && (
           <div className="bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white p-4 sm:p-5 rounded-2xl shadow-2xl border-2 border-red-300 animate-in slide-in-from-top-2 duration-300 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/20 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/20 pb-3">
               <div className="flex items-center gap-2.5 font-black text-sm sm:text-base uppercase tracking-wide">
                 <span className="relative flex h-3.5 w-3.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-300 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-yellow-400"></span>
                 </span>
                 <BellRing className="w-5 h-5 animate-bounce text-yellow-300 shrink-0" />
-                <span>🚨 REPEATING ALARM: {pendingZipOrders.length} Order(s) Pending ZIP Download</span>
+                <span>🚨 REPEATING ALARM: {pendingZipOrders.length} New Order(s) Awaiting Attention</span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="bg-black/40 backdrop-blur-xs font-mono font-bold text-[11px] sm:text-xs px-2.5 py-1 rounded-lg border border-yellow-300/40 text-yellow-300 flex items-center gap-1.5 shadow-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleStopAllAlarms}
+                  disabled={isStoppingAllAlarms}
+                  className="bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-black text-xs sm:text-sm px-4 py-2 rounded-xl shadow-lg transition flex items-center gap-2 cursor-pointer border-2 border-white/80 disabled:opacity-50"
+                  title="Stop all order alarms across all logged-in devices immediately"
+                >
+                  {isStoppingAllAlarms ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                  ) : (
+                    <BellOff className="w-4 h-4 text-slate-950" />
+                  )}
+                  <span>STOP ALL ALARMS (Across Devices) 🔕</span>
+                </button>
+
+                <span className="bg-black/40 backdrop-blur-xs font-mono font-bold text-[11px] sm:text-xs px-2.5 py-1.5 rounded-lg border border-yellow-300/40 text-yellow-300 flex items-center gap-1.5 shadow-xs">
                   <Volume2 className="w-3.5 h-3.5 animate-pulse text-yellow-300" />
-                  Rings every 7s until ZIP is clicked
+                  Beeps every 7s
                 </span>
               </div>
             </div>
 
             <p className="text-xs text-red-100 font-medium leading-relaxed">
-              🔔 <strong>Continuous Notification Policy:</strong> This alarm will continue beeping and notifying staff every 7 seconds until you click <strong>"Download ZIP"</strong> on the pending order(s) below.
+              🔔 <strong>Cross-Device Alarm Sync:</strong> When you stop an alarm or download a ZIP on this device, the alarm is <strong>immediately silenced across all other logged-in devices</strong> too.
             </p>
 
             <div className="space-y-2.5 pt-1">
@@ -1236,7 +1351,7 @@ ${order.files.map((f, i) => {
                       <div className="font-black text-slate-900 text-sm sm:text-base flex items-center gap-2 flex-wrap">
                         <span>Order #{alertOrder.orderNumber}</span>
                         <span className="bg-red-100 text-red-800 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
-                          ZIP Required
+                          Alarm Ringing 🔔
                         </span>
                         <span className="bg-slate-100 text-slate-800 text-[11px] font-bold px-2 py-0.5 rounded-md">
                           {alertOrder.files.length} {alertOrder.files.length === 1 ? 'file' : 'files'}
@@ -1249,8 +1364,25 @@ ${order.files.map((f, i) => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    {/* Dedicated Button to Stop Alarm for this specific order */}
                     <button
+                      type="button"
+                      onClick={() => handleStopSingleAlarm(alertOrder)}
+                      disabled={stoppingAlarmOrderIds.has(alertOrder.id)}
+                      className="bg-slate-100 hover:bg-red-50 text-red-700 hover:text-red-800 border border-slate-300 hover:border-red-300 font-extrabold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      title="Stop and silence the alarm for this order across all devices"
+                    >
+                      {stoppingAlarmOrderIds.has(alertOrder.id) ? (
+                        <RefreshCw className="w-4 h-4 animate-spin text-red-700" />
+                      ) : (
+                        <BellOff className="w-4 h-4 text-red-600" />
+                      )}
+                      <span>Stop Alarm 🔕</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => handleDownloadAllZip(alertOrder)}
                       disabled={downloadingZipOrderId === alertOrder.id}
                       className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-black text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2 cursor-pointer border border-red-500 animate-pulse hover:animate-none disabled:opacity-50"
@@ -1263,7 +1395,9 @@ ${order.files.map((f, i) => {
                       )}
                       <span>Download ZIP (Stops Alarm) 🔕</span>
                     </button>
+
                     <button
+                      type="button"
                       onClick={() => {
                         setSelectedOrder(alertOrder);
                         setActiveTab('orders');
@@ -1543,6 +1677,11 @@ ${order.files.map((f, i) => {
                               ✂️ Selected Pages Only
                             </span>
                           )}
+                          {ord.pagesPerSheet === 2 && (
+                            <span className="inline-block mt-0.5 ml-1 text-[9px] font-black bg-emerald-100 text-emerald-900 border border-emerald-300 px-1.5 py-0.2 rounded">
+                              ✨ 2-in-1 (Same Side)
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3.5 px-4">
@@ -1635,23 +1774,42 @@ ${order.files.map((f, i) => {
                             )}
 
                             {ord.files && ord.files.length > 0 && (
-                              !downloadedZipIds.has(ord.id) && !downloadedZipIds.has(ord.orderNumber) ? (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDownloadAllZip(ord);
-                                  }}
-                                  disabled={downloadingZipOrderId === ord.id}
-                                  className="bg-red-600 hover:bg-red-700 text-white font-black text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer animate-pulse shadow-sm disabled:opacity-50"
-                                  title="Click to Download ZIP and stop repeating alarm"
-                                >
-                                  {downloadingZipOrderId === ord.id ? (
-                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                  ) : (
-                                    <Download className="w-3.5 h-3.5" />
-                                  )}
-                                  <span>ZIP (Alarm 🔔)</span>
-                                </button>
+                              !isOrderAlarmSilenced(ord) ? (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleStopSingleAlarm(ord);
+                                    }}
+                                    disabled={stoppingAlarmOrderIds.has(ord.id)}
+                                    className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 font-extrabold text-[11px] px-2 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                    title="Stop and silence the alarm across all devices"
+                                  >
+                                    {stoppingAlarmOrderIds.has(ord.id) ? (
+                                      <RefreshCw className="w-3 h-3 animate-spin text-red-600" />
+                                    ) : (
+                                      <BellOff className="w-3 h-3 text-red-600" />
+                                    )}
+                                    <span>Stop Alarm</span>
+                                  </button>
+
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDownloadAllZip(ord);
+                                    }}
+                                    disabled={downloadingZipOrderId === ord.id}
+                                    className="bg-red-600 hover:bg-red-700 text-white font-black text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer animate-pulse shadow-sm disabled:opacity-50"
+                                    title="Click to Download ZIP and stop repeating alarm across all devices"
+                                  >
+                                    {downloadingZipOrderId === ord.id ? (
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3.5 h-3.5" />
+                                    )}
+                                    <span>ZIP (Alarm 🔔)</span>
+                                  </button>
+                                </div>
                               ) : (
                                 <button
                                   onClick={(e) => {
@@ -1660,14 +1818,14 @@ ${order.files.map((f, i) => {
                                   }}
                                   disabled={downloadingZipOrderId === ord.id}
                                   className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                                  title="Download all customer files as .ZIP"
+                                  title="Download all customer files as .ZIP (Alarm already silenced)"
                                 >
                                   {downloadingZipOrderId === ord.id ? (
                                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                   ) : (
                                     <Download className="w-3.5 h-3.5" />
                                   )}
-                                  <span>ZIP ✅</span>
+                                  <span>ZIP (Silenced 🔕)</span>
                                 </button>
                               )
                             )}
@@ -2990,33 +3148,60 @@ ${order.files.map((f, i) => {
 
             {/* Customer & Files details + ZIP Download Button */}
             <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between">
-                <h4 className="font-bold text-slate-900 uppercase">Customer & Files</h4>
-                <button
-                  onClick={() => handleDownloadAllZip(selectedOrder)}
-                  disabled={downloadingZipOrderId === selectedOrder.id}
-                  className={`font-bold text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow cursor-pointer disabled:opacity-50 ${
-                    !downloadedZipIds.has(selectedOrder.id) && !downloadedZipIds.has(selectedOrder.orderNumber)
-                      ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  }`}
-                  title={
-                    !downloadedZipIds.has(selectedOrder.id) && !downloadedZipIds.has(selectedOrder.orderNumber)
-                      ? 'Download ZIP to stop repeating notification alarm'
-                      : 'Download all customer files as .ZIP'
-                  }
-                >
-                  {downloadingZipOrderId === selectedOrder.id ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Download className="w-3.5 h-3.5" />
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <h4 className="font-bold text-slate-900 uppercase">Customer & Files</h4>
+                  {isOrderAlarmSilenced(selectedOrder) && (
+                    <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      ✓ Alarm Silenced
+                    </span>
                   )}
-                  <span>
-                    {!downloadedZipIds.has(selectedOrder.id) && !downloadedZipIds.has(selectedOrder.orderNumber)
-                      ? 'Download ZIP (Silences Alarm) 🔔'
-                      : 'Download All Files (.ZIP) ✅'}
-                  </span>
-                </button>
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {!isOrderAlarmSilenced(selectedOrder) && (
+                    <button
+                      type="button"
+                      onClick={() => handleStopSingleAlarm(selectedOrder)}
+                      disabled={stoppingAlarmOrderIds.has(selectedOrder.id)}
+                      className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 font-extrabold text-xs px-3 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      title="Stop alarm across all devices"
+                    >
+                      {stoppingAlarmOrderIds.has(selectedOrder.id) ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-600" />
+                      ) : (
+                        <BellOff className="w-3.5 h-3.5 text-red-600" />
+                      )}
+                      <span>Stop Alarm 🔕</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => handleDownloadAllZip(selectedOrder)}
+                    disabled={downloadingZipOrderId === selectedOrder.id}
+                    className={`font-bold text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow cursor-pointer disabled:opacity-50 ${
+                      !isOrderAlarmSilenced(selectedOrder)
+                        ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    }`}
+                    title={
+                      !isOrderAlarmSilenced(selectedOrder)
+                        ? 'Download ZIP and stop repeating notification alarm across all devices'
+                        : 'Download all customer files as .ZIP'
+                    }
+                  >
+                    {downloadingZipOrderId === selectedOrder.id ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {!isOrderAlarmSilenced(selectedOrder)
+                        ? 'Download ZIP (Silences Alarm) 🔔'
+                        : 'Download All Files (.ZIP) ✅'}
+                    </span>
+                  </button>
+                </div>
               </div>
 
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
@@ -3060,6 +3245,11 @@ ${order.files.map((f, i) => {
                               {isTrimmed && (
                                 <span className="bg-indigo-100 text-indigo-900 border border-indigo-200 text-[10px] font-black px-1.5 py-0.2 rounded-md">
                                   ✂️ Only {f.selectedPagesSummary || f.pageSelectionMode}
+                                </span>
+                              )}
+                              {(f.pagesPerSheet === 2 || selectedOrder.pagesPerSheet === 2) && (
+                                <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 text-[10px] font-black px-1.5 py-0.2 rounded-md">
+                                  ✨ 2 Pages on 1 Side ({f.nupOrientation || selectedOrder.nupOrientation === 'TOP_BOTTOM' ? 'Top/Bottom' : 'Side-by-Side'})
                                 </span>
                               )}
                             </div>
