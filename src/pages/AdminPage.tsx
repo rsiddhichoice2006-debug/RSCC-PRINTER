@@ -590,21 +590,14 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const getTrimmedFilePreviewUrl = async (
     file: SerializableFileItem,
     orderId?: string,
-    fileIndex?: number,
-    orderNumber?: string
+    fileIndex?: number
   ): Promise<string | undefined> => {
-    let sourceUrl = file.previewUrl || (file as any).dataUrl;
+    let sourceUrl = file.previewUrl;
     if (!sourceUrl && orderId) {
-      sourceUrl = (await resolveFileFromStorage(orderId, file.id, fileIndex, file.name, orderNumber)) || undefined;
-    }
-    if (!sourceUrl && orderNumber) {
-      sourceUrl = (await resolveFileFromStorage(orderNumber, file.id, fileIndex, file.name, orderNumber)) || undefined;
+      sourceUrl = (await resolveFileFromStorage(orderId, file.id, fileIndex, file.name)) || undefined;
     }
     if (!sourceUrl && orderId && fileIndex !== undefined) {
       sourceUrl = `/api/orders/${orderId}/files/${fileIndex}/view`;
-    }
-    if (!sourceUrl && orderNumber && fileIndex !== undefined) {
-      sourceUrl = `/api/orders/${orderNumber}/files/${fileIndex}/view`;
     }
     if (!sourceUrl) return undefined;
     if (file.trimmedPdfCreated) return sourceUrl;
@@ -743,7 +736,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         setTimeout(() => {
           if (document.body.contains(link)) document.body.removeChild(link);
           URL.revokeObjectURL(blobUrl);
-        }, 60000);
+        }, 3000);
         showToast(`Downloaded "${safeName}" in ${formatLabel} format ✅`);
         return;
       }
@@ -757,7 +750,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       link.click();
       setTimeout(() => {
         if (document.body.contains(link)) document.body.removeChild(link);
-      }, 1000);
+      }, 500);
       showToast(`Downloading "${safeName}" in ${formatLabel} format...`);
     } catch (err) {
       console.error('Download single file error:', err);
@@ -776,29 +769,11 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     showToast(`Downloading ZIP for Order #${order.orderNumber}... Alarm silenced! 🔕✅`);
 
     try {
-      // Auto-update the print status to PRINTING ("Getting Prepared") while preserving full file binaries in memory
+      // CRITICAL: When staff portal downloads the file / ZIP, auto-update the print status to PRINTING ("Getting Prepared")
       if (order.orderStatus !== 'READY_FOR_PICKUP' && order.orderStatus !== 'COMPLETED' && order.orderStatus !== 'CANCELLED') {
         try {
           const updated = await apiClient.updateOrderStatus(order.id, 'PRINTING', undefined, order);
-          setOrders((prev) =>
-            prev.map((o) => {
-              if (o.id === order.id || o.orderNumber === order.orderNumber) {
-                const preservedFiles = (o.files || []).map((origF, fIdx) => {
-                  const newF = updated.files?.[fIdx] || origF;
-                  return {
-                    ...newF,
-                    previewUrl: origF.previewUrl || newF.previewUrl,
-                    dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
-                  };
-                });
-                return {
-                  ...updated,
-                  files: preservedFiles.length > 0 ? preservedFiles : updated.files,
-                };
-              }
-              return o;
-            })
-          );
+          setOrders((prev) => prev.map((o) => (o.id === order.id || o.orderNumber === order.orderNumber ? updated : o)));
           if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
             setSelectedOrder(updated);
           }
@@ -863,18 +838,12 @@ ${order.files.map((f, i) => {
       for (let i = 0; i < order.files.length; i++) {
         const file = order.files[i];
         let added = false;
-        let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i, order.orderNumber)) || file.previewUrl || (file as any).dataUrl;
+        let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i)) || file.previewUrl;
         if (!effectiveUrl) {
-          effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name, order.orderNumber)) || undefined;
-        }
-        if (!effectiveUrl && order.orderNumber) {
-          effectiveUrl = (await resolveFileFromStorage(order.orderNumber, file.id, i, file.name, order.orderNumber)) || undefined;
+          effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name)) || undefined;
         }
         if (!effectiveUrl && order.id) {
           effectiveUrl = `/api/orders/${order.id}/files/${i}/download`;
-        }
-        if (!effectiveUrl && order.orderNumber) {
-          effectiveUrl = `/api/orders/${order.orderNumber}/files/${i}/download`;
         }
 
         let finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${(file.name || `file_${i + 1}`).replace(/[/\\?%*:|"<>]/g, '_')}`;
@@ -912,10 +881,9 @@ ${order.files.map((f, i) => {
         }
       }
 
-      // 4. Generate ZIP & Trigger download reliably with proper ZIP MIME & 60s persistence
+      // 4. Generate ZIP & Trigger download reliably
       const zipBlob = await zip.generateAsync({
         type: 'blob',
-        mimeType: 'application/zip',
         compression: 'DEFLATE',
         compressionOptions: { level: 6 },
       });
@@ -930,13 +898,12 @@ ${order.files.map((f, i) => {
         a.setAttribute('download', zipFilename);
         document.body.appendChild(a);
         a.click();
-        // Keep object URL active for 60s so repeated downloads / OS file scanners never corrupt or truncate the file!
         setTimeout(() => {
           if (document.body.contains(a)) {
             document.body.removeChild(a);
           }
           URL.revokeObjectURL(downloadUrl);
-        }, 60000);
+        }, 3000);
       } catch (blobErr) {
         const zipBase64 = await zip.generateAsync({ type: 'base64' });
         const dataUrl = `data:application/zip;base64,${zipBase64}`;
@@ -948,7 +915,7 @@ ${order.files.map((f, i) => {
         a.click();
         setTimeout(() => {
           if (document.body.contains(a)) document.body.removeChild(a);
-        }, 10000);
+        }, 3000);
       }
 
       showToast(`ZIP downloaded for Order #${order.orderNumber} ✅`);
@@ -1095,8 +1062,17 @@ ${order.files.map((f, i) => {
     }
   };
 
-  // Filtered orders list - Shows all orders with comprehensive search and filtering
+  // Filtered orders list - CRITICAL RULE: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
   const filteredOrders = orders.filter((o) => {
+    // CRITICAL: Staff portal only shows orders where payment has been successfully completed and verified
+    const isPaymentSuccessful =
+      o.paymentStatus === 'PAYMENT_VERIFIED' ||
+      o.paymentStatus === 'VERIFIED';
+
+    if (!isPaymentSuccessful) {
+      return false;
+    }
+
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
@@ -1251,26 +1227,11 @@ ${order.files.map((f, i) => {
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              type="button"
-              onClick={handleStopAllAlarms}
-              disabled={isStoppingAllAlarms}
-              title="Stop and silence all order alarms across all logged-in devices immediately"
-              className="text-xs font-black px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 border border-amber-300 shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-            >
-              {isStoppingAllAlarms ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
-              ) : (
-                <BellOff className="w-3.5 h-3.5 text-slate-950" />
-              )}
-              <span>Stop All Alarms 🔕</span>
-            </button>
-
-            <button
               onClick={toggleSound}
               title={soundEnabled ? 'Click to Mute New Order Chime' : 'Click to Enable New Order Chime'}
               className={`text-xs font-bold px-3 py-2 rounded-xl border transition flex items-center gap-1.5 cursor-pointer ${
                 soundEnabled
-                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm'
+                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-sm'
                   : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
               }`}
             >

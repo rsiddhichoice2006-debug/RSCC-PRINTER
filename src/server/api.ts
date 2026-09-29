@@ -108,7 +108,7 @@ export interface OrderItem {
   printingSide: 'SINGLE' | 'BOTH';
   ratePerPage: number;
   totalAmount: number;
-  paymentStatus: 'PAYMENT_PENDING' | 'PAYMENT_VERIFICATION_REQUIRED' | 'PAYMENT_VERIFIED' | 'PAYMENT_FAILED' | 'VERIFIED';
+  paymentStatus: 'PAYMENT_PENDING' | 'PAYMENT_VERIFICATION_REQUIRED' | 'PAYMENT_VERIFIED' | 'PAYMENT_FAILED';
   orderStatus: 'PENDING' | 'PLACED' | 'CONFIRMED' | 'PRINTING' | 'READY_FOR_PICKUP' | 'COMPLETED' | 'CANCELLED';
   paymentReference?: string;
   paymentMethod?: string;
@@ -797,19 +797,19 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
-    // 4. GET /api/orders - List orders for Admin Portal (Shows all placed orders so counter staff can print and verify)
+    // 4. GET /api/orders - List orders for Admin Portal (CRITICAL: DO NOT SHOW ORDER IN STAFF PORTAL UNLESS PAYMENT IS SUCCESSFUL)
     if (pathname === '/api/orders' && method === 'GET') {
       const search = url.searchParams.get('search')?.toLowerCase();
       const status = url.searchParams.get('status');
       const paymentStatus = url.searchParams.get('paymentStatus');
-      const includeUnpaid = url.searchParams.get('includeUnpaid');
+      const includeUnpaid = url.searchParams.get('includeUnpaid') === 'true';
 
       let filtered = [...orders];
 
-      // If client explicitly requests only paid/verified orders
-      if (includeUnpaid === 'false') {
+      // CRITICAL RULE: Staff portal must only show orders with successful payment
+      if (!includeUnpaid) {
         filtered = filtered.filter(
-          (o) => o.paymentStatus === 'PAYMENT_VERIFIED' || o.paymentStatus === 'VERIFIED'
+          (o) => o.paymentStatus === 'PAYMENT_VERIFIED'
         );
       }
 
@@ -1366,8 +1366,7 @@ Return your judgment strictly in JSON format:
       }
 
       const file = order.files[fileIndex];
-      const sourceData = file.previewUrl || file.dataUrl;
-      if (!sourceData) {
+      if (!file.previewUrl) {
         sendJson(res, 404, { success: false, error: 'File binary not available on server' });
         return true;
       }
@@ -1376,19 +1375,15 @@ Return your judgment strictly in JSON format:
         let buffer: Buffer;
         let mimeType = file.type || 'application/octet-stream';
 
-        if (sourceData.startsWith('data:')) {
-          const commaIdx = sourceData.indexOf(',');
-          const meta = sourceData.substring(0, commaIdx);
-          const rawB64 = sourceData.substring(commaIdx + 1);
+        if (file.previewUrl.startsWith('data:')) {
+          const commaIdx = file.previewUrl.indexOf(',');
+          const meta = file.previewUrl.substring(0, commaIdx);
+          const rawB64 = file.previewUrl.substring(commaIdx + 1);
           const mimeMatch = meta.match(/^data:([^;,]+)/i);
           if (mimeMatch) mimeType = mimeMatch[1].toLowerCase();
           buffer = Buffer.from(rawB64, 'base64');
-        } else if (sourceData.startsWith('http://') || sourceData.startsWith('https://')) {
-          const fetched = await fetch(sourceData);
-          const arrayBuf = await fetched.arrayBuffer();
-          buffer = Buffer.from(arrayBuf);
         } else {
-          buffer = Buffer.from(sourceData, 'base64');
+          buffer = Buffer.from(file.previewUrl, 'base64');
         }
 
         const safeFilename = encodeURIComponent(file.name || `file_${fileIndex + 1}`);
@@ -1495,19 +1490,6 @@ Return your judgment strictly in JSON format:
       const oldStatus = orders[orderIndex].orderStatus;
       orders[orderIndex].orderStatus = body.status;
       orders[orderIndex].updatedAt = new Date().toISOString();
-
-      // Preserve full file binaries across status changes
-      if (body.orderData?.files && Array.isArray(body.orderData.files)) {
-        const existingFiles = orders[orderIndex].files || [];
-        orders[orderIndex].files = body.orderData.files.map((newF: any, fIdx: number) => {
-          const oldF = existingFiles[fIdx];
-          return {
-            ...newF,
-            previewUrl: oldF?.previewUrl || newF.previewUrl,
-            dataUrl: oldF?.dataUrl || newF.dataUrl,
-          };
-        });
-      }
 
       if (body.whatsappNotified || body.status === 'READY_FOR_PICKUP') {
         orders[orderIndex].whatsappNotifiedAt = body.whatsappNotifiedAt || new Date().toISOString();

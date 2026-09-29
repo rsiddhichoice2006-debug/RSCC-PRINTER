@@ -922,17 +922,21 @@ export const apiClient = {
       }
     });
 
-    // All orders are retrieved for the staff portal desk to inspect, verify, and print
-    const allOrders = Array.from(ordersMap.values());
+    // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
+    const paidOnlyOrders = Array.from(ordersMap.values()).filter(
+      (o) =>
+        o.paymentStatus === 'PAYMENT_VERIFIED' ||
+        o.paymentStatus === 'VERIFIED'
+    );
 
     // Deduplicate and sort newest first
-    allOrders.sort(
+    paidOnlyOrders.sort(
       (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
 
-    Storage.saveOrders(allOrders);
+    Storage.saveOrders(paidOnlyOrders);
 
-    let filtered = allOrders;
+    let filtered = paidOnlyOrders;
     if (params?.search) {
       const q = params.search.toLowerCase();
       filtered = filtered.filter(
@@ -960,7 +964,13 @@ export const apiClient = {
 
     const emitMergedOrders = () => {
       if (!isSubscribed) return;
+      // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
       const sorted = Array.from(knownOrdersMap.values())
+        .filter(
+          (o) =>
+            o.paymentStatus === 'PAYMENT_VERIFIED' ||
+            o.paymentStatus === 'VERIFIED'
+        )
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       callback(sorted);
     };
@@ -1368,19 +1378,7 @@ export const apiClient = {
         (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
       );
       if (idx >= 0) {
-        const existing = orders[idx];
-        const mergedFiles = (existing.files || []).map((origF, fIdx) => {
-          const newF = backendData.order.files?.[fIdx] || origF;
-          return {
-            ...newF,
-            previewUrl: origF.previewUrl || newF.previewUrl,
-            dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
-          };
-        });
-        orders[idx] = {
-          ...backendData.order,
-          files: mergedFiles.length > 0 ? mergedFiles : (backendData.order.files || existing.files),
-        };
+        orders[idx] = backendData.order;
       } else {
         orders.unshift(backendData.order);
       }
@@ -1453,19 +1451,7 @@ export const apiClient = {
         (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
       );
       if (idx >= 0) {
-        const existing = orders[idx];
-        const mergedFiles = (existing.files || []).map((origF, fIdx) => {
-          const newF = backendData.order.files?.[fIdx] || origF;
-          return {
-            ...newF,
-            previewUrl: origF.previewUrl || newF.previewUrl,
-            dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
-          };
-        });
-        orders[idx] = {
-          ...backendData.order,
-          files: mergedFiles.length > 0 ? mergedFiles : (backendData.order.files || existing.files),
-        };
+        orders[idx] = backendData.order;
       } else {
         orders.unshift(backendData.order);
       }
