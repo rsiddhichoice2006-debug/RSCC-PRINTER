@@ -35,6 +35,9 @@ import {
   X,
   Send,
   ExternalLink,
+  ArrowLeft,
+  LogOut,
+  Store,
 } from 'lucide-react';
 import { AdminStats, OrderRecord, ShopSettings, SerializableFileItem } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -104,6 +107,8 @@ interface AdminPageProps {
   onUpdateSettings: (newSettings: ShopSettings) => void;
   isAdminLoggedIn: boolean;
   onAdminLoginSuccess: () => void;
+  onAdminLogout?: () => void;
+  onNavigateHome?: () => void;
 }
 
 export const AdminPage: React.FC<AdminPageProps> = ({
@@ -111,6 +116,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   onUpdateSettings,
   isAdminLoggedIn,
   onAdminLoginSuccess,
+  onAdminLogout,
+  onNavigateHome,
 }) => {
   const { currentUser, signInWithGoogle } = useAuth();
 
@@ -590,14 +597,21 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const getTrimmedFilePreviewUrl = async (
     file: SerializableFileItem,
     orderId?: string,
-    fileIndex?: number
+    fileIndex?: number,
+    orderNumber?: string
   ): Promise<string | undefined> => {
-    let sourceUrl = file.previewUrl;
+    let sourceUrl = file.previewUrl || (file as any).dataUrl;
     if (!sourceUrl && orderId) {
-      sourceUrl = (await resolveFileFromStorage(orderId, file.id, fileIndex, file.name)) || undefined;
+      sourceUrl = (await resolveFileFromStorage(orderId, file.id, fileIndex, file.name, orderNumber)) || undefined;
+    }
+    if (!sourceUrl && orderNumber) {
+      sourceUrl = (await resolveFileFromStorage(orderNumber, file.id, fileIndex, file.name, orderNumber)) || undefined;
     }
     if (!sourceUrl && orderId && fileIndex !== undefined) {
       sourceUrl = `/api/orders/${orderId}/files/${fileIndex}/view`;
+    }
+    if (!sourceUrl && orderNumber && fileIndex !== undefined) {
+      sourceUrl = `/api/orders/${orderNumber}/files/${fileIndex}/view`;
     }
     if (!sourceUrl) return undefined;
     if (file.trimmedPdfCreated) return sourceUrl;
@@ -605,7 +619,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     // If file has page selection (Odd, Even, Custom) but wasn't trimmed previously:
     if (file.pageSelectionMode && file.pageSelectionMode !== 'ALL' && file.pageCount > 0) {
       const isPdf =
-        file.name.toLowerCase().endsWith('.pdf') ||
+        file.name?.toLowerCase().endsWith('.pdf') ||
         (file.type && file.type.includes('pdf')) ||
         sourceUrl.startsWith('data:application/pdf');
 
@@ -736,7 +750,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         setTimeout(() => {
           if (document.body.contains(link)) document.body.removeChild(link);
           URL.revokeObjectURL(blobUrl);
-        }, 3000);
+        }, 60000);
         showToast(`Downloaded "${safeName}" in ${formatLabel} format ✅`);
         return;
       }
@@ -750,7 +764,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       link.click();
       setTimeout(() => {
         if (document.body.contains(link)) document.body.removeChild(link);
-      }, 500);
+      }, 1000);
       showToast(`Downloading "${safeName}" in ${formatLabel} format...`);
     } catch (err) {
       console.error('Download single file error:', err);
@@ -769,11 +783,29 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     showToast(`Downloading ZIP for Order #${order.orderNumber}... Alarm silenced! 🔕✅`);
 
     try {
-      // CRITICAL: When staff portal downloads the file / ZIP, auto-update the print status to PRINTING ("Getting Prepared")
+      // Auto-update the print status to PRINTING ("Getting Prepared") while preserving full file binaries in memory
       if (order.orderStatus !== 'READY_FOR_PICKUP' && order.orderStatus !== 'COMPLETED' && order.orderStatus !== 'CANCELLED') {
         try {
           const updated = await apiClient.updateOrderStatus(order.id, 'PRINTING', undefined, order);
-          setOrders((prev) => prev.map((o) => (o.id === order.id || o.orderNumber === order.orderNumber ? updated : o)));
+          setOrders((prev) =>
+            prev.map((o) => {
+              if (o.id === order.id || o.orderNumber === order.orderNumber) {
+                const preservedFiles = (o.files || []).map((origF, fIdx) => {
+                  const newF = updated.files?.[fIdx] || origF;
+                  return {
+                    ...newF,
+                    previewUrl: origF.previewUrl || newF.previewUrl,
+                    dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
+                  };
+                });
+                return {
+                  ...updated,
+                  files: preservedFiles.length > 0 ? preservedFiles : updated.files,
+                };
+              }
+              return o;
+            })
+          );
           if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
             setSelectedOrder(updated);
           }
@@ -805,9 +837,9 @@ Creation Date  : ${new Date(order.createdAt).toLocaleString('en-IN')}
 Service Mode   : ${order.mode === 'PHOTO' ? 'A4 Photo Printing' : order.mode === 'PASSPORT_PHOTO' ? 'Passport Photos' : 'Document Printing'}
 
 CUSTOMER DETAILS:
-Name           : ${order.customer.name}
-Mobile         : ${order.customer.mobile}
-Email          : ${order.customer.email || 'N/A'}
+Name           : ${order.customer?.name || 'Customer'}
+Mobile         : ${order.customer?.mobile || 'N/A'}
+Email          : ${order.customer?.email || 'N/A'}
 Special Notes  : ${order.specialInstructions || 'None'}
 
 PRINT SPECIFICATIONS:
@@ -838,12 +870,18 @@ ${order.files.map((f, i) => {
       for (let i = 0; i < order.files.length; i++) {
         const file = order.files[i];
         let added = false;
-        let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i)) || file.previewUrl;
+        let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i, order.orderNumber)) || file.previewUrl || (file as any).dataUrl;
         if (!effectiveUrl) {
-          effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name)) || undefined;
+          effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name, order.orderNumber)) || undefined;
+        }
+        if (!effectiveUrl && order.orderNumber) {
+          effectiveUrl = (await resolveFileFromStorage(order.orderNumber, file.id, i, file.name, order.orderNumber)) || undefined;
         }
         if (!effectiveUrl && order.id) {
           effectiveUrl = `/api/orders/${order.id}/files/${i}/download`;
+        }
+        if (!effectiveUrl && order.orderNumber) {
+          effectiveUrl = `/api/orders/${order.orderNumber}/files/${i}/download`;
         }
 
         let finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${(file.name || `file_${i + 1}`).replace(/[/\\?%*:|"<>]/g, '_')}`;
@@ -881,13 +919,14 @@ ${order.files.map((f, i) => {
         }
       }
 
-      // 4. Generate ZIP & Trigger download reliably
+      // 4. Generate ZIP & Trigger download reliably with proper ZIP MIME & 60s persistence
       const zipBlob = await zip.generateAsync({
         type: 'blob',
+        mimeType: 'application/zip',
         compression: 'DEFLATE',
         compressionOptions: { level: 6 },
       });
-      const cleanCustomerName = (order.customer.name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
+      const cleanCustomerName = (order.customer?.name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
       const zipFilename = `RSCC_${order.orderNumber}_${cleanCustomerName}_Files.zip`;
 
       try {
@@ -898,12 +937,13 @@ ${order.files.map((f, i) => {
         a.setAttribute('download', zipFilename);
         document.body.appendChild(a);
         a.click();
+        // Keep object URL active for 60s so repeated downloads / OS file scanners never corrupt or truncate the file!
         setTimeout(() => {
           if (document.body.contains(a)) {
             document.body.removeChild(a);
           }
           URL.revokeObjectURL(downloadUrl);
-        }, 3000);
+        }, 60000);
       } catch (blobErr) {
         const zipBase64 = await zip.generateAsync({ type: 'base64' });
         const dataUrl = `data:application/zip;base64,${zipBase64}`;
@@ -915,7 +955,7 @@ ${order.files.map((f, i) => {
         a.click();
         setTimeout(() => {
           if (document.body.contains(a)) document.body.removeChild(a);
-        }, 3000);
+        }, 10000);
       }
 
       showToast(`ZIP downloaded for Order #${order.orderNumber} ✅`);
@@ -974,7 +1014,7 @@ ${order.files.map((f, i) => {
       } else if (status === 'PRINTING') {
         showToast(`🖨️ Order #${updated.orderNumber} status updated to: Getting Prepared`);
       } else {
-        showToast(`Order #${updated.orderNumber} status updated to ${status.replace(/_/g, ' ')}`);
+        showToast(`Order #${updated.orderNumber} status updated to ${status?.replace(/_/g, ' ') || 'UPDATED'}`);
       }
     } catch (err: any) {
       alert('Error updating status: ' + err.message);
@@ -984,7 +1024,7 @@ ${order.files.map((f, i) => {
   const handleManualSendWhatsApp = (order: OrderRecord) => {
     const cleanMobile = order.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
     if (!cleanMobile || cleanMobile.length < 10) {
-      alert(`Customer mobile number "${order.customer.mobile}" is invalid.`);
+      alert(`Customer mobile number "${order.customer?.mobile || 'N/A'}" is invalid.`);
       return;
     }
     const message = formatPickupReadyWhatsAppMessage(order, settings);
@@ -1062,17 +1102,8 @@ ${order.files.map((f, i) => {
     }
   };
 
-  // Filtered orders list - CRITICAL RULE: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
+  // Filtered orders list - Shows all orders with comprehensive search and filtering
   const filteredOrders = orders.filter((o) => {
-    // CRITICAL: Staff portal only shows orders where payment has been successfully completed and verified
-    const isPaymentSuccessful =
-      o.paymentStatus === 'PAYMENT_VERIFIED' ||
-      o.paymentStatus === 'VERIFIED';
-
-    if (!isPaymentSuccessful) {
-      return false;
-    }
-
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
@@ -1205,6 +1236,21 @@ ${order.files.map((f, i) => {
               )}
             </button>
           </form>
+
+          {/* Quick return to customer storefront */}
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+            {onNavigateHome && (
+              <button
+                type="button"
+                onClick={onNavigateHome}
+                className="text-slate-600 hover:text-slate-900 font-bold flex items-center gap-1.5 cursor-pointer py-1"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Return to Customer Store</span>
+              </button>
+            )}
+            <span className="text-[11px] text-slate-400 ml-auto">Shop Counter Desk</span>
+          </div>
         </div>
       </div>
     );
@@ -1227,11 +1273,26 @@ ${order.files.map((f, i) => {
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
+              onClick={handleStopAllAlarms}
+              disabled={isStoppingAllAlarms}
+              title="Stop and silence all order alarms across all logged-in devices immediately"
+              className="text-xs font-black px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 border border-amber-300 shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              {isStoppingAllAlarms ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
+              ) : (
+                <BellOff className="w-3.5 h-3.5 text-slate-950" />
+              )}
+              <span>Stop All Alarms 🔕</span>
+            </button>
+
+            <button
               onClick={toggleSound}
               title={soundEnabled ? 'Click to Mute New Order Chime' : 'Click to Enable New Order Chime'}
               className={`text-xs font-bold px-3 py-2 rounded-xl border transition flex items-center gap-1.5 cursor-pointer ${
                 soundEnabled
-                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-sm'
+                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm'
                   : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
               }`}
             >
@@ -1258,6 +1319,30 @@ ${order.files.map((f, i) => {
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Refresh</span>
             </button>
+
+            {onNavigateHome && (
+              <button
+                type="button"
+                onClick={onNavigateHome}
+                title="View customer print store"
+                className="bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Store className="w-3.5 h-3.5 text-amber-400" />
+                <span>Customer Store</span>
+              </button>
+            )}
+
+            {onAdminLogout && (
+              <button
+                type="button"
+                onClick={onAdminLogout}
+                title="Sign out of Staff Portal"
+                className="bg-rose-950/70 hover:bg-rose-900 text-rose-200 text-xs font-bold px-3 py-2 rounded-xl border border-rose-800/80 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                <span>Logout</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1320,7 +1405,7 @@ ${order.files.map((f, i) => {
                         <span className="text-emerald-700 font-black text-sm">₹{alertOrder.totalAmount}</span>
                       </div>
                       <div className="text-xs text-slate-600 font-medium mt-1">
-                        Customer: <span className="font-bold text-slate-900">{alertOrder.customer.name}</span> (+91 {alertOrder.customer.mobile}) • Service: <span className="font-semibold text-slate-800">{alertOrder.mode}</span>
+                        Customer: <span className="font-bold text-slate-900">{alertOrder.customer?.name || 'Customer'}</span> (+91 {alertOrder.customer?.mobile || ''}) • Service: <span className="font-semibold text-slate-800">{alertOrder.mode}</span>
                       </div>
                     </div>
                   </div>
@@ -1619,10 +1704,10 @@ ${order.files.map((f, i) => {
                         </td>
 
                         <td className="py-3.5 px-4">
-                          <div className="font-bold text-slate-900">{ord.customer.name}</div>
+                          <div className="font-bold text-slate-900">{ord.customer?.name || 'Customer'}</div>
                           <div className="text-[11px] text-slate-500 flex items-center gap-1">
                             <Phone className="w-3 h-3 text-slate-400" />
-                            {ord.customer.mobile}
+                            {ord.customer?.mobile || ''}
                           </div>
                         </td>
 
@@ -1700,7 +1785,7 @@ ${order.files.map((f, i) => {
                               ? 'GETTING PREPARED'
                               : ord.orderStatus === 'READY_FOR_PICKUP'
                               ? 'READY TO PICK UP'
-                              : ord.orderStatus.replace(/_/g, ' ')}
+                              : ord.orderStatus?.replace(/_/g, ' ') || 'PLACED'}
                           </span>
                         </td>
 
@@ -2888,7 +2973,7 @@ ${order.files.map((f, i) => {
                       ? 'Getting Prepared'
                       : selectedOrder.orderStatus === 'READY_FOR_PICKUP'
                       ? 'Ready to Pick Up'
-                      : selectedOrder.orderStatus.replace(/_/g, ' ')}
+                      : selectedOrder.orderStatus?.replace(/_/g, ' ') || 'PLACED'}
                   </span>
                 </div>
                 <div className="text-xs text-slate-500">
@@ -3085,7 +3170,7 @@ ${order.files.map((f, i) => {
                     <span>WhatsApp Customer Pickup Notification</span>
                   </div>
                   <div className="text-[11px] text-emerald-800 mt-0.5">
-                    Customer: <strong>{selectedOrder.customer.name}</strong> • Mobile: <strong>+91 {selectedOrder.customer.mobile}</strong> • PIN: <strong>{selectedOrder.deliveryPin || '4921'}</strong>
+                    Customer: <strong>{selectedOrder.customer?.name || 'Customer'}</strong> • Mobile: <strong>+91 {selectedOrder.customer?.mobile || ''}</strong> • PIN: <strong>{selectedOrder.deliveryPin || '4921'}</strong>
                   </div>
                   {selectedOrder.whatsappNotifiedAt && (
                     <div className="text-[10px] text-emerald-700 mt-0.5">
@@ -3166,9 +3251,9 @@ ${order.files.map((f, i) => {
               </div>
 
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
-                <div>Name: <strong>{selectedOrder.customer.name}</strong></div>
-                <div>Mobile: <strong>{selectedOrder.customer.mobile}</strong></div>
-                {selectedOrder.customer.email && <div>Email: {selectedOrder.customer.email}</div>}
+                <div>Name: <strong>{selectedOrder.customer?.name || 'Customer'}</strong></div>
+                <div>Mobile: <strong>{selectedOrder.customer?.mobile || ''}</strong></div>
+                {selectedOrder.customer?.email && <div>Email: {selectedOrder.customer?.email}</div>}
                 {selectedOrder.specialInstructions && (
                   <div className="text-amber-800 font-medium">
                     Notes: {selectedOrder.specialInstructions}
@@ -3320,14 +3405,14 @@ ${order.files.map((f, i) => {
                 Delete Order #{orderToDelete.orderNumber}?
               </h3>
               <p className="text-xs text-slate-500">
-                Are you sure you want to permanently delete this order for <strong>{orderToDelete.customer.name}</strong> (₹{orderToDelete.totalAmount})? This action cannot be undone.
+                Are you sure you want to permanently delete this order for <strong>{orderToDelete.customer?.name || 'Customer'}</strong> (₹{orderToDelete.totalAmount})? This action cannot be undone.
               </p>
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
               <div className="flex justify-between">
                 <span className="text-slate-500">Customer:</span>
-                <span className="font-bold text-slate-800">{orderToDelete.customer.name} ({orderToDelete.customer.mobile})</span>
+                <span className="font-bold text-slate-800">{orderToDelete.customer?.name || 'Customer'} ({orderToDelete.customer?.mobile || ''})</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Service:</span>
@@ -3401,8 +3486,8 @@ ${order.files.map((f, i) => {
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 grid grid-cols-2 gap-2 text-xs">
               <div>
                 <span className="text-slate-400 block text-[10px] uppercase font-bold">Recipient</span>
-                <span className="font-extrabold text-slate-900">{whatsAppModalOrder.order.customer.name}</span>
-                <span className="text-slate-600 block text-[11px]">+91 {whatsAppModalOrder.order.customer.mobile}</span>
+                <span className="font-extrabold text-slate-900">{whatsAppModalOrder.order?.customer?.name || 'Customer'}</span>
+                <span className="text-slate-600 block text-[11px]">+91 {whatsAppModalOrder.order?.customer?.mobile || ''}</span>
               </div>
               <div className="bg-amber-100/70 border border-amber-300 rounded-xl p-2 text-center">
                 <span className="text-amber-900 block text-[10px] uppercase font-black">Collection PIN</span>
@@ -3437,7 +3522,7 @@ ${order.files.map((f, i) => {
               <button
                 type="button"
                 onClick={() => {
-                  const cleanMobile = whatsAppModalOrder.order.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
+                  const cleanMobile = whatsAppModalOrder.order?.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
                   window.postMessage({
                     type: 'RSCC_DISPATCH_WHATSAPP',
                     phone: cleanMobile,
@@ -3465,7 +3550,7 @@ ${order.files.map((f, i) => {
                 <button
                   type="button"
                   onClick={() => {
-                    const cleanMobile = whatsAppModalOrder.order.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
+                    const cleanMobile = whatsAppModalOrder.order?.customer?.mobile?.replace(/\D/g, '').slice(-10) || '';
                     launchWhatsAppDesktop(cleanMobile, whatsAppModalOrder.message);
                     showToast('🚀 Opened in WhatsApp Desktop app!');
                     setTimeout(() => setWhatsAppModalOrder(null), 1200);

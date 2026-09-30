@@ -13,7 +13,7 @@ export interface WhatsAppNotificationResult {
  */
 export function formatPickupReadyWhatsAppMessage(order: OrderRecord, settings?: ShopSettings): string {
   const shopName = settings?.shopName || 'R.S. Choice Communication (RSCC)';
-  const customerName = order.customer.name || 'Valued Customer';
+  const customerName = order.customer?.name || 'Valued Customer';
   const pickupPin = order.deliveryPin || '4921';
   const orderNum = order.orderNumber;
   const address = settings?.address || 'Shop No. 4, Ground Floor, Riddhi Siddhi Choice Centre, Main Market, India';
@@ -153,7 +153,7 @@ export function dispatchOrderReadyWhatsApp(
   order: OrderRecord,
   settings?: ShopSettings
 ): { mode: string; success: boolean; message: string; desktopUrl: string; webUrl: string } {
-  const cleanMobile = order.customer.mobile.replace(/\D/g, '').slice(-10);
+  const cleanMobile = (order.customer?.mobile || '').replace(/\D/g, '').slice(-10);
   const formattedMsg = formatPickupReadyWhatsAppMessage(order, settings);
   const desktopUrl = generateWhatsAppDesktopUrl(cleanMobile, formattedMsg);
   const webUrl = generateWhatsAppUrl(cleanMobile, formattedMsg, true);
@@ -207,11 +207,12 @@ export function notifyCustomerOrderReady(
   settings?: ShopSettings,
   options?: { autoOpen?: boolean; singleTab?: boolean }
 ): WhatsAppNotificationResult {
-  const cleanMobile = order.customer.mobile.replace(/\D/g, '').slice(-10);
+  const rawMobile = order.customer?.mobile || '';
+  const cleanMobile = rawMobile.replace(/\D/g, '').slice(-10);
   if (!cleanMobile || cleanMobile.length < 10) {
     return {
       success: false,
-      message: `Invalid customer mobile number: "${order.customer.mobile}"`,
+      message: `Invalid customer mobile number: "${rawMobile}"`,
     };
   }
 

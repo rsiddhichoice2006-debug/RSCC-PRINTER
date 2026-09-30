@@ -76,8 +76,8 @@ export async function triggerMakeWebhook(
   }
 
   const senderPhone = settings?.whatsAppSenderPhone || settings?.whatsapp || settings?.phone || '8652411690';
-  const cleanSender = senderPhone.replace(/\D/g, '').slice(-10) || '8652411690';
-  const cleanRecipient = order.customer.mobile.replace(/\D/g, '').slice(-10);
+  const cleanSender = (senderPhone || '').replace(/\D/g, '').slice(-10) || '8652411690';
+  const cleanRecipient = (order.customer?.mobile || '').replace(/\D/g, '').slice(-10);
 
   const formattedMsg = formatPickupReadyWhatsAppMessage(order, settings);
   const waUrl = generateWhatsAppUrl(cleanRecipient, formattedMsg);
@@ -89,9 +89,9 @@ export async function triggerMakeWebhook(
     orderNumber: order.orderNumber,
     deliveryPin: order.deliveryPin,
     customer: {
-      name: order.customer.name || 'Customer',
-      mobile: order.customer.mobile || '',
-      email: order.customer.email,
+      name: order.customer?.name || 'Customer',
+      mobile: order.customer?.mobile || '',
+      email: order.customer?.email,
     },
     orderDetails: {
       mode: order.mode,
@@ -121,7 +121,7 @@ export async function triggerMakeWebhook(
     },
     filesSummary: {
       count: order.files?.length || 0,
-      fileNames: (order.files || []).map((f) => f.name),
+      fileNames: (order.files || []).map((f) => f?.name || 'document'),
       totalSizeBytes: (order.files || []).reduce((sum, f) => sum + (f.size || 0), 0),
     },
     whatsappNotification: {

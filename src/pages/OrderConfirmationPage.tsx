@@ -168,7 +168,7 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
             <span>Order Successfully Submitted</span>
           </div>
           <h1 className="text-2xl sm:text-4xl font-black tracking-tight">
-            Thank You, {order.customer.name}!
+            Thank You, {order.customer?.name || 'Customer'}!
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto leading-relaxed">
             Your print order has been placed. Payment verification is underway, after which your documents will be printed and prepared for pickup.
@@ -272,7 +272,7 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                 ? 'Getting Prepared'
                 : order.orderStatus === 'READY_FOR_PICKUP'
                 ? 'Ready to Pick Up'
-                : order.orderStatus.replace(/_/g, ' ')}
+                : order.orderStatus?.replace(/_/g, ' ') || 'Placed'}
             </div>
             <div className="text-[11px] text-slate-500">
               Estimated pickup: Today ({settings.pickupTimings})
@@ -290,11 +290,11 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-slate-200 pb-3">
               <div>
                 <div className="text-slate-500 font-medium">Customer</div>
-                <div className="font-bold text-slate-900">{order.customer.name}</div>
+                <div className="font-bold text-slate-900">{order.customer?.name || 'Customer'}</div>
               </div>
               <div>
                 <div className="text-slate-500 font-medium">Mobile</div>
-                <div className="font-bold text-slate-900">{order.customer.mobile}</div>
+                <div className="font-bold text-slate-900">{order.customer?.mobile || 'N/A'}</div>
               </div>
               <div>
                 <div className="text-slate-500 font-medium">Print Type</div>
@@ -313,10 +313,10 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
             {/* Files list */}
             <div className="space-y-1.5">
               <div className="font-bold text-slate-700">Uploaded Documents:</div>
-              {order.files.map((f, i) => (
+              {order.files?.map((f, i) => (
                 <div key={i} className="flex justify-between items-center text-slate-600 pl-2">
-                  <span className="truncate max-w-xs">• {f.name}</span>
-                  <span className="font-mono text-slate-500">{f.pageCount} page(s)</span>
+                  <span className="truncate max-w-xs">• {f?.name || 'Document'}</span>
+                  <span className="font-mono text-slate-500">{f?.pageCount || 1} page(s)</span>
                 </div>
               ))}
             </div>

@@ -131,10 +131,10 @@ export function generateSheetSlots(
     if (photoIdx < photos.length) {
       slots.push({
         slotIndex: i,
-        fileId: photos[photoIdx].id,
-        previewUrl: photos[photoIdx].previewUrl,
-        fileName: photos[photoIdx].name,
-        fitMode: photos[photoIdx].fitMode || defaultFitMode,
+        fileId: photos[photoIdx]?.id,
+        previewUrl: photos[photoIdx]?.previewUrl,
+        fileName: photos[photoIdx]?.name || 'photo.jpg',
+        fitMode: photos[photoIdx]?.fitMode || defaultFitMode,
       });
     } else {
       slots.push({

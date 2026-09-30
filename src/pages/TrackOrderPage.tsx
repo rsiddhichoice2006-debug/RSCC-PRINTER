@@ -381,11 +381,11 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({
                     ? 'Getting Prepared'
                     : order.orderStatus === 'READY_FOR_PICKUP'
                     ? 'Ready to Pick Up'
-                    : order.orderStatus.replace(/_/g, ' ')}
+                    : order.orderStatus?.replace(/_/g, ' ') || 'Placed'}
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Customer: <strong>{order.customer.name}</strong> • {order.customer.mobile}
+                Customer: <strong>{order.customer?.name || 'Customer'}</strong> • {order.customer?.mobile || ''}
               </p>
             </div>
 
@@ -519,7 +519,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({
                 <div className="flex justify-between">
                   <span className="text-slate-500">Payment Status:</span>
                   <span className="font-bold text-amber-800">
-                    {order.paymentStatus.replace(/_/g, ' ')}
+                    {order.paymentStatus?.replace(/_/g, ' ') || 'PENDING'}
                   </span>
                 </div>
                 {order.paymentReference && (

@@ -79,8 +79,17 @@ const Storage = {
       if (data) {
         const parsed = JSON.parse(data);
         if (Array.isArray(parsed)) {
-          // Filter out any legacy seed demo orders
-          const realOrders = parsed.filter((o) => !o.id?.startsWith('ord-seed-'));
+          // Filter out any legacy seed demo orders and normalize customer fields
+          const realOrders = parsed
+            .filter((o) => !o.id?.startsWith('ord-seed-'))
+            .map((o) => ({
+              ...o,
+              customer: {
+                name: o.customer?.name || 'Customer',
+                mobile: o.customer?.mobile || '',
+                email: o.customer?.email || '',
+              },
+            }));
           if (realOrders.length !== parsed.length) {
             localStorage.setItem('rscc_orders_v2', JSON.stringify(realOrders));
           }
@@ -166,6 +175,11 @@ export function sanitizeOrderForStorage(order: OrderRecord): OrderRecord {
   if (!order) return order;
   return {
     ...order,
+    customer: {
+      name: order.customer?.name || 'Customer',
+      mobile: order.customer?.mobile || '',
+      email: order.customer?.email || '',
+    },
     files: (order.files || []).map((f) => ({
       id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
       name: f.name || 'Document',
@@ -922,29 +936,25 @@ export const apiClient = {
       }
     });
 
-    // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
-    const paidOnlyOrders = Array.from(ordersMap.values()).filter(
-      (o) =>
-        o.paymentStatus === 'PAYMENT_VERIFIED' ||
-        o.paymentStatus === 'VERIFIED'
-    );
+    // All orders are retrieved for the staff portal desk to inspect, verify, and print
+    const allOrders = Array.from(ordersMap.values());
 
     // Deduplicate and sort newest first
-    paidOnlyOrders.sort(
+    allOrders.sort(
       (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
 
-    Storage.saveOrders(paidOnlyOrders);
+    Storage.saveOrders(allOrders);
 
-    let filtered = paidOnlyOrders;
+    let filtered = allOrders;
     if (params?.search) {
       const q = params.search.toLowerCase();
       filtered = filtered.filter(
         (o) =>
-          o.orderNumber.toLowerCase().includes(q) ||
-          o.deliveryPin.toLowerCase().includes(q) ||
-          o.customer.name.toLowerCase().includes(q) ||
-          o.customer.mobile.includes(q)
+          o.orderNumber?.toLowerCase().includes(q) ||
+          o.deliveryPin?.toLowerCase().includes(q) ||
+          o.customer?.name?.toLowerCase().includes(q) ||
+          o.customer?.mobile?.includes(q)
       );
     }
     if (params?.status && params.status !== 'ALL') {
@@ -964,13 +974,7 @@ export const apiClient = {
 
     const emitMergedOrders = () => {
       if (!isSubscribed) return;
-      // CRITICAL: DO NOT SHOW ORDER IN THE STAFF PORTAL UNLESS THE PAYMENT IS SUCCESSFUL
       const sorted = Array.from(knownOrdersMap.values())
-        .filter(
-          (o) =>
-            o.paymentStatus === 'PAYMENT_VERIFIED' ||
-            o.paymentStatus === 'VERIFIED'
-        )
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       callback(sorted);
     };
@@ -1106,11 +1110,11 @@ export const apiClient = {
 
     const match = local.find((o) => {
       if (o.orderNumber.toUpperCase() !== cleanOrderNum) return false;
-      if (isEmail && o.customer.email) {
+      if (isEmail && o.customer?.email) {
         return o.customer.email.toLowerCase() === cleanId.toLowerCase();
       }
       if (cleanMob.length >= 10) {
-        const ordMob = o.customer.mobile.replace(/\D/g, '').slice(-10);
+        const ordMob = (o.customer?.mobile || '').replace(/\D/g, '').slice(-10);
         return ordMob === cleanMob;
       }
       return false;
@@ -1350,11 +1354,11 @@ export const apiClient = {
     const orders = Storage.getOrders();
     return orders.filter((o) => {
       if (isUid && o.userId === clean) return true;
-      if (isEmail && o.customer.email) {
+      if (isEmail && o.customer?.email) {
         return o.customer.email.toLowerCase() === clean.toLowerCase();
       }
       if (cleanMob.length >= 10) {
-        const ordMob = o.customer.mobile.replace(/\D/g, '').slice(-10);
+        const ordMob = (o.customer?.mobile || '').replace(/\D/g, '').slice(-10);
         return ordMob === cleanMob;
       }
       return false;
@@ -1378,7 +1382,19 @@ export const apiClient = {
         (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
       );
       if (idx >= 0) {
-        orders[idx] = backendData.order;
+        const existing = orders[idx];
+        const mergedFiles = (existing.files || []).map((origF, fIdx) => {
+          const newF = backendData.order.files?.[fIdx] || origF;
+          return {
+            ...newF,
+            previewUrl: origF.previewUrl || newF.previewUrl,
+            dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
+          };
+        });
+        orders[idx] = {
+          ...backendData.order,
+          files: mergedFiles.length > 0 ? mergedFiles : (backendData.order.files || existing.files),
+        };
       } else {
         orders.unshift(backendData.order);
       }
@@ -1451,7 +1467,19 @@ export const apiClient = {
         (o) => o.id === orderId || o.orderNumber === orderId || (fallbackOrder && (o.id === fallbackOrder.id || o.orderNumber === fallbackOrder.orderNumber))
       );
       if (idx >= 0) {
-        orders[idx] = backendData.order;
+        const existing = orders[idx];
+        const mergedFiles = (existing.files || []).map((origF, fIdx) => {
+          const newF = backendData.order.files?.[fIdx] || origF;
+          return {
+            ...newF,
+            previewUrl: origF.previewUrl || newF.previewUrl,
+            dataUrl: (origF as any).dataUrl || (newF as any).dataUrl,
+          };
+        });
+        orders[idx] = {
+          ...backendData.order,
+          files: mergedFiles.length > 0 ? mergedFiles : (backendData.order.files || existing.files),
+        };
       } else {
         orders.unshift(backendData.order);
       }

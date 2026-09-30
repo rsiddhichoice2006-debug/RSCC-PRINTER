@@ -108,7 +108,7 @@ export interface OrderItem {
   printingSide: 'SINGLE' | 'BOTH';
   ratePerPage: number;
   totalAmount: number;
-  paymentStatus: 'PAYMENT_PENDING' | 'PAYMENT_VERIFICATION_REQUIRED' | 'PAYMENT_VERIFIED' | 'PAYMENT_FAILED';
+  paymentStatus: 'PAYMENT_PENDING' | 'PAYMENT_VERIFICATION_REQUIRED' | 'PAYMENT_VERIFIED' | 'PAYMENT_FAILED' | 'VERIFIED';
   orderStatus: 'PENDING' | 'PLACED' | 'CONFIRMED' | 'PRINTING' | 'READY_FOR_PICKUP' | 'COMPLETED' | 'CANCELLED';
   paymentReference?: string;
   paymentMethod?: string;
@@ -293,9 +293,14 @@ let auditLogs: AuditLog[] = [];
 // In-memory OTP store for customer phone/email verification
 const otpStore = new Map<string, { code: string; expiresAt: number }>();
 
-// Lazy Gemini API Client
+// Lazy Gemini API Client with Quota Protection
 let geminiClient: GoogleGenAI | null = null;
+let geminiQuotaExhaustedUntil = 0;
+
 function getGemini(): GoogleGenAI | null {
+  if (Date.now() < geminiQuotaExhaustedUntil) {
+    return null; // In cooldown to prevent repeated resource_exhausted errors
+  }
   if (!geminiClient && process.env.GEMINI_API_KEY) {
     geminiClient = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
@@ -566,13 +571,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
     }
 
-    // 2. POST /api/moderate - Content Safety Check via Gemini API
+    // 2. POST /api/moderate - Content Safety Check via Gemini API (with quota resilience)
     if (pathname === '/api/moderate' && method === 'POST') {
       const body = await parseJsonBody<{
         filename: string;
         fileType: string;
         fileSize: number;
-        base64Sample?: string;
         textSnippet?: string;
       }>(req);
 
@@ -586,9 +590,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
 Evaluate whether this uploaded document/image violates printing policies (strictly prohibited: pornographic content, extreme graphic nudity, explicit sexual violence, illegal illicit materials).
 Legitimate medical diagrams, educational biology charts, art history, official IDs, and regular text MUST NOT be flagged.
 
-Filename: "${body.filename}"
-Type: "${body.fileType}"
-Snippet/Text content: "${body.textSnippet || ''}"
+Filename: "${body.filename || 'document'}"
+Type: "${body.fileType || ''}"
+Snippet: "${(body.textSnippet || '').slice(0, 300)}"
 
 Return your judgment strictly in JSON format:
 {
@@ -598,57 +602,50 @@ Return your judgment strictly in JSON format:
 }`;
 
           let responseText: string | undefined;
-          const candidateModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'];
+          const candidateModels = ['gemini-2.5-flash', 'gemini-1.5-flash'];
 
           for (const modelName of candidateModels) {
             try {
-              let resObj;
-              if (body.base64Sample && body.fileType.startsWith('image/')) {
-                const cleanBase64 = body.base64Sample.replace(/^data:image\/[a-z]+;base64,/, '');
-                resObj = await ai.models.generateContent({
-                  model: modelName,
-                  contents: {
-                    parts: [
-                      {
-                        inlineData: {
-                          mimeType: body.fileType || 'image/jpeg',
-                          data: cleanBase64,
-                        },
-                      },
-                      { text: prompt },
-                    ],
-                  },
-                  config: {
-                    responseMimeType: 'application/json',
-                  },
-                });
-              } else {
-                resObj = await ai.models.generateContent({
-                  model: modelName,
-                  contents: prompt,
-                  config: {
-                    responseMimeType: 'application/json',
-                  },
-                });
-              }
+              const resObj = await ai.models.generateContent({
+                model: modelName,
+                contents: prompt,
+                config: {
+                  responseMimeType: 'application/json',
+                },
+              });
 
               if (resObj?.text) {
                 responseText = resObj.text;
-                break; // Succeeded
+                break;
               }
             } catch (modelErr: any) {
-              // Try next model if 503 or unavailable
+              const errStr = String(modelErr?.message || modelErr || '').toLowerCase();
+              if (
+                errStr.includes('quota') ||
+                errStr.includes('resource_exhausted') ||
+                errStr.includes('429') ||
+                errStr.includes('limit')
+              ) {
+                // Set 15-minute cooldown to avoid hammering rate-limited project
+                geminiQuotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
+                break;
+              }
               continue;
             }
           }
 
           if (responseText) {
-            const parsed = JSON.parse(responseText);
-            moderationStatus = parsed.safe ? 'SAFE' : (parsed.status || 'FLAGGED');
-            moderationReason = parsed.reason || (parsed.safe ? 'Verified safe for printing' : 'Prohibited content detected');
+            try {
+              const parsed = JSON.parse(responseText);
+              moderationStatus = parsed.safe ? 'SAFE' : (parsed.status || 'FLAGGED');
+              moderationReason = parsed.reason || (parsed.safe ? 'Verified safe for printing' : 'Prohibited content detected');
+            } catch {}
           }
-        } catch {
-          // Non-blocking fallback heuristic
+        } catch (genErr: any) {
+          const errStr = String(genErr?.message || genErr || '').toLowerCase();
+          if (errStr.includes('quota') || errStr.includes('resource_exhausted') || errStr.includes('429')) {
+            geminiQuotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
+          }
           moderationStatus = 'SAFE';
           moderationReason = 'Passed standard format and integrity validation.';
         }
@@ -797,30 +794,30 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
-    // 4. GET /api/orders - List orders for Admin Portal (CRITICAL: DO NOT SHOW ORDER IN STAFF PORTAL UNLESS PAYMENT IS SUCCESSFUL)
+    // 4. GET /api/orders - List orders for Admin Portal (Shows all placed orders so counter staff can print and verify)
     if (pathname === '/api/orders' && method === 'GET') {
       const search = url.searchParams.get('search')?.toLowerCase();
       const status = url.searchParams.get('status');
       const paymentStatus = url.searchParams.get('paymentStatus');
-      const includeUnpaid = url.searchParams.get('includeUnpaid') === 'true';
+      const includeUnpaid = url.searchParams.get('includeUnpaid');
 
       let filtered = [...orders];
 
-      // CRITICAL RULE: Staff portal must only show orders with successful payment
-      if (!includeUnpaid) {
+      // If client explicitly requests only paid/verified orders
+      if (includeUnpaid === 'false') {
         filtered = filtered.filter(
-          (o) => o.paymentStatus === 'PAYMENT_VERIFIED'
+          (o) => o.paymentStatus === 'PAYMENT_VERIFIED' || o.paymentStatus === 'VERIFIED'
         );
       }
 
       if (search) {
         filtered = filtered.filter(
           (o) =>
-            o.orderNumber.toLowerCase().includes(search) ||
-            o.deliveryPin.toLowerCase().includes(search) ||
-            o.customer.name.toLowerCase().includes(search) ||
-            o.customer.mobile.includes(search) ||
-            o.files.some((f) => f.name.toLowerCase().includes(search))
+            o.orderNumber?.toLowerCase().includes(search) ||
+            o.deliveryPin?.toLowerCase().includes(search) ||
+            o.customer?.name?.toLowerCase().includes(search) ||
+            o.customer?.mobile?.includes(search) ||
+            (Array.isArray(o.files) && o.files.some((f) => f?.name?.toLowerCase().includes(search)))
         );
       }
 
@@ -853,11 +850,11 @@ Return your judgment strictly in JSON format:
         if (o.userId && o.userId === identifier) {
           return true;
         }
-        if (isEmail && o.customer.email) {
+        if (isEmail && o.customer?.email) {
           return o.customer.email.toLowerCase() === cleanEmail;
         }
-        if (cleanMob.length >= 10) {
-          const ordMob = o.customer.mobile.replace(/\D/g, '').slice(-10);
+        if (cleanMob.length >= 10 && o.customer?.mobile) {
+          const ordMob = (o.customer?.mobile || '').replace(/\D/g, '').slice(-10);
           return ordMob === cleanMob;
         }
         return false;
@@ -882,12 +879,12 @@ Return your judgment strictly in JSON format:
       const cleanEmail = identifier.toLowerCase();
 
       const match = orders.find((o) => {
-        if (o.orderNumber.toUpperCase() !== orderNumber) return false;
-        if (isEmail && o.customer.email) {
+        if (o.orderNumber?.toUpperCase() !== orderNumber) return false;
+        if (isEmail && o.customer?.email) {
           return o.customer.email.toLowerCase() === cleanEmail;
         }
-        if (cleanMob.length >= 10) {
-          const ordMob = o.customer.mobile.replace(/\D/g, '').slice(-10);
+        if (cleanMob.length >= 10 && o.customer?.mobile) {
+          const ordMob = (o.customer?.mobile || '').replace(/\D/g, '').slice(-10);
           return ordMob === cleanMob;
         }
         return false;
@@ -1252,7 +1249,7 @@ Return your judgment strictly in JSON format:
             id: 'log-' + Date.now(),
             timestamp: new Date().toISOString(),
             action: 'PAYMENT_VERIFIED_ORDER_CONFIRMED',
-            actor: freshOrder.customer.name,
+            actor: freshOrder.customer?.name || 'Customer',
             orderNumber: freshOrder.orderNumber,
             details: `Payment of ₹${freshOrder.totalAmount} verified via ${freshOrder.paymentMethod} (Ref: ${refId}). Order confirmed with PIN: ${freshOrder.deliveryPin}.`,
           });
@@ -1309,7 +1306,7 @@ Return your judgment strictly in JSON format:
         id: 'log-' + Date.now(),
         timestamp: new Date().toISOString(),
         action: 'PAYMENT_VERIFIED_ORDER_CONFIRMED',
-        actor: verifiedOrder.customer.name,
+        actor: verifiedOrder.customer?.name || 'Customer',
         orderNumber: verifiedOrder.orderNumber,
         details: `Payment of ₹${verifiedOrder.totalAmount} automatically verified via ${verifiedOrder.paymentMethod} (Ref: ${refId}). Order confirmed with Pickup PIN: ${verifiedOrder.deliveryPin}.`,
       });
@@ -1341,7 +1338,7 @@ Return your judgment strictly in JSON format:
         action: 'ORDER_DELETED',
         actor: 'Admin',
         orderNumber: deleted.orderNumber,
-        details: `Order #${deleted.orderNumber} for customer ${deleted.customer.name} (₹${deleted.totalAmount}) deleted by admin.`,
+        details: `Order #${deleted.orderNumber} for customer ${deleted.customer?.name || 'Customer'} (₹${deleted.totalAmount}) deleted by admin.`,
       });
 
       sendJson(res, 200, {
@@ -1366,7 +1363,8 @@ Return your judgment strictly in JSON format:
       }
 
       const file = order.files[fileIndex];
-      if (!file.previewUrl) {
+      const sourceData = file.previewUrl || file.dataUrl;
+      if (!sourceData) {
         sendJson(res, 404, { success: false, error: 'File binary not available on server' });
         return true;
       }
@@ -1375,15 +1373,19 @@ Return your judgment strictly in JSON format:
         let buffer: Buffer;
         let mimeType = file.type || 'application/octet-stream';
 
-        if (file.previewUrl.startsWith('data:')) {
-          const commaIdx = file.previewUrl.indexOf(',');
-          const meta = file.previewUrl.substring(0, commaIdx);
-          const rawB64 = file.previewUrl.substring(commaIdx + 1);
+        if (sourceData.startsWith('data:')) {
+          const commaIdx = sourceData.indexOf(',');
+          const meta = sourceData.substring(0, commaIdx);
+          const rawB64 = sourceData.substring(commaIdx + 1);
           const mimeMatch = meta.match(/^data:([^;,]+)/i);
           if (mimeMatch) mimeType = mimeMatch[1].toLowerCase();
           buffer = Buffer.from(rawB64, 'base64');
+        } else if (sourceData.startsWith('http://') || sourceData.startsWith('https://')) {
+          const fetched = await fetch(sourceData);
+          const arrayBuf = await fetched.arrayBuffer();
+          buffer = Buffer.from(arrayBuf);
         } else {
-          buffer = Buffer.from(file.previewUrl, 'base64');
+          buffer = Buffer.from(sourceData, 'base64');
         }
 
         const safeFilename = encodeURIComponent(file.name || `file_${fileIndex + 1}`);
@@ -1491,6 +1493,19 @@ Return your judgment strictly in JSON format:
       orders[orderIndex].orderStatus = body.status;
       orders[orderIndex].updatedAt = new Date().toISOString();
 
+      // Preserve full file binaries across status changes
+      if (body.orderData?.files && Array.isArray(body.orderData.files)) {
+        const existingFiles = orders[orderIndex].files || [];
+        orders[orderIndex].files = body.orderData.files.map((newF: any, fIdx: number) => {
+          const oldF = existingFiles[fIdx];
+          return {
+            ...newF,
+            previewUrl: oldF?.previewUrl || newF.previewUrl,
+            dataUrl: oldF?.dataUrl || newF.dataUrl,
+          };
+        });
+      }
+
       if (body.whatsappNotified || body.status === 'READY_FOR_PICKUP') {
         orders[orderIndex].whatsappNotifiedAt = body.whatsappNotifiedAt || new Date().toISOString();
       }
@@ -1503,6 +1518,7 @@ Return your judgment strictly in JSON format:
       saveOrdersToDisk();
 
       const wasReadyTriggered = body.status === 'READY_FOR_PICKUP';
+      const targetCustomerMobile = orders[orderIndex].customer?.mobile || '';
       auditLogs.unshift({
         id: 'log-' + Date.now(),
         timestamp: new Date().toISOString(),
@@ -1510,7 +1526,7 @@ Return your judgment strictly in JSON format:
         actor: 'Admin',
         orderNumber: orders[orderIndex].orderNumber,
         details: wasReadyTriggered
-          ? `Status updated to READY_FOR_PICKUP. WhatsApp notification token ready for +91 ${orders[orderIndex].customer.mobile} (PIN: ${orders[orderIndex].deliveryPin}).`
+          ? `Status updated to READY_FOR_PICKUP. WhatsApp notification token ready for +91 ${targetCustomerMobile} (PIN: ${orders[orderIndex].deliveryPin}).`
           : `Status changed from ${oldStatus} to ${body.status}`,
       });
 

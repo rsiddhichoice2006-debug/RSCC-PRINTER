@@ -32,7 +32,7 @@ import {
   UploadedFileItem,
 } from '../types';
 import { PHOTO_LAYOUTS, calculateRequiredSheets, generateSheetSlots } from '../utils/photoLayouts';
-import { formatFileSize, processUploadedFile } from '../utils/fileProcessor';
+import { formatFileSize, processUploadedFile, isExcelFile, isWebPFile, convertWebPToJpg } from '../utils/fileProcessor';
 import { useAuth } from '../context/AuthContext';
 
 export interface LayoutPhotoItem {
@@ -186,8 +186,21 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
     const newPhotos: LayoutPhotoItem[] = [];
 
     for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      if (!f.type.startsWith('image/')) continue;
+      let f = files[i];
+
+      if (isExcelFile(f)) {
+        continue;
+      }
+
+      if (!f.type.startsWith('image/') && !isWebPFile(f)) continue;
+
+      if (isWebPFile(f)) {
+        try {
+          f = await convertWebPToJpg(f);
+        } catch (err) {
+          console.warn('Failed to convert WebP to JPG:', err);
+        }
+      }
 
       const processed = await processUploadedFile(f, settings.maxFileSizeMb);
       if (processed.previewUrl && processed.moderationStatus !== 'FLAGGED') {
@@ -212,9 +225,9 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
         newPhotos.push({
           id: processed.id,
-          file: f,
-          name: f.name,
-          size: f.size,
+          file: processed.file || f,
+          name: processed.name || f.name,
+          size: processed.size || f.size,
           previewUrl: processed.previewUrl,
           width,
           height,
@@ -262,8 +275,8 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
   const validateCustomer = (): boolean => {
     const errs: { name?: string; mobile?: string } = {};
-    if (!customer.name.trim()) errs.name = 'Please enter your full name';
-    if (!customer.mobile.trim() || customer.mobile.trim().length < 10) {
+    if (!customer?.name || !customer.name.trim()) errs.name = 'Please enter your full name';
+    if (!customer?.mobile || !customer.mobile.trim() || customer.mobile.trim().length < 10) {
       errs.mobile = 'Please enter a valid 10-digit mobile number';
     }
     setCustomerErrors(errs);
@@ -298,9 +311,9 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
       photoLayout: selectedLayout,
       photoOrientation,
       customer: {
-        name: customer.name.trim(),
-        mobile: customer.mobile.trim(),
-        email: customer.email?.trim() || undefined,
+        name: customer?.name?.trim() || 'Customer',
+        mobile: customer?.mobile?.trim() || '',
+        email: customer?.email?.trim() || undefined,
       },
       files: uploadedPhotos.map((p) => ({
         id: p.id,
@@ -900,7 +913,7 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div className="space-y-1">
                   <div className="font-bold text-white text-sm">
-                    {currentLayoutConfig.name} ({paperSize} 100 GSM Sheet)
+                    {currentLayoutConfig?.name || 'Photo Layout'} ({paperSize} 100 GSM Sheet)
                   </div>
                   <div className="text-slate-400">
                     {uploadedPhotos.length} photos uploaded • <strong>{requiredSheets} {paperSize} sheet{requiredSheets > 1 ? 's' : ''}</strong> required

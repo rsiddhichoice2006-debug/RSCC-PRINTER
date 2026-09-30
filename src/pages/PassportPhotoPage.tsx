@@ -35,6 +35,7 @@ import {
   PassportServiceType,
   ShopSettings,
 } from '../types';
+import { isExcelFile, isWebPFile, convertWebPToJpg } from '../utils/fileProcessor';
 import { DEFAULT_PRICING } from '../utils/pricingCalculator';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -164,10 +165,26 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
     processFile(file);
   };
 
-  const processFile = (file: File) => {
+  const processFile = async (rawFile: File) => {
     setUploadError('');
+
+    if (isExcelFile(rawFile)) {
+      setUploadError('Excel files are not supported as passport photos. Please upload a portrait photo (JPG or PNG).');
+      return;
+    }
+
+    // Convert WebP image to JPG
+    let file = rawFile;
+    if (isWebPFile(rawFile)) {
+      try {
+        file = await convertWebPToJpg(rawFile);
+      } catch (err) {
+        console.warn('Failed to convert WebP to JPG:', err);
+      }
+    }
+
     if (!file.type.match(/^image\/(jpeg|jpg|png|webp)$/i)) {
-      setUploadError('Please upload a valid image file (JPG, JPEG, PNG, or WEBP).');
+      setUploadError('Please upload a valid image file (JPG, JPEG, or PNG).');
       return;
     }
 
@@ -202,8 +219,8 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
 
   const validateForm = (): boolean => {
     const errs: { name?: string; mobile?: string } = {};
-    if (!customer.name.trim()) errs.name = 'Please enter your full name';
-    if (!customer.mobile.trim() || customer.mobile.trim().length < 10) {
+    if (!customer?.name || !customer.name.trim()) errs.name = 'Please enter your full name';
+    if (!customer?.mobile || !customer.mobile.trim() || customer.mobile.trim().length < 10) {
       errs.mobile = 'Please enter a valid 10-digit mobile number';
     }
     setFormErrors(errs);
@@ -246,9 +263,9 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       passportService: serviceType,
       passportBgColor: selectedBgColor,
       customer: {
-        name: customer.name.trim(),
-        mobile: customer.mobile.trim(),
-        email: customer.email?.trim() || undefined,
+        name: customer?.name?.trim() || 'Customer',
+        mobile: customer?.mobile?.trim() || '',
+        email: customer?.email?.trim() || undefined,
       },
       files: [
         {

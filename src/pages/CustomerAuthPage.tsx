@@ -79,9 +79,11 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
         password: loginPassword,
       });
 
-      setSuccessMsg(`Welcome back, ${res.customer.name}!`);
-      loginCustomerDirect(res.customer);
-      onLoginSuccess(res.customer);
+      setSuccessMsg(`Welcome back, ${res.customer?.name || 'Customer'}!`);
+      if (res.customer) {
+        loginCustomerDirect(res.customer);
+        onLoginSuccess(res.customer);
+      }
       setTimeout(() => {
         onNavigate('my-orders');
       }, 800);
@@ -118,9 +120,11 @@ export const CustomerAuthPage: React.FC<CustomerAuthPageProps> = ({
         password: regPassword.trim() || 'pass123',
       });
 
-      setSuccessMsg(`Account created successfully! Welcome, ${res.customer.name}!`);
-      loginCustomerDirect(res.customer);
-      onLoginSuccess(res.customer);
+      setSuccessMsg(`Account created successfully! Welcome, ${res.customer?.name || 'Customer'}!`);
+      if (res.customer) {
+        loginCustomerDirect(res.customer);
+        onLoginSuccess(res.customer);
+      }
       setTimeout(() => {
         onNavigate('my-orders');
       }, 900);

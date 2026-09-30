@@ -129,6 +129,100 @@ export async function extractTextPageCount(file: File): Promise<number> {
 }
 
 /**
+ * Detects whether a file is an Excel spreadsheet or CSV/TSV table.
+ */
+export function isExcelFile(file: { name?: string; type?: string }): boolean {
+  const name = (file.name || '').toLowerCase();
+  const type = (file.type || '').toLowerCase();
+  const excelExtensions = ['.xlsx', '.xls', '.xlsm', '.xlsb', '.xltx', '.xltm', '.csv', '.tsv'];
+  if (excelExtensions.some((ext) => name.endsWith(ext))) {
+    return true;
+  }
+  if (
+    type.includes('spreadsheet') ||
+    type.includes('ms-excel') ||
+    type === 'text/csv' ||
+    type === 'application/csv' ||
+    type.includes('vnd.openxmlformats-officedocument.spreadsheetml')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Checks if a file is a WebP image.
+ */
+export function isWebPFile(file: { name?: string; type?: string }): boolean {
+  const name = (file.name || '').toLowerCase();
+  const type = (file.type || '').toLowerCase();
+  return name.endsWith('.webp') || type === 'image/webp';
+}
+
+/**
+ * Converts a WebP image File into a standard JPEG/JPG File using HTML5 Canvas.
+ * Handles transparency gracefully with a crisp white background.
+ */
+export async function convertWebPToJpg(file: File): Promise<File> {
+  if (!isWebPFile(file)) {
+    return file;
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(file);
+          return;
+        }
+
+        // Fill white background for any transparent pixels
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              resolve(file);
+              return;
+            }
+            const cleanBaseName = file.name.replace(/\.webp$/i, '');
+            const newFileName = `${cleanBaseName || 'converted_photo'}.jpg`;
+            const jpgFile = new File([blob], newFileName, {
+              type: 'image/jpeg',
+              lastModified: Date.now(),
+            });
+            resolve(jpgFile);
+          },
+          'image/jpeg',
+          0.95
+        );
+      } catch (err) {
+        console.warn('WebP to JPG canvas conversion error:', err);
+        resolve(file);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      console.warn('WebP image failed to load for conversion, falling back.');
+      resolve(file);
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+/**
  * Creates an image data URL preview for client side previewing and safety check.
  */
 export function fileToDataUrl(file: File): Promise<string> {
@@ -146,23 +240,41 @@ export function fileToDataUrl(file: File): Promise<string> {
  * 2. Determines accurate page count
  * 3. Calls server-side Gemini moderation check for prohibited content
  */
-export async function processUploadedFile(file: File, maxFileSizeMb: number = 50): Promise<UploadedFileItem> {
+export async function processUploadedFile(rawFile: File, maxFileSizeMb: number = 50): Promise<UploadedFileItem> {
+  // If WebP, convert to JPG first as requested
+  const file = isWebPFile(rawFile) ? await convertWebPToJpg(rawFile) : rawFile;
+
   const id = 'f-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
   const sizeMb = file.size / (1024 * 1024);
+
+  // Prohibit Excel spreadsheet uploads
+  if (isExcelFile(file)) {
+    return {
+      id,
+      file,
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/vnd.ms-excel',
+      pageCount: 0,
+      isProcessing: false,
+      error: 'Excel files (.xlsx, .xls, .csv) are not supported for document printing. Please export or save your spreadsheet as a PDF or image before uploading.',
+      moderationStatus: 'SAFE',
+    };
+  }
 
   let pageCount = 1;
   let previewUrl: string | undefined;
   let isImage = file.type.startsWith('image/');
   let isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   let isOffice =
-    file.name.match(/\.(docx|doc|pptx|ppt|xlsx|xls)$/i) !== null ||
-    file.type.includes('officedocument') ||
+    file.name.match(/\.(docx|doc|pptx|ppt)$/i) !== null ||
+    file.type.includes('officedocument.wordprocessingml') ||
     file.type.includes('word') ||
     file.type.includes('presentation') ||
-    file.type.includes('spreadsheet');
+    file.type.includes('officedocument.presentationml');
   let isText =
     file.type.startsWith('text/') ||
-    file.name.match(/\.(txt|rtf|md|csv)$/i) !== null;
+    file.name.match(/\.(txt|rtf|md)$/i) !== null;
 
   if (sizeMb > maxFileSizeMb) {
     return {
@@ -230,12 +342,11 @@ export async function processUploadedFile(file: File, maxFileSizeMb: number = 50
       fileSize: file.size,
     };
 
-    if (isImage && previewUrl) {
-      // Send sample for image safety check
-      moderationPayload.base64Sample = previewUrl;
-    } else if (isText) {
-      const snippet = await file.text();
-      moderationPayload.textSnippet = snippet.slice(0, 2000);
+    if (isText) {
+      try {
+        const snippet = await file.text();
+        moderationPayload.textSnippet = snippet.slice(0, 300);
+      } catch {}
     }
 
     const controller = new AbortController();

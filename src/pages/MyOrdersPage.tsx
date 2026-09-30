@@ -455,16 +455,16 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
                         Files in this order:
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {order.files.map((file, idx) => (
+                        {order.files?.map((file, idx) => (
                           <div
                             key={idx}
                             className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-xs flex items-center gap-2 shadow-2xs"
                           >
                             <FileText className="w-3.5 h-3.5 text-slate-500" />
                             <span className="font-medium text-slate-800 max-w-[200px] truncate">
-                              {file.name}
+                              {file?.name || 'Document'}
                             </span>
-                            <span className="text-slate-400 text-[11px]">({file.pageCount} pgs)</span>
+                            <span className="text-slate-400 text-[11px]">({file?.pageCount || 1} pgs)</span>
                           </div>
                         ))}
                       </div>

@@ -17,7 +17,19 @@ import { OrderRecord, ShopSettings } from './types';
 import { apiClient } from './services/apiClient';
 
 function MainApp() {
-  const [currentPage, setCurrentPage] = useState<string>('home');
+  const getInitialPage = () => {
+    try {
+      const hash = window.location.hash.replace('#', '').trim();
+      const validPages = ['home', 'upload', 'passport-photo', 'photo-layout', 'payment', 'confirmation', 'track', 'my-orders', 'admin'];
+      if (validPages.includes(hash)) return hash;
+      const params = new URLSearchParams(window.location.search);
+      const pageParam = params.get('page');
+      if (pageParam && validPages.includes(pageParam)) return pageParam;
+    } catch {}
+    return 'home';
+  };
+
+  const [currentPage, setCurrentPage] = useState<string>(getInitialPage);
   const [navigationParams, setNavigationParams] = useState<any>(null);
 
   // Active Pending / Completed Order in current checkout flow
@@ -62,15 +74,54 @@ function MainApp() {
     },
   });
 
-  // Admin authentication state
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(false);
+  // Admin authentication state with local persistence
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('rscc_admin_session') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleAdminLoginSuccess = () => {
+    setIsAdminLoggedIn(true);
+    try {
+      localStorage.setItem('rscc_admin_session', 'true');
+    } catch {}
+  };
+
+  const handleAdminLogout = () => {
+    setIsAdminLoggedIn(false);
+    try {
+      localStorage.removeItem('rscc_admin_session');
+    } catch {}
+    handleNavigate('home');
+  };
 
   // Auto sync admin login when logged in with the official shop admin email
   useEffect(() => {
     if (currentUser?.email?.toLowerCase() === 'rsiddhi.choice.2006@gmail.com') {
       setIsAdminLoggedIn(true);
+      try {
+        localStorage.setItem('rscc_admin_session', 'true');
+      } catch {}
     }
   }, [currentUser]);
+
+  // Sync with browser URL hash for direct links like #admin
+  useEffect(() => {
+    const handleHash = () => {
+      try {
+        const hash = window.location.hash.replace('#', '').trim();
+        const validPages = ['home', 'upload', 'passport-photo', 'photo-layout', 'payment', 'confirmation', 'track', 'my-orders', 'admin'];
+        if (hash && validPages.includes(hash)) {
+          setCurrentPage(hash);
+        }
+      } catch {}
+    };
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
 
   // Load & subscribe to live shop settings & pricing across all devices in real-time
   useEffect(() => {
@@ -101,6 +152,13 @@ function MainApp() {
   const handleNavigate = (page: string, params?: any) => {
     setCurrentPage(page);
     setNavigationParams(params || null);
+    try {
+      if (page === 'home') {
+        window.history.replaceState(null, '', window.location.pathname);
+      } else {
+        window.location.hash = page;
+      }
+    } catch {}
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -185,7 +243,7 @@ function MainApp() {
         onNavigate={handleNavigate}
         settings={settings}
         isAdminLoggedIn={isAdminLoggedIn}
-        onAdminLogout={() => setIsAdminLoggedIn(false)}
+        onAdminLogout={handleAdminLogout}
         onOpenAuthModal={(mode) => openAuthModal(mode || 'login')}
       />
 
@@ -267,7 +325,9 @@ function MainApp() {
             settings={settings}
             onUpdateSettings={(newSettings) => setSettings(newSettings)}
             isAdminLoggedIn={isAdminLoggedIn}
-            onAdminLoginSuccess={() => setIsAdminLoggedIn(true)}
+            onAdminLoginSuccess={handleAdminLoginSuccess}
+            onAdminLogout={handleAdminLogout}
+            onNavigateHome={() => handleNavigate('home')}
           />
         )}
       </main>

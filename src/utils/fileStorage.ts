@@ -124,20 +124,31 @@ export async function saveFileToStorage(
 /**
  * Saves all files from an order into IndexedDB.
  */
-export async function saveOrderFilesToStorage(orderId: string, files: any[]): Promise<void> {
+export async function saveOrderFilesToStorage(
+  orderId: string,
+  files: any[],
+  orderNumber?: string
+): Promise<void> {
   if (!orderId || !Array.isArray(files)) return;
 
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
-    if (f && f.previewUrl) {
+    const dataUrl = f?.previewUrl || f?.dataUrl;
+    if (f && dataUrl) {
       // Save under file.id
       if (f.id) {
-        await saveFileToStorage(f.id, f.previewUrl, { name: f.name, type: f.type, orderId });
+        await saveFileToStorage(f.id, dataUrl, { name: f.name, type: f.type, orderId });
       }
       // Also save under composite orderId_index and orderId_filename
-      await saveFileToStorage(`${orderId}_${i}`, f.previewUrl, { name: f.name, type: f.type, orderId });
+      await saveFileToStorage(`${orderId}_${i}`, dataUrl, { name: f.name, type: f.type, orderId });
       if (f.name) {
-        await saveFileToStorage(`${orderId}_${f.name}`, f.previewUrl, { name: f.name, type: f.type, orderId });
+        await saveFileToStorage(`${orderId}_${f.name}`, dataUrl, { name: f.name, type: f.type, orderId });
+      }
+      if (orderNumber) {
+        await saveFileToStorage(`${orderNumber}_${i}`, dataUrl, { name: f.name, type: f.type, orderId });
+        if (f.name) {
+          await saveFileToStorage(`${orderNumber}_${f.name}`, dataUrl, { name: f.name, type: f.type, orderId });
+        }
       }
     }
   }
@@ -190,12 +201,15 @@ export async function getFileFromStorage(fileId: string): Promise<StoredFileReco
  * 2. orderId_fileId
  * 3. orderId_index
  * 4. orderId_filename
+ * 5. orderNumber_index
+ * 6. orderNumber_filename
  */
 export async function resolveFileFromStorage(
   orderId?: string,
   fileId?: string,
   index?: number,
-  filename?: string
+  filename?: string,
+  orderNumber?: string
 ): Promise<string | null> {
   // 1. Try fileId directly
   if (fileId) {
@@ -219,6 +233,18 @@ export async function resolveFileFromStorage(
   if (orderId && filename) {
     const byName = await getFileFromStorage(`${orderId}_${filename}`);
     if (byName?.dataUrl) return byName.dataUrl;
+  }
+
+  // 5. Try orderNumber + index
+  if (orderNumber && index !== undefined) {
+    const byOrderNumIdx = await getFileFromStorage(`${orderNumber}_${index}`);
+    if (byOrderNumIdx?.dataUrl) return byOrderNumIdx.dataUrl;
+  }
+
+  // 6. Try orderNumber + filename
+  if (orderNumber && filename) {
+    const byOrderNumName = await getFileFromStorage(`${orderNumber}_${filename}`);
+    if (byOrderNumName?.dataUrl) return byOrderNumName.dataUrl;
   }
 
   return null;

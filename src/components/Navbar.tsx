@@ -88,6 +88,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Phone className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
               <span className="font-medium">{settings.phone}</span>
             </button>
+            <button
+              onClick={() => onNavigate('admin')}
+              className="text-slate-300 hover:text-amber-400 transition flex items-center gap-1 group cursor-pointer"
+              title="Open Staff Dispatch Desk"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+              <span className="font-bold text-[11px]">Staff Portal</span>
+            </button>
             <span className="text-slate-700 hidden sm:inline">|</span>
             <div className="hidden sm:flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded text-[11px]">
               <span className="text-emerald-400 font-bold">⚡ Razorpay Verified</span>
@@ -197,18 +205,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                       </div>
 
                       <div className="py-1">
-                        {(isAdminLoggedIn || currentUser?.email?.toLowerCase() === 'rsiddhi.choice.2006@gmail.com') && (
-                          <button
-                            onClick={() => {
-                              setUserDropdownOpen(false);
-                              onNavigate('admin');
-                            }}
-                            className="w-full text-left px-3.5 py-2 text-xs font-bold text-amber-950 bg-amber-50/80 hover:bg-amber-100/80 flex items-center gap-2 cursor-pointer"
-                          >
+                        <button
+                          onClick={() => {
+                            setUserDropdownOpen(false);
+                            onNavigate('admin');
+                          }}
+                          className="w-full text-left px-3.5 py-2 text-xs font-bold text-amber-950 bg-amber-50 hover:bg-amber-100/80 flex items-center justify-between cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
                             <ShieldCheck className="w-3.5 h-3.5 text-amber-700" />
                             <span>Staff Admin Desk</span>
-                          </button>
-                        )}
+                          </div>
+                          {isAdminLoggedIn && (
+                            <span className="text-[9px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded">Active</span>
+                          )}
+                        </button>
 
                         <button
                           onClick={() => {
@@ -247,16 +258,24 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               )}
 
-              {/* Authorized Staff Badge */}
-              {(isAdminLoggedIn || currentUser?.email?.toLowerCase() === 'rsiddhi.choice.2006@gmail.com') && (
-                <button
-                  onClick={() => onNavigate('admin')}
-                  className="text-xs font-bold text-slate-900 bg-amber-100/90 border border-amber-300 hover:bg-amber-200/90 px-3 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 text-amber-800" />
-                  <span>Staff Portal</span>
-                </button>
-              )}
+              {/* Staff Portal Desk Button - Always visible so counter staff can immediately access orders and dispatch */}
+              <button
+                onClick={() => onNavigate('admin')}
+                className={`text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer border ${
+                  currentPage === 'admin'
+                    ? 'bg-amber-400 text-slate-950 border-amber-500 shadow-sm font-black'
+                    : isAdminLoggedIn
+                    ? 'bg-amber-100 text-slate-900 border-amber-300 hover:bg-amber-200 shadow-2xs'
+                    : 'bg-slate-100 hover:bg-slate-200/80 text-slate-800 border-slate-300 shadow-2xs'
+                }`}
+                title="Open Shop Staff Portal & Order Verification Desk"
+              >
+                <ShieldCheck className={`w-3.5 h-3.5 ${isAdminLoggedIn ? 'text-amber-800' : 'text-slate-600'}`} />
+                <span>Staff Portal</span>
+                {isAdminLoggedIn && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5"></span>
+                )}
+              </button>
 
               {/* Primary Document Upload CTA */}
               <button
@@ -366,10 +385,33 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onNavigate('upload');
                   setMobileMenuOpen(false);
                 }}
-                className="w-full bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold py-2.5 rounded-xl text-center flex items-center justify-center gap-2 shadow-xs"
+                className="w-full bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold py-2.5 rounded-xl text-center flex items-center justify-center gap-2 shadow-xs cursor-pointer"
               >
                 <Printer className="w-4 h-4 text-amber-400" />
                 <span>Upload Document & Print</span>
+              </button>
+
+              {/* Mobile Staff Portal Access Button */}
+              <button
+                onClick={() => {
+                  onNavigate('admin');
+                  setMobileMenuOpen(false);
+                }}
+                className={`w-full py-2.5 px-3.5 rounded-xl text-xs font-bold flex items-center justify-between border cursor-pointer transition ${
+                  currentPage === 'admin'
+                    ? 'bg-amber-400 text-slate-950 border-amber-500 shadow-sm font-black'
+                    : 'bg-amber-50 text-amber-950 border-amber-300 hover:bg-amber-100'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-amber-800" />
+                  <span>Shop Staff Portal & Orders</span>
+                </div>
+                {isAdminLoggedIn ? (
+                  <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-md">Logged In</span>
+                ) : (
+                  <span className="text-[10px] bg-slate-900 text-amber-300 font-bold px-2 py-0.5 rounded-md">Staff Login</span>
+                )}
               </button>
             </div>
           </div>

@@ -41,7 +41,7 @@ import {
   ShopSettings,
   UploadedFileItem,
 } from '../types';
-import { formatFileSize, processUploadedFile, fileToDataUrl } from '../utils/fileProcessor';
+import { formatFileSize, processUploadedFile, fileToDataUrl, isExcelFile, isWebPFile, convertWebPToJpg } from '../utils/fileProcessor';
 import { getSelectedPageCount } from '../utils/pageCalculator';
 import {
   getSelectedPagesList,
@@ -128,6 +128,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
   }, [loggedInCustomer, currentUser, customerProfile]);
 
   const [formErrors, setFormErrors] = useState<{ name?: string; mobile?: string }>({});
+  const [excelBlockedWarning, setExcelBlockedWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Enforce Rule: When Colour is selected, 75 GSM is not available (auto-switch to 100 GSM)
@@ -214,14 +215,15 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
       const targetDoc =
         activePreviewFile &&
         (activePreviewFile.type === 'application/pdf' ||
-          activePreviewFile.name.toLowerCase().endsWith('.pdf') ||
+          activePreviewFile.name?.toLowerCase().endsWith('.pdf') ||
           (activePreviewFile.previewUrl && activePreviewFile.previewUrl.startsWith('data:application/pdf')))
           ? activePreviewFile
           : validFiles.find(
               (f) =>
-                f.type === 'application/pdf' ||
-                f.name.toLowerCase().endsWith('.pdf') ||
-                (f.previewUrl && f.previewUrl.startsWith('data:application/pdf'))
+                f &&
+                (f.type === 'application/pdf' ||
+                  f.name?.toLowerCase().endsWith('.pdf') ||
+                  (f.previewUrl && f.previewUrl.startsWith('data:application/pdf')))
             );
 
       if (!targetDoc) {
@@ -300,9 +302,37 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
     setIsProcessingFiles(true);
     const newItems: UploadedFileItem[] = [];
+    let excelFilesDetected = 0;
 
     for (let i = 0; i < fileList.length; i++) {
-      const rawFile = fileList[i];
+      let rawFile = fileList[i];
+
+      // Prohibit Excel spreadsheet uploads
+      if (isExcelFile(rawFile)) {
+        excelFilesDetected++;
+        newItems.push({
+          id: `f-${Date.now()}-${i}`,
+          file: rawFile,
+          name: rawFile.name,
+          size: rawFile.size,
+          type: rawFile.type || 'application/vnd.ms-excel',
+          pageCount: 0,
+          isProcessing: false,
+          error: 'Excel files (.xlsx, .xls, .csv) are not supported. Please export or save your spreadsheet as a PDF or image before uploading.',
+          moderationStatus: 'SAFE',
+        });
+        continue;
+      }
+
+      // Convert WebP image to JPG
+      if (isWebPFile(rawFile)) {
+        try {
+          rawFile = await convertWebPToJpg(rawFile);
+        } catch (err) {
+          console.warn('Failed to convert WebP to JPG:', err);
+        }
+      }
+
       const maxBytes = (settings.maxFileSizeMb || 50) * 1024 * 1024;
 
       if (rawFile.size > maxBytes) {
@@ -333,6 +363,12 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         moderationStatus: 'PENDING',
       };
       newItems.push(placeholderItem);
+    }
+
+    if (excelFilesDetected > 0) {
+      setExcelBlockedWarning(
+        'Excel spreadsheets (.xlsx, .xls, .csv) cannot be uploaded directly for document printing. Please open Excel, export or save the file as a PDF (File > Save As / Export to PDF) or image, and upload that.'
+      );
     }
 
     setUploadedFiles((prev) => [...prev, ...newItems]);
@@ -474,7 +510,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
           const currentMode = f.pageSelectionMode || 'ALL';
           const isPdf =
             f.type === 'application/pdf' ||
-            f.name.toLowerCase().endsWith('.pdf') ||
+            f.name?.toLowerCase().endsWith('.pdf') ||
             (f.previewUrl && f.previewUrl.startsWith('data:application/pdf'));
 
           const selectedPages = getSelectedPagesList(
@@ -509,7 +545,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                     orientation: nupOrientation,
                   });
 
-                  const cleanBase = f.name.replace(/\.pdf$/i, '');
+                  const cleanBase = (f.name || 'document').replace(/\.pdf$/i, '');
                   const nupFilename = `${cleanBase}_${pagesPerSheet}in1_layout.pdf`;
                   const nupSummary = `${summary} • ${pagesPerSheet} Pages on 1 Side (${nupOrientation === 'SIDE_BY_SIDE' ? 'Side-by-Side' : 'Top & Bottom'})`;
 
@@ -703,6 +739,36 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
               </span>
             </div>
 
+            {/* Excel Upload Prohibited Alert Banner */}
+            {excelBlockedWarning && (
+              <div className="bg-amber-50 border-2 border-amber-300 text-amber-900 rounded-2xl p-4 sm:p-5 flex items-start justify-between gap-3 shadow-sm animate-in slide-in-from-top-2">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0 mt-0.5">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-amber-950">
+                      Excel Spreadsheet Not Supported
+                    </h4>
+                    <p className="text-xs text-amber-900 mt-1 leading-relaxed">
+                      {excelBlockedWarning}
+                    </p>
+                    <p className="text-[11px] text-amber-800 font-semibold mt-2">
+                      💡 Quick tip: In Microsoft Excel or Google Sheets, click <strong>File &gt; Save As / Download &gt; PDF Document (.pdf)</strong>, then upload the generated PDF here for exact print alignment.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExcelBlockedWarning(null)}
+                  className="text-amber-700 hover:text-amber-950 p-1.5 rounded-lg hover:bg-amber-100 transition shrink-0 cursor-pointer"
+                  title="Dismiss warning"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -718,7 +784,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp,.txt"
                 onChange={handleFileInputChange}
                 className="hidden"
               />
@@ -732,7 +798,10 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   Click to upload or drag & drop documents here
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Supports PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), and Images (PNG, JPG)
+                  Supports PDF, Word (.docx), PowerPoint (.pptx), and Images (PNG, JPG, WebP auto-converted to JPG).
+                </p>
+                <p className="text-[11px] text-amber-700 font-medium mt-1">
+                  🚫 Excel spreadsheets (.xlsx, .xls) are not supported — please export to PDF first.
                 </p>
               </div>
 
@@ -803,7 +872,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
                           <div className="min-w-0 flex-1 space-y-1">
                             <div className="font-bold text-slate-900 text-xs sm:text-sm truncate">
-                              {fileItem.name}
+                              {fileItem?.name || 'File'}
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
@@ -1179,8 +1248,8 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                       }`}
                     >
                       <FileText className="w-3 h-3" />
-                      <span className="max-w-[120px] truncate">{vf.name}</span>
-                      <span className="opacity-75">({vf.pageCount} pgs)</span>
+                      <span className="max-w-[120px] truncate">{vf?.name || 'File'}</span>
+                      <span className="opacity-75">({vf?.pageCount || 1} pgs)</span>
                     </button>
                   ))}
                 </div>
@@ -2003,9 +2072,9 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                 <div className="space-y-1.5 text-xs text-slate-300 max-h-28 overflow-y-auto pr-1">
                   {validFiles.map((f) => (
                     <div key={f.id} className="flex justify-between items-center text-[11px]">
-                      <span className="truncate max-w-[180px]">• {f.name}</span>
+                      <span className="truncate max-w-[180px]">• {f?.name || 'File'}</span>
                       <span className="font-mono text-slate-400">
-                        {f.pageCount} pgs × {f.sets || copies} set{(f.sets || copies) > 1 ? 's' : ''}
+                        {f?.pageCount || 1} pgs × {f?.sets || copies} set{(f?.sets || copies) > 1 ? 's' : ''}
                       </span>
                     </div>
                   ))}

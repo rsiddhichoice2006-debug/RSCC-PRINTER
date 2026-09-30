@@ -141,10 +141,11 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
           <div className="flex items-center gap-4">
             <button
               onClick={() => onNavigate('admin')}
-              className="text-slate-500 hover:text-slate-300 transition flex items-center gap-1.5 text-xs cursor-pointer"
+              className="text-slate-400 hover:text-amber-400 transition flex items-center gap-1.5 text-xs cursor-pointer font-bold"
+              title="Open RSCC Staff Portal"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-slate-500" />
-              <span>Staff Login</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+              <span>Staff Portal</span>
             </button>
             <span className="text-slate-800">•</span>
             <span className="text-slate-500 font-medium">
