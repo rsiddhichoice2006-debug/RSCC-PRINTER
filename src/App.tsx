@@ -10,6 +10,7 @@ import { OrderConfirmationPage } from './pages/OrderConfirmationPage';
 import { TrackOrderPage } from './pages/TrackOrderPage';
 import { MyOrdersPage } from './pages/MyOrdersPage';
 import { AdminPage } from './pages/AdminPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthModal } from './components/AuthModal';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { auth } from './firebase';
@@ -321,14 +322,16 @@ function MainApp() {
         )}
 
         {currentPage === 'admin' && (
-          <AdminPage
-            settings={settings}
-            onUpdateSettings={(newSettings) => setSettings(newSettings)}
-            isAdminLoggedIn={isAdminLoggedIn}
-            onAdminLoginSuccess={handleAdminLoginSuccess}
-            onAdminLogout={handleAdminLogout}
-            onNavigateHome={() => handleNavigate('home')}
-          />
+          <ErrorBoundary fallbackTitle="Staff Portal Recovery Desk" onReset={() => window.location.reload()}>
+            <AdminPage
+              settings={settings}
+              onUpdateSettings={(newSettings) => setSettings(newSettings)}
+              isAdminLoggedIn={isAdminLoggedIn}
+              onAdminLoginSuccess={handleAdminLoginSuccess}
+              onAdminLogout={handleAdminLogout}
+              onNavigateHome={() => handleNavigate('home')}
+            />
+          </ErrorBoundary>
         )}
       </main>
 

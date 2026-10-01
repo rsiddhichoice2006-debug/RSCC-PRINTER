@@ -228,8 +228,13 @@ function initDataStore() {
       if (data) {
         const loaded = JSON.parse(data);
         if (Array.isArray(loaded)) {
-          // Filter out any obsolete seed demo orders
-          orders = loaded.filter((o: any) => !o.id?.startsWith('ord-seed-'));
+          // Filter out any obsolete seed demo orders and guarantee files array
+          orders = loaded
+            .filter((o: any) => !o.id?.startsWith('ord-seed-'))
+            .map((o: any) => ({
+              ...o,
+              files: Array.isArray(o.files) ? o.files : [],
+            }));
         }
       }
     } else {
@@ -829,7 +834,13 @@ Return your judgment strictly in JSON format:
         filtered = filtered.filter((o) => o.paymentStatus === paymentStatus);
       }
 
-      sendJson(res, 200, { success: true, orders: filtered });
+      sendJson(res, 200, {
+        success: true,
+        orders: filtered.map((o) => ({
+          ...o,
+          files: Array.isArray(o.files) ? o.files : [],
+        })),
+      });
       return true;
     }
 
@@ -1707,7 +1718,7 @@ Return your judgment strictly in JSON format:
 
       sendJson(res, 401, {
         success: false,
-        error: 'Invalid admin credentials. Use rsiddhi.choice.2006@gmail.com / RSIDDHI2006',
+        error: 'Invalid administrator credentials.',
       });
       return true;
     }

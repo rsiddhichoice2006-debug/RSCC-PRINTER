@@ -84,6 +84,7 @@ const Storage = {
             .filter((o) => !o.id?.startsWith('ord-seed-'))
             .map((o) => ({
               ...o,
+              files: Array.isArray(o.files) ? o.files : [],
               customer: {
                 name: o.customer?.name || 'Customer',
                 mobile: o.customer?.mobile || '',
@@ -734,15 +735,12 @@ export const apiClient = {
       console.warn('Storage save orders notice:', storageErr);
     }
 
-    // 3. Save to Cloud Firestore in background with clean sanitization (guaranteeing no undefined fields)
+    // 3. Save to Cloud Firestore with clean sanitization (guaranteeing no undefined fields and no payload quota issues)
     try {
-      const sanitized = sanitizeForFirestore(finalOrder);
-      setDoc(doc(db, 'orders', finalOrder.id), sanitized, { merge: true }).catch((fsErr) => {
-        console.warn('Firestore setDoc notice:', fsErr);
-        handleFirestoreError(fsErr, OperationType.WRITE, `orders/${finalOrder.id}`);
-      });
+      const sanitized = sanitizeForFirestore(sanitizeOrderForStorage(finalOrder));
+      await setDoc(doc(db, 'orders', finalOrder.id), sanitized, { merge: true });
     } catch (fsPrepErr) {
-      console.warn('Firestore preparation notice:', fsPrepErr);
+      console.warn('Firestore save order notice:', fsPrepErr);
     }
 
     // 4. Trigger Make.com Webhook Notification for instant order capture in background
@@ -777,15 +775,31 @@ export const apiClient = {
         throw new Error(backendRes.error);
       }
       if (backendRes.order) {
+        const orderToStore: OrderRecord = {
+          ...backendRes.order,
+          files: Array.isArray(backendRes.order.files) ? backendRes.order.files : [],
+        };
         const orders = Storage.getOrders();
-        const existsIndex = orders.findIndex((o) => o.id === backendRes.order!.id);
+        const existsIndex = orders.findIndex((o) => o.id === orderToStore.id);
         if (existsIndex >= 0) {
-          orders[existsIndex] = backendRes.order;
+          orders[existsIndex] = orderToStore;
         } else {
-          orders.unshift(backendRes.order);
+          orders.unshift(orderToStore);
         }
         Storage.saveOrders(orders);
-        return backendRes.order;
+
+        // Immediate Firestore sync to broadcast to all staff devices
+        try {
+          const sanitized = sanitizeForFirestore(sanitizeOrderForStorage(orderToStore));
+          await setDoc(doc(db, 'orders', orderToStore.id), sanitized, { merge: true });
+        } catch (fsErr) {
+          console.warn('Firestore setDoc notice for new order:', fsErr);
+        }
+
+        // Trigger Make.com Webhook Notification
+        triggerMakeWebhook(orderToStore, 'ORDER_CREATED', undefined, Storage.getSettings()).catch(() => {});
+
+        return orderToStore;
       }
     }
 
@@ -866,7 +880,7 @@ export const apiClient = {
 
     // Persist in Firestore
     try {
-      const sanitized = sanitizeForFirestore(localOrder);
+      const sanitized = sanitizeForFirestore(sanitizeOrderForStorage(localOrder));
       await setDoc(doc(db, 'orders', localOrder.id), sanitized, { merge: true });
     } catch (fsErr) {
       console.warn('Firestore setDoc order creation error:', fsErr);
@@ -896,7 +910,10 @@ export const apiClient = {
       if (backendData?.orders && Array.isArray(backendData.orders)) {
         backendData.orders.forEach((o) => {
           if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
-            ordersMap.set(o.id, o);
+            ordersMap.set(o.id, {
+              ...o,
+              files: Array.isArray(o.files) ? o.files : [],
+            });
           }
         });
       }
@@ -911,13 +928,17 @@ export const apiClient = {
         snap.forEach((d) => {
           const ord = d.data() as OrderRecord;
           if (!ord.id?.startsWith('ord-seed-') && !d.id.startsWith('ord-seed-') && !ord.orderNumber?.startsWith('SEED-')) {
+            const normalizedOrd = {
+              ...ord,
+              files: Array.isArray(ord.files) ? ord.files : [],
+            };
             const existing = ordersMap.get(ord.id);
             if (
               !existing ||
               new Date(ord.updatedAt || ord.createdAt || 0).getTime() >=
                 new Date(existing.updatedAt || existing.createdAt || 0).getTime()
             ) {
-              ordersMap.set(ord.id, ord);
+              ordersMap.set(ord.id, normalizedOrd);
             }
           }
         });
@@ -931,7 +952,10 @@ export const apiClient = {
     local.forEach((o) => {
       if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
         if (!ordersMap.has(o.id)) {
-          ordersMap.set(o.id, o);
+          ordersMap.set(o.id, {
+            ...o,
+            files: Array.isArray(o.files) ? o.files : [],
+          });
         }
       }
     });
@@ -983,7 +1007,10 @@ export const apiClient = {
     const initialLocal = Storage.getOrders();
     initialLocal.forEach((o) => {
       if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
-        knownOrdersMap.set(o.id, o);
+        knownOrdersMap.set(o.id, {
+          ...o,
+          files: Array.isArray(o.files) ? o.files : [],
+        });
       }
     });
     emitMergedOrders();
@@ -995,7 +1022,10 @@ export const apiClient = {
         let hasNew = false;
         backendData.orders.forEach((serverOrd) => {
           if (!serverOrd.id?.startsWith('ord-seed-') && !serverOrd.orderNumber?.startsWith('SEED-')) {
-            knownOrdersMap.set(serverOrd.id, serverOrd);
+            knownOrdersMap.set(serverOrd.id, {
+              ...serverOrd,
+              files: Array.isArray(serverOrd.files) ? serverOrd.files : [],
+            });
             hasNew = true;
           }
         });
@@ -1021,17 +1051,24 @@ export const apiClient = {
               } catch {}
               return;
             }
-            const existing = knownOrdersMap.get(data.id);
+            const orderId = data.id || docSnap.id;
+            const normalizedData: OrderRecord = {
+              ...data,
+              id: orderId,
+              orderNumber: data.orderNumber || orderId,
+              files: Array.isArray(data.files) ? data.files : [],
+            };
+            const existing = knownOrdersMap.get(orderId) || (data.orderNumber ? Array.from(knownOrdersMap.values()).find((o) => o.orderNumber === data.orderNumber) : undefined);
             if (
               !existing ||
-              new Date(data.updatedAt || data.createdAt || 0).getTime() >=
+              new Date(data.updatedAt || data.createdAt || 0).getTime() >
                 new Date(existing.updatedAt || existing.createdAt || 0).getTime() ||
               data.orderStatus !== existing.orderStatus ||
               data.paymentStatus !== existing.paymentStatus ||
               Boolean(data.alarmSilenced) !== Boolean(existing.alarmSilenced) ||
               Boolean(data.zipDownloaded) !== Boolean(existing.zipDownloaded)
             ) {
-              knownOrdersMap.set(data.id, data);
+              knownOrdersMap.set(orderId, normalizedData);
               hasChanges = true;
             }
           });
@@ -1056,17 +1093,20 @@ export const apiClient = {
           let hasNewOrUpdated = false;
           backendData.orders.forEach((serverOrd) => {
             if (!serverOrd.id?.startsWith('ord-seed-') && !serverOrd.orderNumber?.startsWith('SEED-')) {
-              const current = knownOrdersMap.get(serverOrd.id);
+              const current = knownOrdersMap.get(serverOrd.id) || (serverOrd.orderNumber ? Array.from(knownOrdersMap.values()).find((o) => o.orderNumber === serverOrd.orderNumber) : undefined);
               if (
                 !current ||
-                new Date(serverOrd.updatedAt || serverOrd.createdAt || 0).getTime() >=
+                new Date(serverOrd.updatedAt || serverOrd.createdAt || 0).getTime() >
                   new Date(current.updatedAt || current.createdAt || 0).getTime() ||
                 serverOrd.orderStatus !== current.orderStatus ||
                 serverOrd.paymentStatus !== current.paymentStatus ||
                 Boolean(serverOrd.alarmSilenced) !== Boolean(current.alarmSilenced) ||
                 Boolean(serverOrd.zipDownloaded) !== Boolean(current.zipDownloaded)
               ) {
-                knownOrdersMap.set(serverOrd.id, serverOrd);
+                knownOrdersMap.set(serverOrd.id, {
+                  ...serverOrd,
+                  files: Array.isArray(serverOrd.files) ? serverOrd.files : [],
+                });
                 hasNewOrUpdated = true;
               }
             }

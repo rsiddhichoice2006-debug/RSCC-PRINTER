@@ -19,7 +19,7 @@ export function formatPickupReadyWhatsAppMessage(order: OrderRecord, settings?: 
   const address = settings?.address || 'Shop No. 4, Ground Floor, Riddhi Siddhi Choice Centre, Main Market, India';
   const timings = settings?.pickupTimings || '9:00 AM - 9:00 PM (Monday - Saturday)';
   const senderPhone = settings?.whatsAppSenderPhone || settings?.whatsapp || settings?.phone || '8652411690';
-  const cleanSender = senderPhone.replace(/\D/g, '').slice(-10);
+  const cleanSender = (senderPhone || '').replace(/\D/g, '').slice(-10);
   const phone = `+91 ${cleanSender || '8652411690'}`;
 
   const fileCount = order.files?.length || 1;
@@ -27,7 +27,7 @@ export function formatPickupReadyWhatsAppMessage(order: OrderRecord, settings?: 
     ? 'Passport Size Photos'
     : order.mode === 'PHOTO'
     ? 'High Quality Photo Sheet'
-    : `${order.printType === 'COLOUR' ? 'Color' : 'B&W'} Document (${order.totalPages} pages${order.pagesPerSheet === 2 ? ' • 2-in-1 Same Side' : ''}, ${order.copies} copy)`;
+    : `${order.printType === 'COLOUR' ? 'Color' : 'B&W'} Document (${order.totalPages || 1} pages${order.pagesPerSheet === 2 ? ' • 2-in-1 Same Side' : ''}, ${order.copies || 1} copy)`;
 
   return `🎉 *YOUR PRINT ORDER IS READY FOR PICKUP!*
 
@@ -63,7 +63,7 @@ export const WHATSAPP_TAB_TARGET = 'rscc_whatsapp_desk';
  * native WhatsApp desktop window directly.
  */
 export function generateWhatsAppDesktopUrl(mobile: string, message: string): string {
-  const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
+  const cleanMobile = (mobile || '').replace(/\D/g, '').slice(-10);
   const fullMobile = cleanMobile.startsWith('91') ? cleanMobile : `91${cleanMobile}`;
   const encodedText = encodeURIComponent(message);
   return `whatsapp://send?phone=${fullMobile}&text=${encodedText}`;
@@ -76,7 +76,7 @@ export function generateWhatsAppDesktopUrl(mobile: string, message: string): str
  * - On mobile/tablet: Targets api.whatsapp.com/send to open the native WhatsApp application.
  */
 export function generateWhatsAppUrl(mobile: string, message: string, directMode: boolean = true): string {
-  const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
+  const cleanMobile = (mobile || '').replace(/\D/g, '').slice(-10);
   const fullMobile = cleanMobile.startsWith('91') ? cleanMobile : `91${cleanMobile}`;
   const encodedText = encodeURIComponent(message);
 

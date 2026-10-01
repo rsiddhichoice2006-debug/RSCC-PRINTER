@@ -263,12 +263,11 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     );
   };
 
-  // Pending orders with files that require staff to silence alarm or download ZIP
+  // Pending orders that require staff to silence alarm or download ZIP across all devices
   const pendingZipOrders = useMemo(() => {
     return orders.filter((o) => {
-      const hasFiles = o.files && o.files.length > 0;
       const isActive = o.orderStatus !== 'CANCELLED' && o.orderStatus !== 'COMPLETED';
-      return hasFiles && isActive && !isOrderAlarmSilenced(o);
+      return isActive && !isOrderAlarmSilenced(o);
     });
   }, [orders, downloadedZipIds]);
 
@@ -371,28 +370,41 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       const freshlyAdded: OrderRecord[] = [];
 
       fetchedOrders.forEach((data) => {
-        if (!isInitialSnapshotRef.current && !knownOrderIdsRef.current.has(data.id)) {
-          freshlyAdded.push(data);
+        const orderKey = data.id;
+        const numKey = data.orderNumber;
+        if (!isInitialSnapshotRef.current) {
+          if (!knownOrderIdsRef.current.has(orderKey) && (!numKey || !knownOrderIdsRef.current.has(numKey))) {
+            freshlyAdded.push(data);
+          }
         }
       });
 
       // Update state with sorted orders
-      setOrders(fetchedOrders);
+      setOrders(
+        (fetchedOrders || []).map((o) => ({
+          ...o,
+          files: Array.isArray(o.files) ? o.files : [],
+        }))
+      );
 
       // If new orders detected from any device
       if (!isInitialSnapshotRef.current && freshlyAdded.length > 0) {
         freshlyAdded.forEach((newOrd) => {
           knownOrderIdsRef.current.add(newOrd.id);
+          if (newOrd.orderNumber) knownOrderIdsRef.current.add(newOrd.orderNumber);
         });
 
         if (soundEnabled) {
           playOrderChime();
         }
 
-        setNewOrderAlerts((prev) => [...freshlyAdded, ...prev].slice(0, 5));
+        setNewOrderAlerts((prev) => [...freshlyAdded, ...prev].slice(0, 10));
         showToast(`🔔 ${freshlyAdded.length} New Order(s) Received!`);
       } else if (isInitialSnapshotRef.current) {
-        fetchedOrders.forEach((o) => knownOrderIdsRef.current.add(o.id));
+        fetchedOrders.forEach((o) => {
+          knownOrderIdsRef.current.add(o.id);
+          if (o.orderNumber) knownOrderIdsRef.current.add(o.orderNumber);
+        });
         isInitialSnapshotRef.current = false;
       }
     });
@@ -421,7 +433,12 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         apiClient.getOrders(),
         apiClient.getAdminStats(),
       ]);
-      setOrders(ordersData);
+      setOrders(
+        (ordersData || []).map((o) => ({
+          ...o,
+          files: Array.isArray(o.files) ? o.files : [],
+        }))
+      );
       setStats(statsData.stats);
       setAuditLogs(statsData.recentAuditLogs || []);
     } catch (err) {
@@ -484,7 +501,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         onAdminLoginSuccess();
         loadDashboardData();
       } else {
-        setLoginError('Access denied. Please log in with rsiddhi.choice.2006@gmail.com and password RSIDDHI2006.');
+        setLoginError('Access denied. Invalid staff email address or password.');
       }
     } finally {
       setLoginLoading(false);
@@ -855,8 +872,8 @@ Order Status   : ${order.orderStatus}
 Payment Ref    : ${order.paymentReference || 'N/A'}
 
 =====================================================
-FILES LIST (${order.files.length} Total):
-${order.files.map((f, i) => {
+FILES LIST (${(order.files || []).length} Total):
+${(order.files || []).map((f, i) => {
   const format = getPreservedFormatDetails(f);
   const isTrimmed = f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL');
   const tag = isTrimmed ? ` [CONTAINS ONLY SELECTED PAGES: ${f.selectedPagesSummary || f.pageSelectionMode} (from original ${f.originalPageCount || f.pageCount} pgs)]` : '';
@@ -867,8 +884,9 @@ ${order.files.map((f, i) => {
       zip.file('00_ORDER_SUMMARY.txt', summaryText);
 
       // 2. Add each file into the zip preserving exact customer format (PDF, JPG, PNG, etc.)
-      for (let i = 0; i < order.files.length; i++) {
-        const file = order.files[i];
+      const filesToZip = Array.isArray(order.files) ? order.files : [];
+      for (let i = 0; i < filesToZip.length; i++) {
+        const file = filesToZip[i];
         let added = false;
         let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i, order.orderNumber)) || file.previewUrl || (file as any).dataUrl;
         if (!effectiveUrl) {
@@ -1146,7 +1164,7 @@ ${order.files.map((f, i) => {
               RSCC Shop Admin Portal
             </h1>
             <p className="text-xs text-slate-500">
-              Access restricted to authorized shop account (rsiddhi.choice.2006@gmail.com).
+              Access restricted to authorized shop staff and administrator accounts.
             </p>
           </div>
 
@@ -1180,7 +1198,7 @@ ${order.files.map((f, i) => {
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
               />
             </svg>
-            <span>Sign In with Google (rsiddhi.choice.2006@gmail.com)</span>
+            <span>Sign In with Google</span>
           </button>
 
           <div className="flex items-center gap-3">
@@ -1195,7 +1213,7 @@ ${order.files.map((f, i) => {
               <input
                 type="email"
                 required
-                placeholder="rsiddhi.choice.2006@gmail.com"
+                placeholder="Enter admin email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
@@ -1207,7 +1225,7 @@ ${order.files.map((f, i) => {
               <input
                 type="password"
                 required
-                placeholder="Enter password (RSIDDHI2006)"
+                placeholder="Enter admin password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
@@ -1386,9 +1404,9 @@ ${order.files.map((f, i) => {
             </p>
 
             <div className="space-y-2.5 pt-1">
-              {pendingZipOrders.map((alertOrder) => (
+              {pendingZipOrders.map((alertOrder, alertIdx) => (
                 <div
-                  key={alertOrder.id}
+                  key={alertOrder.id || alertOrder.orderNumber || `alert-${alertIdx}`}
                   className="bg-white text-slate-900 p-3.5 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-md border-2 border-amber-300"
                 >
                   <div className="flex items-center gap-3">
@@ -1400,7 +1418,9 @@ ${order.files.map((f, i) => {
                           Alarm Ringing 🔔
                         </span>
                         <span className="bg-slate-100 text-slate-800 text-[11px] font-bold px-2 py-0.5 rounded-md">
-                          {alertOrder.files.length} {alertOrder.files.length === 1 ? 'file' : 'files'}
+                          {(alertOrder.files?.length || 0) > 0
+                            ? `${alertOrder.files.length} ${alertOrder.files.length === 1 ? 'file' : 'files'}`
+                            : alertOrder.mode || 'New Order'}
                         </span>
                         <span className="text-emerald-700 font-black text-sm">₹{alertOrder.totalAmount}</span>
                       </div>
@@ -1682,9 +1702,9 @@ ${order.files.map((f, i) => {
                       </td>
                     </tr>
                   ) : (
-                    filteredOrders.map((ord) => (
+                    filteredOrders.map((ord, ordIdx) => (
                       <tr
-                        key={ord.id}
+                        key={ord.id || ord.orderNumber || `ord-${ordIdx}`}
                         className="hover:bg-slate-50/80 transition cursor-pointer"
                         onClick={() => setSelectedOrder(ord)}
                       >
@@ -1718,7 +1738,7 @@ ${order.files.map((f, i) => {
                           <div className="text-[11px] text-slate-500">
                             {ord.totalPages} pgs × {ord.copies} copy
                           </div>
-                          {ord.files.some(f => f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL')) && (
+                          {Array.isArray(ord.files) && ord.files.some(f => f && (f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL'))) && (
                             <span className="inline-block mt-0.5 text-[9px] font-black bg-indigo-100 text-indigo-900 border border-indigo-200 px-1.5 py-0.2 rounded">
                               ✂️ Selected Pages Only
                             </span>
@@ -1819,7 +1839,7 @@ ${order.files.map((f, i) => {
                               </button>
                             )}
 
-                            {ord.files && ord.files.length > 0 && (
+                            {Array.isArray(ord.files) && ord.files.length > 0 && (
                               !isOrderAlarmSilenced(ord) ? (
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <button
@@ -2928,9 +2948,9 @@ ${order.files.map((f, i) => {
             {auditLogs.length === 0 ? (
               <div className="text-slate-500 italic">No events recorded yet.</div>
             ) : (
-              auditLogs.map((log) => (
+              auditLogs.map((log, logIdx) => (
                 <div
-                  key={log.id}
+                  key={log.id || `log-${logIdx}-${log.timestamp}`}
                   className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-start justify-between gap-3 font-mono text-[11px]"
                 >
                   <div>
@@ -3082,7 +3102,7 @@ ${order.files.map((f, i) => {
                       ? 'bg-rose-100 text-rose-800'
                       : 'bg-amber-100 text-amber-800'
                   }`}>
-                    {selectedOrder.paymentStatus.replace(/_/g, ' ')}
+                    {selectedOrder.paymentStatus?.replace(/_/g, ' ') || 'PENDING'}
                   </span>
                 </div>
                 <span className="text-sm font-black text-emerald-700">
@@ -3157,7 +3177,7 @@ ${order.files.map((f, i) => {
                       ? 'READY TO PICK UP ✨'
                       : st === 'PRINTING'
                       ? 'GETTING PREPARED 🖨️'
-                      : st.replace(/_/g, ' ')}
+                      : st?.replace(/_/g, ' ') || ''}
                   </button>
                 ))}
               </div>
@@ -3262,7 +3282,7 @@ ${order.files.map((f, i) => {
 
                 <div className="pt-2 border-t border-slate-200 space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-700">Files ({selectedOrder.files.length}):</span>
+                    <span className="font-semibold text-slate-700">Files ({(selectedOrder.files || []).length}):</span>
                     <button
                       onClick={() => handleDownloadAllZip(selectedOrder)}
                       className="text-emerald-700 hover:text-emerald-900 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
@@ -3271,11 +3291,11 @@ ${order.files.map((f, i) => {
                       <span>Download ZIP Archive</span>
                     </button>
                   </div>
-                  {selectedOrder.files.map((f, i) => {
+                  {(selectedOrder.files || []).map((f, i) => {
                     const format = getPreservedFormatDetails(f);
                     const isTrimmed = f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL');
                     return (
-                      <div key={i} className="flex flex-col sm:flex-row justify-between sm:items-center text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200 text-xs gap-2.5">
+                      <div key={f.id || `file-${i}`} className="flex flex-col sm:flex-row justify-between sm:items-center text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200 text-xs gap-2.5">
                         <div className="min-w-0 flex items-start gap-2">
                           <span className="w-5 h-5 rounded bg-slate-100 text-slate-700 font-mono font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">
                             {i + 1}
@@ -3286,7 +3306,7 @@ ${order.files.map((f, i) => {
                                 {format.filename}
                               </span>
                               <span className="bg-slate-100 text-slate-700 border border-slate-300 font-mono font-bold text-[10px] px-1.5 py-0.2 rounded uppercase">
-                                {format.extension.replace('.', '') || 'FILE'}
+                                {format?.extension ? format.extension.replace('.', '') : 'FILE'}
                               </span>
                               {isTrimmed && (
                                 <span className="bg-indigo-100 text-indigo-900 border border-indigo-200 text-[10px] font-black px-1.5 py-0.2 rounded-md">
@@ -3331,7 +3351,7 @@ ${order.files.map((f, i) => {
                             title={`Download in original ${format.formatLabel} format`}
                           >
                             <Download className="w-3.5 h-3.5" />
-                            <span>Download ({format.extension.replace('.', '').toUpperCase() || 'FILE'})</span>
+                            <span>Download ({format?.extension ? format.extension.replace('.', '').toUpperCase() : 'FILE'})</span>
                           </button>
                         </div>
                       </div>
@@ -3347,7 +3367,7 @@ ${order.files.map((f, i) => {
               {selectedOrder.internalNotes && selectedOrder.internalNotes.length > 0 && (
                 <div className="space-y-1">
                   {selectedOrder.internalNotes.map((n, i) => (
-                    <div key={i} className="bg-slate-100 p-2 rounded-lg text-slate-700">
+                    <div key={`note-${i}`} className="bg-slate-100 p-2 rounded-lg text-slate-700">
                       {n}
                     </div>
                   ))}
@@ -3420,7 +3440,7 @@ ${order.files.map((f, i) => {
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Files:</span>
-                <span className="font-bold text-slate-800">{orderToDelete.files.length} file(s)</span>
+                <span className="font-bold text-slate-800">{(orderToDelete.files?.length || 0)} file(s)</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Total Amount:</span>
