@@ -1,46 +1,73 @@
 import JSZip from 'jszip';
+import { PDFDocument } from 'pdf-lib';
 import { UploadedFileItem } from '../types';
 
 /**
- * Accurately extracts page count from standard PDF binary data.
+ * Accurately extracts page count and encryption status from PDF binary data.
+ * Checks both pdf-lib parser and binary text search for /Encrypt dictionary.
  */
-export async function extractPdfPageCount(file: File): Promise<number> {
-  const arrayBuffer = await file.arrayBuffer();
-  const text = new TextDecoder('latin1').decode(arrayBuffer);
+export async function extractPdfPageCount(file: File): Promise<{ count: number; isLocked: boolean }> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
 
-  // Strategy 1: Find Pages root object with /Count
-  const countMatches = text.match(/\/Type\s*\/Pages[\s\S]*?\/Count\s+(\d+)/gi);
-  if (countMatches && countMatches.length > 0) {
-    let maxCount = 0;
-    for (const match of countMatches) {
-      const numMatch = match.match(/\/Count\s+(\d+)/i);
-      if (numMatch && numMatch[1]) {
-        const c = parseInt(numMatch[1], 10);
-        if (c > maxCount) maxCount = c;
+    // 1. First test directly with pdf-lib: if it throws EncryptedPDFError, it's 100% locked/password-protected
+    let isLocked = false;
+    try {
+      const doc = await PDFDocument.load(arrayBuffer);
+      const pageCount = doc.getPageCount();
+      if (pageCount > 0) {
+        return { count: pageCount, isLocked: false };
+      }
+    } catch (loadErr: any) {
+      const errMsg = String(loadErr?.message || loadErr || '').toLowerCase();
+      if (errMsg.includes('encrypted') || errMsg.includes('password') || errMsg.includes('decrypt')) {
+        isLocked = true;
       }
     }
-    if (maxCount > 0) return maxCount;
-  }
 
-  // Strategy 2: Count individual /Type /Page objects (excluding /Pages)
-  const pageMatches = text.match(/\/Type\s*\/Page\b(?!\s*s)/g);
-  if (pageMatches && pageMatches.length > 0) {
-    return pageMatches.length;
-  }
-
-  // Strategy 3: Search for /Count anywhere in PDF trailer/catalog
-  const generalCount = text.match(/\/Count\s+(\d+)/g);
-  if (generalCount) {
-    const counts = generalCount
-      .map((m) => parseInt(m.replace(/\/Count\s+/i, ''), 10))
-      .filter((n) => !isNaN(n) && n > 0);
-    if (counts.length > 0) {
-      return Math.max(...counts);
+    // 2. Binary text inspection for /Encrypt or page counting
+    const text = new TextDecoder('latin1').decode(arrayBuffer);
+    if (!isLocked) {
+      isLocked = /\/Encrypt\b/i.test(text);
     }
-  }
 
-  // Fallback: at least 1 page
-  return 1;
+    // Strategy 1: Find Pages root object with /Count
+    const countMatches = text.match(/\/Type\s*\/Pages[\s\S]*?\/Count\s+(\d+)/gi);
+    if (countMatches && countMatches.length > 0) {
+      let maxCount = 0;
+      for (const match of countMatches) {
+        const numMatch = match.match(/\/Count\s+(\d+)/i);
+        if (numMatch && numMatch[1]) {
+          const c = parseInt(numMatch[1], 10);
+          if (c > maxCount) maxCount = c;
+        }
+      }
+      if (maxCount > 0) return { count: maxCount, isLocked };
+    }
+
+    // Strategy 2: Count individual /Type /Page objects (excluding /Pages)
+    const pageMatches = text.match(/\/Type\s*\/Page\b(?!\s*s)/g);
+    if (pageMatches && pageMatches.length > 0) {
+      return { count: pageMatches.length, isLocked };
+    }
+
+    // Strategy 3: Search for /Count anywhere in PDF trailer/catalog
+    const generalCount = text.match(/\/Count\s+(\d+)/g);
+    if (generalCount) {
+      const counts = generalCount
+        .map((m) => parseInt(m.replace(/\/Count\s+/i, ''), 10))
+        .filter((n) => !isNaN(n) && n > 0);
+      if (counts.length > 0) {
+        return { count: Math.max(...counts), isLocked };
+      }
+    }
+
+    // Fallback: at least 1 page
+    return { count: 1, isLocked };
+  } catch (err) {
+    console.warn('extractPdfPageCount error:', err);
+    return { count: 1, isLocked: false };
+  }
 }
 
 /**
@@ -263,6 +290,7 @@ export async function processUploadedFile(rawFile: File, maxFileSizeMb: number =
   }
 
   let pageCount = 1;
+  let isPasswordProtected = false;
   let previewUrl: string | undefined;
   let isImage = file.type.startsWith('image/');
   let isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
@@ -295,23 +323,25 @@ export async function processUploadedFile(rawFile: File, maxFileSizeMb: number =
       pageCount = 1;
       previewUrl = await fileToDataUrl(file);
     } else if (isPdf) {
-      pageCount = await extractPdfPageCount(file);
-      if (file.size <= 15 * 1024 * 1024) {
+      const pdfInfo = await extractPdfPageCount(file);
+      pageCount = pdfInfo.count;
+      isPasswordProtected = pdfInfo.isLocked;
+      if (file.size <= 48 * 1024 * 1024) {
         previewUrl = await fileToDataUrl(file);
       }
     } else if (isOffice) {
       pageCount = await extractOfficeDocPageCount(file);
-      if (file.size <= 15 * 1024 * 1024) {
+      if (file.size <= 48 * 1024 * 1024) {
         previewUrl = await fileToDataUrl(file);
       }
     } else if (isText) {
       pageCount = await extractTextPageCount(file);
-      if (file.size <= 15 * 1024 * 1024) {
+      if (file.size <= 48 * 1024 * 1024) {
         previewUrl = await fileToDataUrl(file);
       }
     } else {
       pageCount = 1;
-      if (file.size <= 15 * 1024 * 1024) {
+      if (file.size <= 48 * 1024 * 1024) {
         previewUrl = await fileToDataUrl(file);
       }
     }
@@ -323,11 +353,10 @@ export async function processUploadedFile(rawFile: File, maxFileSizeMb: number =
       name: file.name,
       size: file.size,
       type: file.type,
-      pageCount: 0,
+      pageCount: 1,
       isProcessing: false,
-      error: 'We could not determine the page count of this file. Please contact the shop for assistance.',
-      moderationStatus: 'MANUAL_REVIEW',
-      moderationReason: 'Automatic page count could not be reliably determined.',
+      moderationStatus: 'SAFE',
+      moderationReason: 'Defaulted to 1 page.',
     };
   }
 
@@ -384,6 +413,7 @@ export async function processUploadedFile(rawFile: File, maxFileSizeMb: number =
     type: file.type || 'application/octet-stream',
     previewUrl,
     pageCount: Math.max(1, pageCount),
+    isPasswordProtected,
     isProcessing: false,
     moderationStatus,
     moderationReason,

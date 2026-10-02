@@ -79,10 +79,16 @@ const Storage = {
       if (data) {
         const parsed = JSON.parse(data);
         if (Array.isArray(parsed)) {
-          // Filter out any legacy seed demo orders and normalize customer fields
-          const realOrders = parsed
-            .filter((o) => !o.id?.startsWith('ord-seed-'))
-            .map((o) => ({
+          // Filter out any legacy seed demo orders, deduplicate by id & orderNumber, and normalize customer fields
+          const seen = new Set<string>();
+          const realOrders: OrderRecord[] = [];
+          for (const o of parsed) {
+            if (!o || o.id?.startsWith('ord-seed-') || o.orderNumber?.startsWith('SEED-')) continue;
+            const key = o.id || o.orderNumber;
+            if (key && seen.has(key)) continue;
+            if (o.id) seen.add(o.id);
+            if (o.orderNumber) seen.add(o.orderNumber);
+            realOrders.push({
               ...o,
               files: Array.isArray(o.files) ? o.files : [],
               customer: {
@@ -90,7 +96,8 @@ const Storage = {
                 mobile: o.customer?.mobile || '',
                 email: o.customer?.email || '',
               },
-            }));
+            });
+          }
           if (realOrders.length !== parsed.length) {
             localStorage.setItem('rscc_orders_v2', JSON.stringify(realOrders));
           }
@@ -105,7 +112,16 @@ const Storage = {
 
   saveOrders(orders: OrderRecord[]) {
     try {
-      const realOnly = orders.filter((o) => !o.id?.startsWith('ord-seed-'));
+      const seen = new Set<string>();
+      const realOnly: OrderRecord[] = [];
+      for (const o of orders) {
+        if (!o || o.id?.startsWith('ord-seed-') || o.orderNumber?.startsWith('SEED-')) continue;
+        const key = o.id || o.orderNumber;
+        if (key && seen.has(key)) continue;
+        if (o.id) seen.add(o.id);
+        if (o.orderNumber) seen.add(o.orderNumber);
+        realOnly.push(o);
+      }
       // Clean large preview data URLs from storage to avoid localStorage quota limits
       const sanitized = realOnly.map((ord) => sanitizeOrderForStorage(ord));
       localStorage.setItem('rscc_orders_v2', JSON.stringify(sanitized));
@@ -184,7 +200,7 @@ export function sanitizeOrderForStorage(order: OrderRecord): OrderRecord {
     files: (order.files || []).map((f) => ({
       id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
       name: f.name || 'Document',
-      size: f.size || 0,
+      size: f.size > 0 ? f.size : 0,
       type: f.type || 'application/pdf',
       pageCount: f.pageCount || 1,
       pageSelectionMode: f.pageSelectionMode,
@@ -192,6 +208,8 @@ export function sanitizeOrderForStorage(order: OrderRecord): OrderRecord {
       selectedPageCount: f.selectedPageCount,
       moderationStatus: f.moderationStatus || 'SAFE',
       moderationReason: f.moderationReason,
+      isPasswordProtected: Boolean(f.isPasswordProtected),
+      password: f.password || undefined,
       // Only keep small preview URLs (e.g. <= 1024 chars), omit oversized base64 data to prevent payload quota errors
       previewUrl: f.previewUrl && f.previewUrl.length <= 1024 ? f.previewUrl : undefined,
     })),
@@ -622,11 +640,13 @@ export const apiClient = {
       files: (payload.files || []).map((f: any) => ({
         id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
         name: f.name || 'document',
-        size: f.size || 1024,
+        size: (f.size && f.size > 0 ? f.size : (f.previewUrl ? Math.round((f.previewUrl.length * 3) / 4) : 1024)),
         type: f.type || 'application/octet-stream',
         pageCount: f.pageCount || 1,
         originalPageCount: f.originalPageCount,
         previewUrl: f.previewUrl,
+        isPasswordProtected: Boolean(f.isPasswordProtected),
+        password: f.password || undefined,
         moderationStatus: f.moderationStatus || 'SAFE',
         moderationReason: f.moderationReason,
         pageSelectionMode: f.pageSelectionMode,
@@ -844,11 +864,13 @@ export const apiClient = {
       files: (payload.files || []).map((f: any) => ({
         id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
         name: f.name || 'document',
-        size: f.size || 1024,
+        size: (f.size && f.size > 0 ? f.size : (f.previewUrl ? Math.round((f.previewUrl.length * 3) / 4) : 1024)),
         type: f.type || 'application/octet-stream',
         pageCount: f.pageCount || 1,
         originalPageCount: f.originalPageCount,
         previewUrl: f.previewUrl,
+        isPasswordProtected: Boolean(f.isPasswordProtected),
+        password: f.password || undefined,
         moderationStatus: f.moderationStatus || 'SAFE',
         moderationReason: f.moderationReason,
         pageSelectionMode: f.pageSelectionMode,
@@ -910,10 +932,13 @@ export const apiClient = {
       if (backendData?.orders && Array.isArray(backendData.orders)) {
         backendData.orders.forEach((o) => {
           if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
-            ordersMap.set(o.id, {
-              ...o,
-              files: Array.isArray(o.files) ? o.files : [],
-            });
+            const key = o.id || o.orderNumber;
+            if (key) {
+              ordersMap.set(key, {
+                ...o,
+                files: Array.isArray(o.files) ? o.files : [],
+              });
+            }
           }
         });
       }
@@ -927,18 +952,32 @@ export const apiClient = {
       if (!snap.empty) {
         snap.forEach((d) => {
           const ord = d.data() as OrderRecord;
-          if (!ord.id?.startsWith('ord-seed-') && !d.id.startsWith('ord-seed-') && !ord.orderNumber?.startsWith('SEED-')) {
+          const orderId = ord.id || d.id;
+          if (!orderId?.startsWith('ord-seed-') && !d.id.startsWith('ord-seed-') && !ord.orderNumber?.startsWith('SEED-')) {
             const normalizedOrd = {
               ...ord,
+              id: orderId,
+              orderNumber: ord.orderNumber || orderId,
               files: Array.isArray(ord.files) ? ord.files : [],
             };
-            const existing = ordersMap.get(ord.id);
-            if (
-              !existing ||
-              new Date(ord.updatedAt || ord.createdAt || 0).getTime() >=
-                new Date(existing.updatedAt || existing.createdAt || 0).getTime()
-            ) {
-              ordersMap.set(ord.id, normalizedOrd);
+            const key = orderId || ord.orderNumber;
+            if (key) {
+              const existing = ordersMap.get(key) || (ord.orderNumber ? Array.from(ordersMap.values()).find((x) => x.orderNumber === ord.orderNumber) : undefined);
+              if (
+                !existing ||
+                new Date(ord.updatedAt || ord.createdAt || 0).getTime() >=
+                  new Date(existing.updatedAt || existing.createdAt || 0).getTime()
+              ) {
+                // If existing was under another key, remove it
+                if (existing) {
+                  for (const [k, v] of ordersMap.entries()) {
+                    if (v.id === existing.id || (existing.orderNumber && v.orderNumber === existing.orderNumber)) {
+                      ordersMap.delete(k);
+                    }
+                  }
+                }
+                ordersMap.set(key, normalizedOrd);
+              }
             }
           }
         });
@@ -951,8 +990,10 @@ export const apiClient = {
     const local = Storage.getOrders();
     local.forEach((o) => {
       if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
-        if (!ordersMap.has(o.id)) {
-          ordersMap.set(o.id, {
+        const key = o.id || o.orderNumber;
+        const exists = key && (ordersMap.has(key) || (o.orderNumber && Array.from(ordersMap.values()).some((x) => x.orderNumber === o.orderNumber)));
+        if (!exists && key) {
+          ordersMap.set(key, {
             ...o,
             files: Array.isArray(o.files) ? o.files : [],
           });
@@ -960,10 +1001,21 @@ export const apiClient = {
       }
     });
 
-    // All orders are retrieved for the staff portal desk to inspect, verify, and print
-    const allOrders = Array.from(ordersMap.values());
+    // Deduplicate array strictly by id AND orderNumber
+    const seenIds = new Set<string>();
+    const seenNums = new Set<string>();
+    const allOrders: OrderRecord[] = [];
 
-    // Deduplicate and sort newest first
+    for (const o of ordersMap.values()) {
+      const idKey = o.id?.trim();
+      const numKey = o.orderNumber?.trim();
+      if (idKey && seenIds.has(idKey)) continue;
+      if (numKey && seenNums.has(numKey)) continue;
+      if (idKey) seenIds.add(idKey);
+      if (numKey) seenNums.add(numKey);
+      allOrders.push(o);
+    }
+
     allOrders.sort(
       (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
@@ -998,21 +1050,52 @@ export const apiClient = {
 
     const emitMergedOrders = () => {
       if (!isSubscribed) return;
-      const sorted = Array.from(knownOrdersMap.values())
-        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      callback(sorted);
+      const seenIds = new Set<string>();
+      const seenNums = new Set<string>();
+      const deduplicated: OrderRecord[] = [];
+
+      for (const ord of knownOrdersMap.values()) {
+        const idKey = ord.id?.trim();
+        const numKey = ord.orderNumber?.trim();
+        if (idKey && seenIds.has(idKey)) continue;
+        if (numKey && seenNums.has(numKey)) continue;
+
+        if (idKey) seenIds.add(idKey);
+        if (numKey) seenNums.add(numKey);
+        deduplicated.push(ord);
+      }
+
+      deduplicated.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      callback(deduplicated);
+    };
+
+    const upsertOrder = (ord: OrderRecord) => {
+      if (!ord || ord.id?.startsWith('ord-seed-') || ord.orderNumber?.startsWith('SEED-')) return;
+      const key = ord.id || ord.orderNumber;
+      if (!key) return;
+
+      // Remove any existing entry matching either id or orderNumber under any key
+      for (const [k, existing] of knownOrdersMap.entries()) {
+        if (
+          k === key ||
+          (ord.id && existing.id === ord.id) ||
+          (ord.orderNumber && existing.orderNumber === ord.orderNumber)
+        ) {
+          knownOrdersMap.delete(k);
+        }
+      }
+
+      knownOrdersMap.set(key, {
+        ...ord,
+        id: ord.id || key,
+        orderNumber: ord.orderNumber || ord.id || key,
+        files: Array.isArray(ord.files) ? ord.files : [],
+      });
     };
 
     // 1. Initial hydration from local & server
     const initialLocal = Storage.getOrders();
-    initialLocal.forEach((o) => {
-      if (!o.id?.startsWith('ord-seed-') && !o.orderNumber?.startsWith('SEED-')) {
-        knownOrdersMap.set(o.id, {
-          ...o,
-          files: Array.isArray(o.files) ? o.files : [],
-        });
-      }
-    });
+    initialLocal.forEach((o) => upsertOrder(o));
     emitMergedOrders();
 
     // Immediate server fetch on mount to sync cross-browser orders instantly
@@ -1022,10 +1105,7 @@ export const apiClient = {
         let hasNew = false;
         backendData.orders.forEach((serverOrd) => {
           if (!serverOrd.id?.startsWith('ord-seed-') && !serverOrd.orderNumber?.startsWith('SEED-')) {
-            knownOrdersMap.set(serverOrd.id, {
-              ...serverOrd,
-              files: Array.isArray(serverOrd.files) ? serverOrd.files : [],
-            });
+            upsertOrder(serverOrd);
             hasNew = true;
           }
         });
@@ -1058,19 +1138,8 @@ export const apiClient = {
               orderNumber: data.orderNumber || orderId,
               files: Array.isArray(data.files) ? data.files : [],
             };
-            const existing = knownOrdersMap.get(orderId) || (data.orderNumber ? Array.from(knownOrdersMap.values()).find((o) => o.orderNumber === data.orderNumber) : undefined);
-            if (
-              !existing ||
-              new Date(data.updatedAt || data.createdAt || 0).getTime() >
-                new Date(existing.updatedAt || existing.createdAt || 0).getTime() ||
-              data.orderStatus !== existing.orderStatus ||
-              data.paymentStatus !== existing.paymentStatus ||
-              Boolean(data.alarmSilenced) !== Boolean(existing.alarmSilenced) ||
-              Boolean(data.zipDownloaded) !== Boolean(existing.zipDownloaded)
-            ) {
-              knownOrdersMap.set(orderId, normalizedData);
-              hasChanges = true;
-            }
+            upsertOrder(normalizedData);
+            hasChanges = true;
           });
           if (hasChanges) {
             emitMergedOrders();
@@ -1093,22 +1162,8 @@ export const apiClient = {
           let hasNewOrUpdated = false;
           backendData.orders.forEach((serverOrd) => {
             if (!serverOrd.id?.startsWith('ord-seed-') && !serverOrd.orderNumber?.startsWith('SEED-')) {
-              const current = knownOrdersMap.get(serverOrd.id) || (serverOrd.orderNumber ? Array.from(knownOrdersMap.values()).find((o) => o.orderNumber === serverOrd.orderNumber) : undefined);
-              if (
-                !current ||
-                new Date(serverOrd.updatedAt || serverOrd.createdAt || 0).getTime() >
-                  new Date(current.updatedAt || current.createdAt || 0).getTime() ||
-                serverOrd.orderStatus !== current.orderStatus ||
-                serverOrd.paymentStatus !== current.paymentStatus ||
-                Boolean(serverOrd.alarmSilenced) !== Boolean(current.alarmSilenced) ||
-                Boolean(serverOrd.zipDownloaded) !== Boolean(current.zipDownloaded)
-              ) {
-                knownOrdersMap.set(serverOrd.id, {
-                  ...serverOrd,
-                  files: Array.isArray(serverOrd.files) ? serverOrd.files : [],
-                });
-                hasNewOrUpdated = true;
-              }
+              upsertOrder(serverOrd);
+              hasNewOrUpdated = true;
             }
           });
           if (hasNewOrUpdated) {
@@ -1357,6 +1412,25 @@ export const apiClient = {
     const isUid = clean.length > 20 && !isEmail;
     const cleanMob = clean.replace(/\D/g, '').slice(-10);
 
+    const dedupeOrders = (list: OrderRecord[]) => {
+      const seen = new Set<string>();
+      const out: OrderRecord[] = [];
+      for (const ord of list) {
+        if (!ord || ord.id?.startsWith('ord-seed-') || ord.orderNumber?.startsWith('SEED-')) continue;
+        const key = ord.id || ord.orderNumber;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          if (ord.orderNumber) seen.add(ord.orderNumber);
+          if (ord.id) seen.add(ord.id);
+          out.push({
+            ...ord,
+            files: Array.isArray(ord.files) ? ord.files : [],
+          });
+        }
+      }
+      return out;
+    };
+
     // Try fetching from Firestore first
     try {
       const ordersCol = collection(db, 'orders');
@@ -1375,7 +1449,7 @@ export const apiClient = {
           const fsOrders: OrderRecord[] = [];
           snap.forEach((d) => fsOrders.push(d.data() as OrderRecord));
           fsOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-          return fsOrders;
+          return dedupeOrders(fsOrders);
         }
       }
     } catch (err) {
@@ -1388,11 +1462,11 @@ export const apiClient = {
     );
 
     if (backendData?.orders) {
-      return backendData.orders;
+      return dedupeOrders(backendData.orders);
     }
 
     const orders = Storage.getOrders();
-    return orders.filter((o) => {
+    const matched = orders.filter((o) => {
       if (isUid && o.userId === clean) return true;
       if (isEmail && o.customer?.email) {
         return o.customer.email.toLowerCase() === clean.toLowerCase();
@@ -1403,6 +1477,7 @@ export const apiClient = {
       }
       return false;
     });
+    return dedupeOrders(matched);
   },
 
   // Admin: Verify or Reject Payment

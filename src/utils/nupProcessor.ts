@@ -109,7 +109,35 @@ export async function generateNupPdf(options: GenerateNupOptions): Promise<NupRe
   } = options;
 
   const srcBytes = await toUint8Array(input);
-  const srcDoc = await PDFDocument.load(srcBytes, { ignoreEncryption: true });
+
+  // Check if original PDF is encrypted or password-protected
+  const textHeader = new TextDecoder('latin1').decode(srcBytes.subarray(0, Math.min(srcBytes.length, 65536)));
+  if (/\/Encrypt\b/i.test(textHeader)) {
+    return {
+      dataUrl: `data:application/pdf;base64,${uint8ArrayToBase64(srcBytes)}`,
+      bytes: srcBytes,
+      sheetCount: 1,
+      originalPageCount: 1,
+      effectivePrintedPages: 1,
+    };
+  }
+
+  let srcDoc: PDFDocument;
+  try {
+    srcDoc = await PDFDocument.load(srcBytes);
+  } catch (loadErr: any) {
+    const errMsg = String(loadErr?.message || loadErr || '').toLowerCase();
+    if (errMsg.includes('encrypt') || errMsg.includes('password') || errMsg.includes('decrypt')) {
+      return {
+        dataUrl: `data:application/pdf;base64,${uint8ArrayToBase64(srcBytes)}`,
+        bytes: srcBytes,
+        sheetCount: 1,
+        originalPageCount: 1,
+        effectivePrintedPages: 1,
+      };
+    }
+    srcDoc = await PDFDocument.load(srcBytes, { ignoreEncryption: true });
+  }
   const totalSrcPages = srcDoc.getPageCount();
 
   const validPages = (options.selectedPages && options.selectedPages.length > 0)

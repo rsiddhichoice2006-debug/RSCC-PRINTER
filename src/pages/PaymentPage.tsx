@@ -18,7 +18,6 @@ import {
   BadgeCheck,
   Zap,
   MapPin,
-  Store,
 } from 'lucide-react';
 import { OrderRecord, ShopSettings } from '../types';
 import { apiClient } from '../services/apiClient';
@@ -197,54 +196,6 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
       console.error('Razorpay initialization notice:', err);
       setIsRazorpayLoading(false);
       setErrorMsg(err.message || 'Could not initialize Razorpay checkout. Please check your internet connection.');
-    }
-  };
-
-  // Place order with payment to be made at shop counter (Cash / UPI)
-  const handlePayAtCounter = async () => {
-    if (!isCustomerLoggedIn) {
-      openAuthModal('login', 'Customer Login Required to Place Order', () => {
-        handlePayAtCounter();
-      });
-      return;
-    }
-
-    if (paymentProcessedRef.current || isExpired || isVerifying || isRazorpayLoading) return;
-    setErrorMsg('');
-    paymentProcessedRef.current = true;
-    setIsVerifying(true);
-
-    try {
-      const now = new Date().toISOString();
-      const counterOrder: OrderRecord = {
-        ...order,
-        paymentStatus: 'PAYMENT_PENDING',
-        orderStatus: 'PLACED',
-        paymentMethod: 'Pay at Counter (Cash / Counter UPI)',
-        paymentReference: `COUNTER-${Date.now().toString().slice(-6)}`,
-        updatedAt: now,
-      };
-
-      const placed = await apiClient.createOrder(counterOrder);
-      try {
-        confetti({ particleCount: 75, spread: 75, origin: { y: 0.6 } });
-      } catch {}
-      setSuccessOrder(placed || counterOrder);
-      onPaymentSubmitted(placed || counterOrder);
-    } catch (err: any) {
-      console.error('Error placing counter order:', err);
-      const fallbackOrder: OrderRecord = {
-        ...order,
-        paymentStatus: 'PAYMENT_PENDING',
-        orderStatus: 'PLACED',
-        paymentMethod: 'Pay at Counter (Cash / Counter UPI)',
-        paymentReference: `COUNTER-${Date.now().toString().slice(-6)}`,
-        updatedAt: new Date().toISOString(),
-      };
-      setSuccessOrder(fallbackOrder);
-      onPaymentSubmitted(fallbackOrder);
-    } finally {
-      setIsVerifying(false);
     }
   };
 
@@ -582,18 +533,6 @@ export const PaymentPage: React.FC<PaymentPageProps> = ({
                   </>
                 )}
               </button>
-
-              {amount > 0 && (
-                <button
-                  type="button"
-                  onClick={handlePayAtCounter}
-                  disabled={isVerifying || isRazorpayLoading || isExpired}
-                  className="w-full py-3.5 px-6 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-amber-400 font-black text-sm sm:text-base rounded-2xl transition shadow-lg flex items-center justify-center gap-2.5 cursor-pointer disabled:cursor-not-allowed border border-amber-400/40 transform active:scale-98"
-                >
-                  <Store className="w-5 h-5 text-amber-400" />
-                  <span>Or Pay Cash / UPI at Shop Counter</span>
-                </button>
-              )}
             </div>
           )}
 

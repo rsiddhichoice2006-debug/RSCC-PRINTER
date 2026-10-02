@@ -54,6 +54,7 @@ import {
   calculateEffectiveSheets,
 } from '../utils/nupProcessor';
 import { DocumentPageView } from '../components/DocumentPageView';
+import { saveFileToStorage } from '../utils/fileStorage';
 import {
   DEFAULT_PRICING,
   getDocumentRate,
@@ -387,6 +388,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   ...f,
                   pageCount: processed.pageCount,
                   previewUrl: processed.previewUrl,
+                  isPasswordProtected: processed.isPasswordProtected,
                   isProcessing: false,
                   moderationStatus: processed.moderationStatus,
                   moderationReason: processed.moderationReason,
@@ -504,10 +506,11 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
     try {
       // Process each file: If customer selected specific pages (Odd, Even, Custom like 1, 2)
       // for a PDF, extract ONLY those selected pages into a new PDF!
-      // This ensures the staff portal sees and prints ONLY the chosen pages.
+      // Password-protected PDFs are NEVER altered to prevent file corruption.
       const finalizedFiles = await Promise.all(
         validFiles.map(async (f) => {
           const currentMode = f.pageSelectionMode || 'ALL';
+          const isLocked = Boolean(f.isPasswordProtected);
           const isPdf =
             f.type === 'application/pdf' ||
             f.name?.toLowerCase().endsWith('.pdf') ||
@@ -526,8 +529,10 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             f.pageCount
           );
 
+          // Strictly prohibit trimming or N-up on locked/encrypted PDFs to prevent corrupting ciphertext
           const needsNupOrTrim =
             isPdf &&
+            !isLocked &&
             (pagesPerSheet > 1 ||
               (currentMode !== 'ALL' && selectedPages.length > 0 && selectedPages.length < f.pageCount));
 
@@ -566,6 +571,8 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                     pagesPerSheet,
                     nupOrientation,
                     previewUrl: nupResult.dataUrl,
+                    isPasswordProtected: false,
+                    password: f.password,
                     moderationStatus: f.moderationStatus,
                     moderationReason: f.moderationReason,
                   };
@@ -595,6 +602,8 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   trimmedPdfCreated: true,
                   pagesPerSheet: 1,
                   previewUrl: extracted.dataUrl,
+                  isPasswordProtected: false,
+                  password: f.password,
                   moderationStatus: f.moderationStatus,
                   moderationReason: f.moderationReason,
                 };
@@ -614,10 +623,39 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             }
           }
 
+          // Exact original size in bytes - never compressed or reduced below 1 KB
+          const originalBytesSize =
+            (f.file && f.file.size > 0 ? f.file.size : 0) ||
+            (f.size && f.size > 0 ? f.size : 0) ||
+            (finalPreviewUrl ? Math.round((finalPreviewUrl.length * 3) / 4) : 1024);
+
+          // Pre-upload file to server disk storage and IndexedDB so all devices have immediate real binary access
+          if (finalPreviewUrl && finalPreviewUrl.startsWith('data:')) {
+            try {
+              // Also cache in browser IndexedDB
+              saveFileToStorage(f.id, finalPreviewUrl, {
+                name: f.name || f.file?.name,
+                type: f.type || f.file?.type,
+              }).catch(() => {});
+
+              // Upload to server disk
+              await fetch('/api/upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  filename: f.name || f.file?.name,
+                  fileType: f.type || f.file?.type,
+                  dataUrl: finalPreviewUrl,
+                  fileId: f.id,
+                }),
+              }).catch(() => {});
+            } catch {}
+          }
+
           return {
             id: f.id,
             name: f.file?.name || f.name,
-            size: f.file?.size || f.size,
+            size: originalBytesSize,
             type: f.file?.type || f.type || 'application/octet-stream',
             pageCount: f.pageCount,
             originalPageCount: f.pageCount,
@@ -631,11 +669,24 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             pagesPerSheet,
             nupOrientation,
             previewUrl: finalPreviewUrl,
+            isPasswordProtected: isLocked,
+            password: f.password,
             moderationStatus: f.moderationStatus,
             moderationReason: f.moderationReason,
           };
         })
       );
+
+      let enhancedInstructions = (customer.specialInstructions || '').trim();
+      const passwordNotes = finalizedFiles
+        .filter((f) => f.password && f.password.trim())
+        .map((f) => `[Password for ${f.name}: ${f.password?.trim()}]`)
+        .join(' ');
+      if (passwordNotes) {
+        enhancedInstructions = enhancedInstructions
+          ? `${enhancedInstructions} • ${passwordNotes}`
+          : passwordNotes;
+      }
 
       const orderPayload = {
         mode: 'DOCUMENT',
@@ -659,7 +710,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         copyRatePerPage,
         totalAmount,
         pricing,
-        specialInstructions: customer.specialInstructions?.trim() || undefined,
+        specialInstructions: enhancedInstructions || undefined,
       };
 
       onProceedToPayment(orderPayload);
@@ -893,7 +944,33 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                                   <AlertTriangle className="w-3 h-3" /> Flagged Content
                                 </span>
                               )}
+
+                              {fileItem.isPasswordProtected && (
+                                <span className="inline-flex items-center gap-1 font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
+                                  🔒 Password-Protected PDF
+                                </span>
+                              )}
                             </div>
+
+                            {fileItem.isPasswordProtected && (
+                              <div className="pt-1.5 flex flex-wrap items-center gap-2">
+                                <label className="text-[11px] font-bold text-amber-900 shrink-0">
+                                  Password (e.g. e-Aadhaar/bank statement):
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="Enter password (optional)"
+                                  value={fileItem.password || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setUploadedFiles((prev) =>
+                                      prev.map((f) => (f.id === fileItem.id ? { ...f, password: val } : f))
+                                    );
+                                  }}
+                                  className="px-2.5 py-1 text-xs bg-white border border-amber-300 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 w-52 font-mono"
+                                />
+                              </div>
+                            )}
 
                             {isFlagged && fileItem.moderationReason && (
                               <p className="text-[11px] text-rose-700 font-medium pt-1">

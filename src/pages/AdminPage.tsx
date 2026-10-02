@@ -546,8 +546,15 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       try {
         const response = await fetch(urlOrContent);
         if (response.ok) {
+          const contentType = (response.headers.get('content-type') || '').toLowerCase();
+          // Never treat a JSON response (e.g. 404/500 JSON error payload) as binary file!
+          if (contentType.includes('application/json')) {
+            return null;
+          }
           const arrayBuf = await response.arrayBuffer();
-          return { data: new Uint8Array(arrayBuf), isBinary: true };
+          if (arrayBuf.byteLength > 0) {
+            return { data: new Uint8Array(arrayBuf), isBinary: true };
+          }
         }
       } catch {
         // Continue to fallback decoders
@@ -630,8 +637,16 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     if (!sourceUrl && orderNumber && fileIndex !== undefined) {
       sourceUrl = `/api/orders/${orderNumber}/files/${fileIndex}/view`;
     }
+    if (!sourceUrl && file.id) {
+      sourceUrl = `/api/files/${file.id}/view`;
+    }
     if (!sourceUrl) return undefined;
     if (file.trimmedPdfCreated) return sourceUrl;
+
+    // NEVER attempt to trim, re-encode, or alter a password-protected / locked PDF!
+    if (file.isPasswordProtected) {
+      return sourceUrl;
+    }
 
     // If file has page selection (Odd, Even, Custom) but wasn't trimmed previously:
     if (file.pageSelectionMode && file.pageSelectionMode !== 'ALL' && file.pageCount > 0) {
@@ -684,13 +699,37 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }
 
     try {
-      const effectiveUrl = await getTrimmedFilePreviewUrl(file, targetOrderId, fileIndex);
+      let effectiveUrl = (await getTrimmedFilePreviewUrl(file, targetOrderId, fileIndex, orderNumber)) || file.previewUrl;
+      if (!effectiveUrl && targetOrderId) {
+        effectiveUrl = (await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber)) || undefined;
+      }
+      if (!effectiveUrl && file.id) {
+        effectiveUrl = (await resolveFileFromStorage(undefined, file.id, fileIndex, file.name, orderNumber)) || undefined;
+      }
+      if (!effectiveUrl && targetOrderId && fileIndex !== undefined) {
+        effectiveUrl = `/api/orders/${targetOrderId}/files/${fileIndex}/view`;
+      }
+      if (!effectiveUrl && file.id) {
+        effectiveUrl = `/api/files/${file.id}/view`;
+      }
+
       if (!effectiveUrl) {
         showToast(`Could not load preview for "${file.name}".`);
         return;
       }
 
-      const resolved = await resolveFileBinary(effectiveUrl);
+      let resolved = await resolveFileBinary(effectiveUrl);
+      if (!resolved && targetOrderId) {
+        const storageUrl = await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber);
+        if (storageUrl) {
+          resolved = await resolveFileBinary(storageUrl);
+        }
+      }
+      if (!resolved && file.id) {
+        const directFileUrl = `/api/files/${file.id}/view`;
+        resolved = await resolveFileBinary(directFileUrl);
+      }
+
       if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
         const { filename: safeName, mimeType, formatLabel } = getPreservedFormatDetails(
           file,
@@ -703,10 +742,18 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         showToast(`Opened "${safeName}" in print viewer (${formatLabel}) 🖨️`);
         return;
       }
-      window.open(effectiveUrl, '_blank');
+
+      if (effectiveUrl.startsWith('data:') || effectiveUrl.startsWith('blob:')) {
+        window.open(effectiveUrl, '_blank');
+        return;
+      }
+
+      showToast(`Could not display print preview for "${file.name}".`);
     } catch {
-      if (file.previewUrl) {
+      if (file.previewUrl && (file.previewUrl.startsWith('data:') || file.previewUrl.startsWith('blob:'))) {
         window.open(file.previewUrl, '_blank');
+      } else {
+        showToast(`Could not display preview for "${file.name}".`);
       }
     }
   };
@@ -737,12 +784,18 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }
 
     try {
-      let effectiveUrl = (await getTrimmedFilePreviewUrl(file, targetOrderId, fileIndex)) || file.previewUrl;
+      let effectiveUrl = (await getTrimmedFilePreviewUrl(file, targetOrderId, fileIndex, orderNumber)) || file.previewUrl;
       if (!effectiveUrl && targetOrderId) {
-        effectiveUrl = (await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name)) || undefined;
+        effectiveUrl = (await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber)) || undefined;
+      }
+      if (!effectiveUrl && file.id) {
+        effectiveUrl = (await resolveFileFromStorage(undefined, file.id, fileIndex, file.name, orderNumber)) || undefined;
       }
       if (!effectiveUrl && targetOrderId && fileIndex !== undefined) {
         effectiveUrl = `/api/orders/${targetOrderId}/files/${fileIndex}/download`;
+      }
+      if (!effectiveUrl && file.id) {
+        effectiveUrl = `/api/files/${file.id}/download`;
       }
 
       if (!effectiveUrl) {
@@ -750,7 +803,20 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         return;
       }
 
-      const resolved = await resolveFileBinary(effectiveUrl);
+      let resolved = await resolveFileBinary(effectiveUrl);
+
+      // If initial fetch failed or was not binary, try IndexedDB & direct fileId fallbacks
+      if (!resolved && targetOrderId) {
+        const storageUrl = await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber);
+        if (storageUrl) {
+          resolved = await resolveFileBinary(storageUrl);
+        }
+      }
+      if (!resolved && file.id) {
+        const directFileUrl = `/api/files/${file.id}/download`;
+        resolved = await resolveFileBinary(directFileUrl);
+      }
+
       if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
         const { filename: safeName, mimeType, formatLabel } = getPreservedFormatDetails(
           file,
@@ -768,26 +834,15 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           if (document.body.contains(link)) document.body.removeChild(link);
           URL.revokeObjectURL(blobUrl);
         }, 60000);
-        showToast(`Downloaded "${safeName}" in ${formatLabel} format ✅`);
+        showToast(`Downloaded "${safeName}" in ${formatLabel} (${(resolved.data.byteLength / 1024).toFixed(1)} KB) ✅`);
         return;
       }
 
-      const { filename: safeName, formatLabel } = getPreservedFormatDetails(file, undefined, effectiveUrl);
-      const link = document.createElement('a');
-      link.href = effectiveUrl;
-      link.download = safeName;
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        if (document.body.contains(link)) document.body.removeChild(link);
-      }, 1000);
-      showToast(`Downloading "${safeName}" in ${formatLabel} format...`);
+      // If binary could not be resolved, NEVER download a broken 404 JSON link!
+      showToast(`Could not load binary data for "${file.name}". File may still be syncing from customer device.`);
     } catch (err) {
       console.error('Download single file error:', err);
-      if (file.previewUrl) {
-        window.open(file.previewUrl, '_blank');
-      }
+      showToast(`Failed to download "${file.name}". Please try again.`);
     }
   };
 
@@ -877,7 +932,8 @@ ${(order.files || []).map((f, i) => {
   const format = getPreservedFormatDetails(f);
   const isTrimmed = f.trimmedPdfCreated || (f.pageSelectionMode && f.pageSelectionMode !== 'ALL');
   const tag = isTrimmed ? ` [CONTAINS ONLY SELECTED PAGES: ${f.selectedPagesSummary || f.pageSelectionMode} (from original ${f.originalPageCount || f.pageCount} pgs)]` : '';
-  return `${i + 1}. ${format.filename} (Format: ${format.formatLabel}, Pages: ${f.pageCount}, Size: ${(f.size / 1024).toFixed(1)} KB)${tag}`;
+  const pwTag = f.isPasswordProtected ? ` [🔒 LOCKED PDF: ${f.password ? `Password = ${f.password}` : 'Password required'}]` : '';
+  return `${i + 1}. ${format.filename} (Format: ${format.formatLabel}, Pages: ${f.pageCount}, Size: ${(f.size / 1024).toFixed(1)} KB)${tag}${pwTag}`;
 }).join('\n')}
 =====================================================
 `;
@@ -892,11 +948,17 @@ ${(order.files || []).map((f, i) => {
         if (!effectiveUrl) {
           effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name, order.orderNumber)) || undefined;
         }
+        if (!effectiveUrl && file.id) {
+          effectiveUrl = (await resolveFileFromStorage(undefined, file.id, i, file.name, order.orderNumber)) || undefined;
+        }
         if (!effectiveUrl && order.orderNumber) {
           effectiveUrl = (await resolveFileFromStorage(order.orderNumber, file.id, i, file.name, order.orderNumber)) || undefined;
         }
         if (!effectiveUrl && order.id) {
           effectiveUrl = `/api/orders/${order.id}/files/${i}/download`;
+        }
+        if (!effectiveUrl && file.id) {
+          effectiveUrl = `/api/files/${file.id}/download`;
         }
         if (!effectiveUrl && order.orderNumber) {
           effectiveUrl = `/api/orders/${order.orderNumber}/files/${i}/download`;
@@ -905,7 +967,11 @@ ${(order.files || []).map((f, i) => {
         let finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${(file.name || `file_${i + 1}`).replace(/[/\\?%*:|"<>]/g, '_')}`;
 
         if (effectiveUrl) {
-          const resolved = await resolveFileBinary(effectiveUrl);
+          let resolved = await resolveFileBinary(effectiveUrl);
+          if (!resolved && file.id) {
+            const directFileUrl = `/api/files/${file.id}/download`;
+            resolved = await resolveFileBinary(directFileUrl);
+          }
           if (resolved) {
             const formatDetails = getPreservedFormatDetails(
               file,
@@ -915,6 +981,11 @@ ${(order.files || []).map((f, i) => {
             finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${formatDetails.filename.replace(/[/\\?%*:|"<>]/g, '_')}`;
             zip.file(finalZipEntryName, resolved.data);
             added = true;
+
+            // If file is password protected, also include a helper text file with the password
+            if (file.isPasswordProtected && file.password) {
+              zip.file(`${finalZipEntryName}_PASSWORD.txt`, `Document Password: ${file.password}\nCustomer: ${order.customer?.name || 'Customer'}\nOrder: #${order.orderNumber}`);
+            }
           }
         }
 
@@ -3318,8 +3389,13 @@ ${(order.files || []).map((f, i) => {
                                   ✨ 2 Pages on 1 Side ({f.nupOrientation || selectedOrder.nupOrientation === 'TOP_BOTTOM' ? 'Top/Bottom' : 'Side-by-Side'})
                                 </span>
                               )}
+                              {f.isPasswordProtected && (
+                                <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded-md inline-flex items-center gap-1">
+                                  🔒 Locked PDF {f.password ? `(Pass: ${f.password})` : '(Pass Required)'}
+                                </span>
+                              )}
                             </div>
-                            <div className="font-mono text-slate-400 text-[11px] flex items-center gap-1.5">
+                            <div className="font-mono text-slate-400 text-[11px] flex items-center gap-1.5 flex-wrap">
                               <span className="text-emerald-700 font-bold">
                                 {f.pageCount} pgs to print
                               </span>
@@ -3330,6 +3406,23 @@ ${(order.files || []).map((f, i) => {
                               <span>{(f.size / 1024).toFixed(1)} KB</span>
                               <span>•</span>
                               <span className="text-slate-500 font-sans">{format.formatLabel}</span>
+                              {f.isPasswordProtected && f.password && (
+                                <>
+                                  <span>•</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText(f.password || '');
+                                      showToast(`Copied password "${f.password}" to clipboard! 📋`);
+                                    }}
+                                    className="text-amber-800 hover:text-amber-950 font-sans font-bold underline cursor-pointer text-[10px]"
+                                    title="Click to copy password"
+                                  >
+                                    Copy Password
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>

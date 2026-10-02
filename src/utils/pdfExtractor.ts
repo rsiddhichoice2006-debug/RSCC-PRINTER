@@ -113,37 +113,66 @@ export async function extractSelectedPagesFromPdf(
     throw new Error('Unsupported input type for PDF extraction');
   }
 
-  // Load the original PDF
-  const srcDoc = await PDFDocument.load(srcBytes, { ignoreEncryption: true });
-  const totalSrcPages = srcDoc.getPageCount();
-
-  // Validate pages to keep (1-indexed)
-  const validPages = selectedPages.filter((p) => p >= 1 && p <= totalSrcPages);
-
-  // If the user selected all pages anyway, return base64 of original
-  if (validPages.length === totalSrcPages && totalSrcPages > 0) {
+  // Check if original PDF is encrypted or password-protected
+  const textHeader = new TextDecoder('latin1').decode(srcBytes.subarray(0, Math.min(srcBytes.length, 65536)));
+  const isEncrypted = /\/Encrypt\b/i.test(textHeader);
+  if (isEncrypted) {
+    // Encrypted / password-protected PDFs CANNOT be split/copied with pdf-lib without corrupting the cryptographic structure!
+    // Preserving 100% of the original untouched bytes ensures the file never gets damaged!
     const dataUrl = `data:application/pdf;base64,${uint8ArrayToBase64(srcBytes)}`;
-    return { dataUrl, bytes: srcBytes, pageCount: totalSrcPages };
+    return { dataUrl, bytes: srcBytes, pageCount: selectedPages.length || 1 };
   }
 
-  // Create a brand new clean PDF document containing ONLY the chosen pages
-  const destDoc = await PDFDocument.create();
-  const pageIndices = (validPages.length > 0 ? validPages : [1]).map((p) => p - 1);
+  try {
+    // Test if document loads cleanly
+    let srcDoc: PDFDocument;
+    try {
+      srcDoc = await PDFDocument.load(srcBytes);
+    } catch (loadErr: any) {
+      const errMsg = String(loadErr?.message || loadErr || '').toLowerCase();
+      if (errMsg.includes('encrypt') || errMsg.includes('password') || errMsg.includes('decrypt')) {
+        // If encrypted, preserve 100% original bytes
+        const dataUrl = `data:application/pdf;base64,${uint8ArrayToBase64(srcBytes)}`;
+        return { dataUrl, bytes: srcBytes, pageCount: selectedPages.length || 1 };
+      }
+      // Attempt load with ignoreEncryption if other non-encryption issues
+      srcDoc = await PDFDocument.load(srcBytes, { ignoreEncryption: true });
+    }
 
-  const copiedPages = await destDoc.copyPages(srcDoc, pageIndices);
-  for (const page of copiedPages) {
-    destDoc.addPage(page);
+    const totalSrcPages = srcDoc.getPageCount();
+
+    // Validate pages to keep (1-indexed)
+    const validPages = selectedPages.filter((p) => p >= 1 && p <= totalSrcPages);
+
+    // If the user selected all pages anyway, return base64 of original
+    if (validPages.length === totalSrcPages && totalSrcPages > 0) {
+      const dataUrl = `data:application/pdf;base64,${uint8ArrayToBase64(srcBytes)}`;
+      return { dataUrl, bytes: srcBytes, pageCount: totalSrcPages };
+    }
+
+    // Create a brand new clean PDF document containing ONLY the chosen pages
+    const destDoc = await PDFDocument.create();
+    const pageIndices = (validPages.length > 0 ? validPages : [1]).map((p) => p - 1);
+
+    const copiedPages = await destDoc.copyPages(srcDoc, pageIndices);
+    for (const page of copiedPages) {
+      destDoc.addPage(page);
+    }
+
+    const outBytes = await destDoc.save();
+    const base64 = uint8ArrayToBase64(outBytes);
+    const dataUrl = `data:application/pdf;base64,${base64}`;
+
+    return {
+      dataUrl,
+      bytes: outBytes,
+      pageCount: copiedPages.length,
+    };
+  } catch (err) {
+    console.warn('PDF page extraction fallback to original bytes:', err);
+    const dataUrl = `data:application/pdf;base64,${uint8ArrayToBase64(srcBytes)}`;
+    return { dataUrl, bytes: srcBytes, pageCount: selectedPages.length || 1 };
   }
-
-  const outBytes = await destDoc.save();
-  const base64 = uint8ArrayToBase64(outBytes);
-  const dataUrl = `data:application/pdf;base64,${base64}`;
-
-  return {
-    dataUrl,
-    bytes: outBytes,
-    pageCount: copiedPages.length,
-  };
 }
 
 /**

@@ -110,6 +110,9 @@ export interface UploadedFileItem {
   error?: string;
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
   moderationReason?: string;
+  isPasswordProtected?: boolean;
+  password?: string;
+  fileUrl?: string;
 }
 
 export interface SerializableFileItem {
@@ -131,6 +134,9 @@ export interface SerializableFileItem {
   moderationStatus: 'SAFE' | 'FLAGGED' | 'PENDING' | 'MANUAL_REVIEW';
   moderationReason?: string;
   previewUrl?: string;
+  isPasswordProtected?: boolean;
+  password?: string;
+  fileUrl?: string;
 }
 
 export interface CustomerDetails {

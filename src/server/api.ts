@@ -80,6 +80,10 @@ export interface OrderFileItem {
   trimmedPdfCreated?: boolean;
   pagesPerSheet?: 1 | 2 | 4 | number;
   nupOrientation?: 'SIDE_BY_SIDE' | 'TOP_BOTTOM' | string;
+  fileUrl?: string;
+  hasBinary?: boolean;
+  isPasswordProtected?: boolean;
+  password?: string;
 }
 
 export interface OrderItem {
@@ -210,6 +214,96 @@ const DATA_DIR = path.resolve(process.cwd(), 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'rscc_orders.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'rscc_settings.json');
 const CUSTOMERS_FILE = path.join(DATA_DIR, 'rscc_customers.json');
+const UPLOAD_FILES_DIR = path.join(DATA_DIR, 'files');
+
+export function saveFileBinaryToDisk(
+  orderIdOrFileId: string,
+  indexOrName: number | string,
+  filename: string,
+  buffer: Buffer
+): string {
+  try {
+    if (!fs.existsSync(UPLOAD_FILES_DIR)) {
+      fs.mkdirSync(UPLOAD_FILES_DIR, { recursive: true });
+    }
+    const cleanName = (filename || 'file').replace(/[/\\?%*:|"<>]/g, '_');
+    const targetFilename = `${orderIdOrFileId}_${indexOrName}_${cleanName}`;
+    const targetPath = path.join(UPLOAD_FILES_DIR, targetFilename);
+    fs.writeFileSync(targetPath, buffer);
+    return targetPath;
+  } catch (err) {
+    console.warn('Failed to save file binary to disk:', err);
+    return '';
+  }
+}
+
+export function findFileBinaryOnDisk(
+  orderId: string,
+  fileIndex: number,
+  filename?: string,
+  fileId?: string
+): { path: string; buffer: Buffer; size: number } | null {
+  if (!fs.existsSync(UPLOAD_FILES_DIR)) return null;
+  try {
+    const diskFiles = fs.readdirSync(UPLOAD_FILES_DIR);
+    const prefixOrderIdx = `${orderId}_${fileIndex}_`;
+    const prefixFileId = fileId ? `${fileId}_` : null;
+
+    // 1. Direct match by orderId + fileIndex or fileId prefix
+    for (const f of diskFiles) {
+      if (f.startsWith(prefixOrderIdx) || (prefixFileId && f.startsWith(prefixFileId))) {
+        const p = path.join(UPLOAD_FILES_DIR, f);
+        const buf = fs.readFileSync(p);
+        if (buf && buf.length > 0) {
+          return { path: p, buffer: buf, size: buf.length };
+        }
+      }
+    }
+
+    // 2. Match by fileId substring anywhere in filename
+    if (fileId) {
+      for (const f of diskFiles) {
+        if (f.includes(fileId)) {
+          const p = path.join(UPLOAD_FILES_DIR, f);
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 0) {
+            return { path: p, buffer: buf, size: buf.length };
+          }
+        }
+      }
+    }
+
+    // 3. Match by orderId substring
+    if (orderId) {
+      for (const f of diskFiles) {
+        if (f.includes(orderId)) {
+          const p = path.join(UPLOAD_FILES_DIR, f);
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 0) {
+            return { path: p, buffer: buf, size: buf.length };
+          }
+        }
+      }
+    }
+
+    // 4. Match by exact sanitized filename
+    if (filename) {
+      const cleanName = filename.replace(/[/\\?%*:|"<>]/g, '_');
+      for (const f of diskFiles) {
+        if (f.endsWith(`_${cleanName}`) || f === cleanName) {
+          const p = path.join(UPLOAD_FILES_DIR, f);
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 0) {
+            return { path: p, buffer: buf, size: buf.length };
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Error reading file from disk:', err);
+  }
+  return null;
+}
 
 // Registered Customers Database
 let customers: CustomerUserRecord[] = [];
@@ -218,6 +312,9 @@ function initDataStore() {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(UPLOAD_FILES_DIR)) {
+      fs.mkdirSync(UPLOAD_FILES_DIR, { recursive: true });
     }
     if (fs.existsSync(SETTINGS_FILE)) {
       const data = fs.readFileSync(SETTINGS_FILE, 'utf-8');
@@ -481,11 +578,11 @@ async function parseJsonBody<T>(req: IncomingMessage): Promise<T> {
       } catch {
         safeResolve({} as T);
       }
-    }, 2500);
+    }, 60000);
 
     req.on('data', (chunk) => {
       data += chunk;
-      if (data.length > 50 * 1024 * 1024) {
+      if (data.length > 100 * 1024 * 1024) {
         data = '';
       }
     });
@@ -665,6 +762,84 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
+    // 2b. POST /api/upload - Direct binary and dataUrl file upload to persistent disk storage
+    if (pathname === '/api/upload' && method === 'POST') {
+      const contentType = req.headers['content-type'] || '';
+
+      if (contentType.includes('application/json')) {
+        const body = await parseJsonBody<{
+          filename: string;
+          fileType?: string;
+          dataUrl?: string;
+          rawBase64?: string;
+          orderId?: string;
+          fileIndex?: number;
+          fileId?: string;
+        }>(req);
+
+        if (!body.filename || (!body.dataUrl && !body.rawBase64)) {
+          sendJson(res, 400, { success: false, error: 'Filename and file data are required.' });
+          return true;
+        }
+
+        try {
+          const raw = body.dataUrl || body.rawBase64 || '';
+          let b64 = raw;
+          if (raw.includes(',')) {
+            b64 = raw.substring(raw.indexOf(',') + 1);
+          }
+          const buffer = Buffer.from(b64, 'base64');
+          const identifier = body.orderId || body.fileId || `upload_${Date.now()}`;
+          const index = body.fileIndex ?? 0;
+          const targetPath = saveFileBinaryToDisk(identifier, index, body.filename, buffer);
+          if (body.fileId) {
+            saveFileBinaryToDisk(body.fileId, 'orig', body.filename, buffer);
+          }
+
+          sendJson(res, 200, {
+            success: true,
+            filename: body.filename,
+            size: buffer.length,
+            targetPath,
+            fileUrl: `/api/orders/${identifier}/files/${index}/download`,
+          });
+          return true;
+        } catch (uploadErr: any) {
+          sendJson(res, 500, { success: false, error: 'Failed to save uploaded file: ' + uploadErr.message });
+          return true;
+        }
+      } else {
+        // Raw stream binary upload
+        const urlParams = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).searchParams;
+        const filename = urlParams.get('filename') || (req.headers['x-filename'] as string) || 'uploaded_document';
+        const fileId = urlParams.get('fileId') || (req.headers['x-file-id'] as string) || `f_${Date.now()}`;
+        const orderId = urlParams.get('orderId') || (req.headers['x-order-id'] as string) || fileId;
+        const fileIndex = parseInt(urlParams.get('fileIndex') || '0', 10);
+
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        req.on('end', () => {
+          try {
+            const buffer = Buffer.concat(chunks);
+            const targetPath = saveFileBinaryToDisk(orderId, fileIndex, filename, buffer);
+            if (fileId) {
+              saveFileBinaryToDisk(fileId, 'orig', filename, buffer);
+            }
+            sendJson(res, 200, {
+              success: true,
+              filename,
+              size: buffer.length,
+              targetPath,
+              fileUrl: `/api/orders/${orderId}/files/${fileIndex}/download`,
+            });
+          } catch (e: any) {
+            sendJson(res, 500, { success: false, error: e.message });
+          }
+        });
+        return true;
+      }
+    }
+
     // 3. POST /api/orders - Create new order (with backend price recalculation)
     if (pathname === '/api/orders' && method === 'POST') {
       if (settings.isAcceptingOrders === false) {
@@ -774,6 +949,34 @@ Return your judgment strictly in JSON format:
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
+
+      // Save all file binaries to disk immediately so original format & size are 100% preserved
+      if (Array.isArray(body.files)) {
+        body.files.forEach((f: any, idx: number) => {
+          const src = f.previewUrl || f.dataUrl;
+          if (src && typeof src === 'string' && src.startsWith('data:')) {
+            try {
+              const commaIdx = src.indexOf(',');
+              const rawB64 = src.substring(commaIdx + 1);
+              const buffer = Buffer.from(rawB64, 'base64');
+              if (buffer.length > 0) {
+                saveFileBinaryToDisk(newOrder.id, idx, f.name || `file_${idx + 1}`, buffer);
+                if (newOrder.orderNumber) {
+                  saveFileBinaryToDisk(newOrder.orderNumber, idx, f.name || `file_${idx + 1}`, buffer);
+                }
+                if (f.id) {
+                  saveFileBinaryToDisk(f.id, 'orig', f.name || `file_${idx + 1}`, buffer);
+                }
+                f.size = buffer.length;
+                f.fileUrl = `/api/orders/${newOrder.id}/files/${idx}/download`;
+                f.hasBinary = true;
+              }
+            } catch (err) {
+              console.warn('Error saving order file binary to disk:', err);
+            }
+          }
+        });
+      }
 
       const existingIdx = orders.findIndex((o) => o.id === newOrder.id || o.orderNumber === newOrder.orderNumber);
       if (existingIdx >= 0) {
@@ -1237,6 +1440,35 @@ Return your judgment strictly in JSON format:
 
       if (orderIndex === -1) {
         if (body.order) {
+          // Save all file binaries to disk
+          if (Array.isArray(body.order.files)) {
+            body.order.files.forEach((f: any, idx: number) => {
+              const src = f.previewUrl || f.dataUrl;
+              if (src && typeof src === 'string' && src.startsWith('data:')) {
+                try {
+                  const commaIdx = src.indexOf(',');
+                  const rawB64 = src.substring(commaIdx + 1);
+                  const buffer = Buffer.from(rawB64, 'base64');
+                  if (buffer.length > 0) {
+                    const oid = targetOrderId || body.order?.id || `ord-${Date.now()}`;
+                    saveFileBinaryToDisk(oid, idx, f.name || `file_${idx + 1}`, buffer);
+                    if (body.order?.orderNumber) {
+                      saveFileBinaryToDisk(body.order.orderNumber, idx, f.name || `file_${idx + 1}`, buffer);
+                    }
+                    if (f.id) {
+                      saveFileBinaryToDisk(f.id, 'orig', f.name || `file_${idx + 1}`, buffer);
+                    }
+                    f.size = buffer.length;
+                    f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
+                    f.hasBinary = true;
+                  }
+                } catch (err) {
+                  console.warn('Error saving file binary in confirm-payment:', err);
+                }
+              }
+            });
+          }
+
           const freshOrder: OrderItem = {
             ...body.order,
             id: body.order.id || targetOrderId || `ord-${Date.now()}`,
@@ -1304,6 +1536,28 @@ Return your judgment strictly in JSON format:
       if (body.order && Array.isArray(body.order.files)) {
         verifiedOrder.files = body.order.files.map((newF, idx) => {
           const oldF = verifiedOrder.files && verifiedOrder.files[idx];
+          const src = newF.previewUrl || newF.dataUrl || oldF?.previewUrl || oldF?.dataUrl;
+          if (src && typeof src === 'string' && src.startsWith('data:')) {
+            try {
+              const commaIdx = src.indexOf(',');
+              const rawB64 = src.substring(commaIdx + 1);
+              const buffer = Buffer.from(rawB64, 'base64');
+              if (buffer.length > 0) {
+                saveFileBinaryToDisk(verifiedOrder.id, idx, newF.name || `file_${idx + 1}`, buffer);
+                if (verifiedOrder.orderNumber) {
+                  saveFileBinaryToDisk(verifiedOrder.orderNumber, idx, newF.name || `file_${idx + 1}`, buffer);
+                }
+                if (newF.id) {
+                  saveFileBinaryToDisk(newF.id, 'orig', newF.name || `file_${idx + 1}`, buffer);
+                }
+                newF.size = buffer.length;
+                newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
+                newF.hasBinary = true;
+              }
+            } catch (err) {
+              console.warn('Error saving binary to disk in verifiedOrder:', err);
+            }
+          }
           return {
             ...newF,
             previewUrl: newF.previewUrl || oldF?.previewUrl,
@@ -1360,53 +1614,87 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
-    // 7c. GET /api/orders/:id/files/:fileIndex/download or /view - Stream exact original customer file (PDF, JPG, PNG, etc.)
+    // 7c. GET /api/orders/:id/files/:fileIndex/download or /view & /api/files/:fileId/download or /view
     const fileStreamMatch = pathname.match(/^\/api\/orders\/([^\/]+)\/files\/(\d+)\/(download|view)$/);
-    if (fileStreamMatch && method === 'GET') {
-      const orderId = fileStreamMatch[1];
-      const fileIndex = parseInt(fileStreamMatch[2], 10);
-      const isDownload = fileStreamMatch[3] === 'download';
+    const directFileMatch = pathname.match(/^\/api\/files\/([^\/]+)\/(download|view)$/);
+    if ((fileStreamMatch || directFileMatch) && method === 'GET') {
+      const orderId = fileStreamMatch ? fileStreamMatch[1] : '';
+      const fileIndex = fileStreamMatch ? parseInt(fileStreamMatch[2], 10) : 0;
+      const isDownload = fileStreamMatch ? fileStreamMatch[3] === 'download' : directFileMatch![2] === 'download';
+      const directFileId = directFileMatch ? directFileMatch[1] : undefined;
 
       const order = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
-      if (!order || !order.files || !order.files[fileIndex]) {
-        sendJson(res, 404, { success: false, error: 'File not found' });
-        return true;
+      const file = order?.files && order.files[fileIndex];
+      const filename = file?.name || (directFileId ? `${directFileId}` : `file_${fileIndex + 1}`);
+
+      // 1. Check disk storage first (most authoritative, exact original bytes!)
+      const onDisk = findFileBinaryOnDisk(orderId, fileIndex, filename, file?.id || directFileId);
+      let buffer: Buffer | null = onDisk ? onDisk.buffer : null;
+      let mimeType = file?.type || 'application/octet-stream';
+
+      // 2. If not on disk, extract from in-memory previewUrl or dataUrl
+      if (!buffer && file) {
+        const sourceData = file.previewUrl || (file as any).dataUrl;
+        if (sourceData && typeof sourceData === 'string') {
+          try {
+            if (sourceData.startsWith('data:')) {
+              const commaIdx = sourceData.indexOf(',');
+              const meta = sourceData.substring(0, commaIdx);
+              const rawB64 = sourceData.substring(commaIdx + 1);
+              const mimeMatch = meta.match(/^data:([^;,]+)/i);
+              if (mimeMatch) mimeType = mimeMatch[1].toLowerCase();
+              buffer = Buffer.from(rawB64, 'base64');
+            } else if (sourceData.startsWith('http://') || sourceData.startsWith('https://')) {
+              const fetched = await fetch(sourceData);
+              const arrayBuf = await fetched.arrayBuffer();
+              buffer = Buffer.from(arrayBuf);
+            } else {
+              buffer = Buffer.from(sourceData, 'base64');
+            }
+            if (buffer && buffer.length > 0) {
+              saveFileBinaryToDisk(orderId, fileIndex, filename, buffer);
+            }
+          } catch (e) {
+            console.warn('Error decoding sourceData for stream:', e);
+          }
+        }
       }
 
-      const file = order.files[fileIndex];
-      const sourceData = file.previewUrl || file.dataUrl;
-      if (!sourceData) {
+      if (!buffer || buffer.length === 0) {
         sendJson(res, 404, { success: false, error: 'File binary not available on server' });
         return true;
       }
 
-      try {
-        let buffer: Buffer;
-        let mimeType = file.type || 'application/octet-stream';
-
-        if (sourceData.startsWith('data:')) {
-          const commaIdx = sourceData.indexOf(',');
-          const meta = sourceData.substring(0, commaIdx);
-          const rawB64 = sourceData.substring(commaIdx + 1);
-          const mimeMatch = meta.match(/^data:([^;,]+)/i);
-          if (mimeMatch) mimeType = mimeMatch[1].toLowerCase();
-          buffer = Buffer.from(rawB64, 'base64');
-        } else if (sourceData.startsWith('http://') || sourceData.startsWith('https://')) {
-          const fetched = await fetch(sourceData);
-          const arrayBuf = await fetched.arrayBuffer();
-          buffer = Buffer.from(arrayBuf);
-        } else {
-          buffer = Buffer.from(sourceData, 'base64');
+      // Authoritative MIME type detection based on magic bytes & filename
+      if (buffer.length >= 4) {
+        if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+          mimeType = 'application/pdf';
+        } else if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+          mimeType = 'image/jpeg';
+        } else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+          mimeType = 'image/png';
+        } else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+          mimeType = 'image/webp';
         }
+      }
+      if (mimeType === 'application/octet-stream' || !mimeType) {
+        const lowerName = filename.toLowerCase();
+        if (lowerName.endsWith('.pdf')) mimeType = 'application/pdf';
+        else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) mimeType = 'image/jpeg';
+        else if (lowerName.endsWith('.png')) mimeType = 'image/png';
+        else if (lowerName.endsWith('.webp')) mimeType = 'image/webp';
+        else if (lowerName.endsWith('.docx')) mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      }
 
-        const safeFilename = encodeURIComponent(file.name || `file_${fileIndex + 1}`);
+      try {
+        const safeFilename = encodeURIComponent(filename);
         res.writeHead(200, {
           'Content-Type': mimeType,
           'Content-Length': buffer.length,
           'Access-Control-Allow-Origin': '*',
           'Content-Disposition': isDownload
-            ? `attachment; filename="${file.name || 'document'}"; filename*=UTF-8''${safeFilename}`
-            : `inline; filename="${file.name || 'document'}"`,
+            ? `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${safeFilename}`
+            : `inline; filename="${filename.replace(/"/g, '')}"`,
         });
         res.end(buffer);
         return true;
