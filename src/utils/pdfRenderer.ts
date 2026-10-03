@@ -25,6 +25,19 @@ async function toUint8Array(input: File | ArrayBuffer | Uint8Array | string): Pr
     return new Uint8Array(ab);
   }
   if (typeof input === 'string') {
+    if (
+      input.startsWith('http://') ||
+      input.startsWith('https://') ||
+      input.startsWith('/') ||
+      input.startsWith('blob:')
+    ) {
+      const resp = await fetch(input);
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch PDF from URL: ${input} (${resp.status})`);
+      }
+      const ab = await resp.arrayBuffer();
+      return new Uint8Array(ab);
+    }
     let b64 = input;
     if (input.includes(',')) {
       b64 = input.split(',')[1];

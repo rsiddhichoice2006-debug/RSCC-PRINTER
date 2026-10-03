@@ -265,10 +265,21 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
   // Pending orders that require staff to silence alarm or download ZIP across all devices
   const pendingZipOrders = useMemo(() => {
-    return orders.filter((o) => {
+    const seen = new Set<string>();
+    const list: OrderRecord[] = [];
+    orders.forEach((o) => {
       const isActive = o.orderStatus !== 'CANCELLED' && o.orderStatus !== 'COMPLETED';
-      return isActive && !isOrderAlarmSilenced(o);
+      if (isActive && !isOrderAlarmSilenced(o)) {
+        const key = o.id || o.orderNumber;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          if (o.orderNumber) seen.add(o.orderNumber);
+          if (o.id) seen.add(o.id);
+          list.push(o);
+        }
+      }
     });
+    return list;
   }, [orders, downloadedZipIds]);
 
   // Loading states for stopping alarms
@@ -379,13 +390,46 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         }
       });
 
-      // Update state with sorted orders
-      setOrders(
-        (fetchedOrders || []).map((o) => ({
-          ...o,
-          files: Array.isArray(o.files) ? o.files : [],
-        }))
-      );
+      // Update state with deduplicated sorted orders, preserving in-memory file data
+      setOrders((prevOrders) => {
+        const fileCache = new Map<string, any>();
+        prevOrders.forEach((o) => {
+          (o.files || []).forEach((f, idx) => {
+            const src = f.previewUrl || (f as any).dataUrl;
+            if (src) {
+              if (f.id) fileCache.set(f.id, src);
+              if (o.id) fileCache.set(`${o.id}_${idx}`, src);
+              if (o.orderNumber) fileCache.set(`${o.orderNumber}_${idx}`, src);
+            }
+          });
+        });
+
+        const seen = new Set<string>();
+        const deduped: OrderRecord[] = [];
+        (fetchedOrders || []).forEach((o) => {
+          const key = o.id || o.orderNumber;
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            if (o.orderNumber) seen.add(o.orderNumber);
+            if (o.id) seen.add(o.id);
+
+            const mergedFiles = (o.files || []).map((f, idx) => {
+              const cached = fileCache.get(f.id) || fileCache.get(`${o.id}_${idx}`) || fileCache.get(`${o.orderNumber}_${idx}`);
+              return {
+                ...f,
+                previewUrl: f.previewUrl || cached,
+                dataUrl: (f as any).dataUrl || cached,
+              };
+            });
+
+            deduped.push({
+              ...o,
+              files: mergedFiles,
+            });
+          }
+        });
+        return deduped;
+      });
 
       // If new orders detected from any device
       if (!isInitialSnapshotRef.current && freshlyAdded.length > 0) {
@@ -433,12 +477,45 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         apiClient.getOrders(),
         apiClient.getAdminStats(),
       ]);
-      setOrders(
-        (ordersData || []).map((o) => ({
-          ...o,
-          files: Array.isArray(o.files) ? o.files : [],
-        }))
-      );
+      setOrders((prevOrders) => {
+        const fileCache = new Map<string, any>();
+        prevOrders.forEach((o) => {
+          (o.files || []).forEach((f, idx) => {
+            const src = f.previewUrl || (f as any).dataUrl;
+            if (src) {
+              if (f.id) fileCache.set(f.id, src);
+              if (o.id) fileCache.set(`${o.id}_${idx}`, src);
+              if (o.orderNumber) fileCache.set(`${o.orderNumber}_${idx}`, src);
+            }
+          });
+        });
+
+        const seen = new Set<string>();
+        const deduped: OrderRecord[] = [];
+        (ordersData || []).forEach((o) => {
+          const key = o.id || o.orderNumber;
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            if (o.orderNumber) seen.add(o.orderNumber);
+            if (o.id) seen.add(o.id);
+
+            const mergedFiles = (o.files || []).map((f, idx) => {
+              const cached = fileCache.get(f.id) || fileCache.get(`${o.id}_${idx}`) || fileCache.get(`${o.orderNumber}_${idx}`);
+              return {
+                ...f,
+                previewUrl: f.previewUrl || cached,
+                dataUrl: (f as any).dataUrl || cached,
+              };
+            });
+
+            deduped.push({
+              ...o,
+              files: mergedFiles,
+            });
+          }
+        });
+        return deduped;
+      });
       setStats(statsData.stats);
       setAuditLogs(statsData.recentAuditLogs || []);
     } catch (err) {
@@ -541,7 +618,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       urlOrContent.startsWith('blob:') ||
       urlOrContent.startsWith('http://') ||
       urlOrContent.startsWith('https://') ||
-      urlOrContent.startsWith('/api/')
+      urlOrContent.startsWith('/api/') ||
+      urlOrContent.startsWith('/')
     ) {
       try {
         const response = await fetch(urlOrContent);
@@ -558,6 +636,16 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         }
       } catch {
         // Continue to fallback decoders
+      }
+      // If it started with /api/ or http(s) or blob:, it is a URL, NOT raw base64!
+      if (
+        urlOrContent.startsWith('/api/') ||
+        urlOrContent.startsWith('/') ||
+        urlOrContent.startsWith('http://') ||
+        urlOrContent.startsWith('https://') ||
+        urlOrContent.startsWith('blob:')
+      ) {
+        return null;
       }
     }
 
@@ -591,27 +679,30 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       } catch (err) {
         console.warn('Data URI decode error:', err);
       }
+      return null;
     }
 
-    // Strategy 3: Raw base64 string
-    try {
-      let cleanB64 = urlOrContent.replace(/[^A-Za-z0-9+/=]/g, '');
-      if (cleanB64.length >= 8) {
-        const mod = cleanB64.length % 4;
-        if (mod === 2) cleanB64 += '==';
-        else if (mod === 3) cleanB64 += '=';
-        else if (mod === 1) cleanB64 = cleanB64.slice(0, -1);
+    // Strategy 3: Raw base64 string (ONLY if actual base64 file data, NEVER URL paths)
+    if (!urlOrContent.includes('/') && !urlOrContent.includes('?') && urlOrContent.length >= 100) {
+      try {
+        let cleanB64 = urlOrContent.replace(/[^A-Za-z0-9+/=]/g, '');
+        if (cleanB64.length >= 100) {
+          const mod = cleanB64.length % 4;
+          if (mod === 2) cleanB64 += '==';
+          else if (mod === 3) cleanB64 += '=';
+          else if (mod === 1) cleanB64 = cleanB64.slice(0, -1);
 
-        const binaryString = atob(cleanB64);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
+          const binaryString = atob(cleanB64);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          return { data: bytes, isBinary: true };
         }
-        return { data: bytes, isBinary: true };
+      } catch {
+        // Ignore
       }
-    } catch {
-      // Ignore
     }
 
     return null;
@@ -685,12 +776,44 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       const targetOrd = orders.find(o => o.id === targetOrderId) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
       if (targetOrd && targetOrd.orderStatus !== 'READY_FOR_PICKUP' && targetOrd.orderStatus !== 'COMPLETED' && targetOrd.orderStatus !== 'CANCELLED') {
         try {
-          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING');
-          setOrders((prev) => prev.map((o) => (o.id === targetOrderId ? updated : o)));
-          if (selectedOrder && selectedOrder.id === targetOrderId) {
-            setSelectedOrder(updated);
+          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING', undefined, targetOrd);
+          // Preserve in-memory files
+          setOrders((prev) =>
+            prev.map((o) => {
+              if (o.id === targetOrderId || o.orderNumber === orderNumber) {
+                const preservedFiles = (o.files || []).map((origF, fIdx) => {
+                  const newF = updated.files?.[fIdx] || origF;
+                  return {
+                    ...newF,
+                    previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
+                    dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
+                  };
+                });
+                return {
+                  ...updated,
+                  files: preservedFiles.length > 0 ? preservedFiles : (updated.files || o.files),
+                };
+              }
+              return o;
+            })
+          );
+          if (selectedOrder && (selectedOrder.id === targetOrderId || selectedOrder.orderNumber === orderNumber)) {
+            setSelectedOrder((prevSelected) => {
+              if (!prevSelected) return updated;
+              const preservedFiles = (prevSelected.files || []).map((origF, fIdx) => {
+                const newF = updated.files?.[fIdx] || origF;
+                return {
+                  ...newF,
+                  previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
+                  dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
+                };
+              });
+              return {
+                ...updated,
+                files: preservedFiles.length > 0 ? preservedFiles : (updated.files || prevSelected.files),
+              };
+            });
           }
-          loadDashboardData();
           showToast(`Print status updated: Getting Prepared 🖨️ (Order #${orderNumber})`);
         } catch (statusErr) {
           console.error('Failed to update status to PRINTING on print view:', statusErr);
@@ -770,12 +893,44 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       const targetOrd = orders.find(o => o.id === targetOrderId) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
       if (targetOrd && targetOrd.orderStatus !== 'READY_FOR_PICKUP' && targetOrd.orderStatus !== 'COMPLETED' && targetOrd.orderStatus !== 'CANCELLED') {
         try {
-          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING');
-          setOrders((prev) => prev.map((o) => (o.id === targetOrderId ? updated : o)));
-          if (selectedOrder && selectedOrder.id === targetOrderId) {
-            setSelectedOrder(updated);
+          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING', undefined, targetOrd);
+          // Preserve in-memory files
+          setOrders((prev) =>
+            prev.map((o) => {
+              if (o.id === targetOrderId || o.orderNumber === orderNumber) {
+                const preservedFiles = (o.files || []).map((origF, fIdx) => {
+                  const newF = updated.files?.[fIdx] || origF;
+                  return {
+                    ...newF,
+                    previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
+                    dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
+                  };
+                });
+                return {
+                  ...updated,
+                  files: preservedFiles.length > 0 ? preservedFiles : (updated.files || o.files),
+                };
+              }
+              return o;
+            })
+          );
+          if (selectedOrder && (selectedOrder.id === targetOrderId || selectedOrder.orderNumber === orderNumber)) {
+            setSelectedOrder((prevSelected) => {
+              if (!prevSelected) return updated;
+              const preservedFiles = (prevSelected.files || []).map((origF, fIdx) => {
+                const newF = updated.files?.[fIdx] || origF;
+                return {
+                  ...newF,
+                  previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
+                  dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
+                };
+              });
+              return {
+                ...updated,
+                files: preservedFiles.length > 0 ? preservedFiles : (updated.files || prevSelected.files),
+              };
+            });
           }
-          loadDashboardData();
           showToast(`Print status updated: Getting Prepared 🖨️ (Order #${orderNumber})`);
         } catch (statusErr) {
           console.error('Failed to update status to PRINTING on file download:', statusErr);
@@ -1477,7 +1632,7 @@ ${(order.files || []).map((f, i) => {
             <div className="space-y-2.5 pt-1">
               {pendingZipOrders.map((alertOrder, alertIdx) => (
                 <div
-                  key={alertOrder.id || alertOrder.orderNumber || `alert-${alertIdx}`}
+                  key={alertOrder.id ? `alert-${alertOrder.id}-${alertIdx}` : `alert-${alertIdx}`}
                   className="bg-white text-slate-900 p-3.5 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-md border-2 border-amber-300"
                 >
                   <div className="flex items-center gap-3">
@@ -1775,7 +1930,7 @@ ${(order.files || []).map((f, i) => {
                   ) : (
                     filteredOrders.map((ord, ordIdx) => (
                       <tr
-                        key={ord.id || ord.orderNumber || `ord-${ordIdx}`}
+                        key={ord.id ? `ord-row-${ord.id}-${ordIdx}` : `ord-row-${ordIdx}`}
                         className="hover:bg-slate-50/80 transition cursor-pointer"
                         onClick={() => setSelectedOrder(ord)}
                       >

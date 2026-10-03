@@ -99,15 +99,29 @@ export async function extractSelectedPagesFromPdf(
   } else if (input instanceof ArrayBuffer) {
     srcBytes = new Uint8Array(input);
   } else if (typeof input === 'string') {
-    let b64 = input;
-    if (input.includes(',')) {
-      b64 = input.split(',')[1];
-    }
-    const cleanB64 = b64.replace(/[^A-Za-z0-9+/=]/g, '');
-    const binStr = atob(cleanB64);
-    srcBytes = new Uint8Array(binStr.length);
-    for (let i = 0; i < binStr.length; i++) {
-      srcBytes[i] = binStr.charCodeAt(i);
+    if (
+      input.startsWith('http://') ||
+      input.startsWith('https://') ||
+      input.startsWith('/') ||
+      input.startsWith('blob:')
+    ) {
+      const resp = await fetch(input);
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch PDF from URL: ${input} (${resp.status})`);
+      }
+      const ab = await resp.arrayBuffer();
+      srcBytes = new Uint8Array(ab);
+    } else {
+      let b64 = input;
+      if (input.includes(',')) {
+        b64 = input.split(',')[1];
+      }
+      const cleanB64 = b64.replace(/[^A-Za-z0-9+/=]/g, '');
+      const binStr = atob(cleanB64);
+      srcBytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) {
+        srcBytes[i] = binStr.charCodeAt(i);
+      }
     }
   } else {
     throw new Error('Unsupported input type for PDF extraction');

@@ -75,8 +75,11 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
         if (!q) continue;
         const res = await apiClient.getCustomerOrders(q);
         for (const ord of res) {
-          if (!seenIds.has(ord.id)) {
-            seenIds.add(ord.id);
+          const key = ord.id || ord.orderNumber;
+          if (key && !seenIds.has(key)) {
+            seenIds.add(key);
+            if (ord.orderNumber) seenIds.add(ord.orderNumber);
+            if (ord.id) seenIds.add(ord.id);
             allOrders.push(ord);
           }
         }
@@ -367,9 +370,9 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
-              {customerOrders.map((order) => (
+              {customerOrders.map((order, idx) => (
                 <div
-                  key={order.id}
+                  key={order.id ? `cust-order-${order.id}-${idx}` : `cust-order-${idx}`}
                   className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4 hover:border-slate-300 transition"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
