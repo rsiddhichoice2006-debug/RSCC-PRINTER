@@ -113,6 +113,7 @@ export interface UploadedFileItem {
   isPasswordProtected?: boolean;
   password?: string;
   fileUrl?: string;
+  hasBinary?: boolean;
 }
 
 export interface SerializableFileItem {
@@ -137,6 +138,7 @@ export interface SerializableFileItem {
   isPasswordProtected?: boolean;
   password?: string;
   fileUrl?: string;
+  hasBinary?: boolean;
 }
 
 export interface CustomerDetails {

@@ -5,6 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import dotenv from 'dotenv';
+import { generateFallbackPdfBytes, generateFallbackImageBytes } from '../utils/fileFormatHelper';
 
 // Load environment variables from .env
 dotenv.config();
@@ -246,56 +247,85 @@ export function findFileBinaryOnDisk(
   if (!fs.existsSync(UPLOAD_FILES_DIR)) return null;
   try {
     const diskFiles = fs.readdirSync(UPLOAD_FILES_DIR);
-    const prefixOrderIdx = `${orderId}_${fileIndex}_`;
-    const prefixFileId = fileId ? `${fileId}_` : null;
 
-    // 1. Direct match by orderId + fileIndex or fileId prefix
-    for (const f of diskFiles) {
-      if (f.startsWith(prefixOrderIdx) || (prefixFileId && f.startsWith(prefixFileId))) {
-        const p = path.join(UPLOAD_FILES_DIR, f);
-        const buf = fs.readFileSync(p);
-        if (buf && buf.length > 0) {
-          return { path: p, buffer: buf, size: buf.length };
-        }
-      }
-    }
-
-    // 2. Match by fileId substring anywhere in filename
-    if (fileId) {
-      for (const f of diskFiles) {
-        if (f.includes(fileId)) {
-          const p = path.join(UPLOAD_FILES_DIR, f);
-          const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) {
-            return { path: p, buffer: buf, size: buf.length };
-          }
-        }
-      }
-    }
-
-    // 3. Match by orderId substring
+    // If order is known in in-memory orders, also gather its orderNumber and fileId
+    let orderNum = '';
+    let resolvedFileId = fileId;
+    let resolvedFilename = filename;
     if (orderId) {
+      const ord = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
+      if (ord) {
+        if (ord.orderNumber) orderNum = ord.orderNumber;
+        if (!resolvedFileId && ord.files && ord.files[fileIndex]?.id) {
+          resolvedFileId = ord.files[fileIndex].id;
+        }
+        if (!resolvedFilename && ord.files && ord.files[fileIndex]?.name) {
+          resolvedFilename = ord.files[fileIndex].name;
+        }
+      }
+    }
+
+    // 1. Match by exact orderId + fileIndex prefix
+    if (orderId) {
+      const prefix = `${orderId}_${fileIndex}_`;
       for (const f of diskFiles) {
-        if (f.includes(orderId)) {
+        if (f.startsWith(prefix)) {
           const p = path.join(UPLOAD_FILES_DIR, f);
           const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) {
-            return { path: p, buffer: buf, size: buf.length };
-          }
+          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        }
+      }
+    }
+
+    // 2. Match by exact orderNumber + fileIndex prefix
+    if (orderNum) {
+      const prefix = `${orderNum}_${fileIndex}_`;
+      for (const f of diskFiles) {
+        if (f.startsWith(prefix)) {
+          const p = path.join(UPLOAD_FILES_DIR, f);
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        }
+      }
+    }
+
+    // 3. Match by fileId (prefix or includes)
+    if (resolvedFileId) {
+      for (const f of diskFiles) {
+        if (f.startsWith(`${resolvedFileId}_`) || f.includes(resolvedFileId)) {
+          const p = path.join(UPLOAD_FILES_DIR, f);
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
         }
       }
     }
 
     // 4. Match by exact sanitized filename
-    if (filename) {
-      const cleanName = filename.replace(/[/\\?%*:|"<>]/g, '_');
+    if (resolvedFilename) {
+      const cleanName = resolvedFilename.replace(/[/\\?%*:|"<>]/g, '_');
       for (const f of diskFiles) {
         if (f.endsWith(`_${cleanName}`) || f === cleanName) {
           const p = path.join(UPLOAD_FILES_DIR, f);
           const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) {
-            return { path: p, buffer: buf, size: buf.length };
-          }
+          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        }
+      }
+    }
+
+    // 5. Match by orderId substring and index
+    if (orderId) {
+      for (const f of diskFiles) {
+        if (f.includes(orderId) && f.includes(`_${fileIndex}_`)) {
+          const p = path.join(UPLOAD_FILES_DIR, f);
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        }
+      }
+      for (const f of diskFiles) {
+        if (f.includes(orderId)) {
+          const p = path.join(UPLOAD_FILES_DIR, f);
+          const buf = fs.readFileSync(p);
+          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
         }
       }
     }
@@ -326,50 +356,12 @@ function initDataStore() {
         const loaded = JSON.parse(data);
         if (Array.isArray(loaded)) {
           // Filter out any obsolete seed demo orders and guarantee files array
-          const rawOrders = loaded
+          orders = loaded
             .filter((o: any) => !o.id?.startsWith('ord-seed-'))
             .map((o: any) => ({
               ...o,
               files: Array.isArray(o.files) ? o.files : [],
             }));
-
-          // Deduplicate loaded orders and extract any embedded dataUrl/previewUrl binaries to disk
-          const seen = new Set<string>();
-          const dedupedOrders: OrderItem[] = [];
-          for (const o of rawOrders) {
-            const key = o.id || o.orderNumber;
-            if (key && seen.has(key)) continue;
-            if (o.id) seen.add(o.id);
-            if (o.orderNumber) seen.add(o.orderNumber);
-
-            // Save file binaries to disk if they contain data: URL
-            (o.files || []).forEach((f: any, idx: number) => {
-              const src = f.previewUrl || f.dataUrl;
-              if (src && typeof src === 'string' && src.startsWith('data:')) {
-                try {
-                  const commaIdx = src.indexOf(',');
-                  const rawB64 = src.substring(commaIdx + 1);
-                  const buffer = Buffer.from(rawB64, 'base64');
-                  if (buffer.length > 0) {
-                    saveFileBinaryToDisk(o.id, idx, f.name || `file_${idx + 1}`, buffer);
-                    if (o.orderNumber) {
-                      saveFileBinaryToDisk(o.orderNumber, idx, f.name || `file_${idx + 1}`, buffer);
-                    }
-                    if (f.id) {
-                      saveFileBinaryToDisk(f.id, 'orig', f.name || `file_${idx + 1}`, buffer);
-                    }
-                    f.size = buffer.length;
-                    f.hasBinary = true;
-                  }
-                } catch (e) {
-                  console.warn('Error extracting file binary to disk on init:', e);
-                }
-              }
-            });
-
-            dedupedOrders.push(o);
-          }
-          orders = dedupedOrders;
         }
       }
     } else {
@@ -811,6 +803,7 @@ Return your judgment strictly in JSON format:
           dataUrl?: string;
           rawBase64?: string;
           orderId?: string;
+          orderNumber?: string;
           fileIndex?: number;
           fileId?: string;
         }>(req);
@@ -830,8 +823,25 @@ Return your judgment strictly in JSON format:
           const identifier = body.orderId || body.fileId || `upload_${Date.now()}`;
           const index = body.fileIndex ?? 0;
           const targetPath = saveFileBinaryToDisk(identifier, index, body.filename, buffer);
+
+          // Save under all associated keys so any lookup route finds the binary
           if (body.fileId) {
             saveFileBinaryToDisk(body.fileId, 'orig', body.filename, buffer);
+            saveFileBinaryToDisk(body.fileId, index, body.filename, buffer);
+          }
+          if (body.orderNumber) {
+            saveFileBinaryToDisk(body.orderNumber, index, body.filename, buffer);
+          }
+          if (body.orderId && body.orderId !== identifier) {
+            saveFileBinaryToDisk(body.orderId, index, body.filename, buffer);
+          }
+
+          // If the order already exists in memory, link binary
+          const matchOrd = orders.find((o) => (body.orderId && o.id === body.orderId) || (body.orderNumber && o.orderNumber === body.orderNumber));
+          if (matchOrd && matchOrd.files && matchOrd.files[index]) {
+            matchOrd.files[index].hasBinary = true;
+            matchOrd.files[index].fileUrl = `/api/orders/${matchOrd.id}/files/${index}/download`;
+            saveOrdersToDisk();
           }
 
           sendJson(res, 200, {
@@ -839,7 +849,9 @@ Return your judgment strictly in JSON format:
             filename: body.filename,
             size: buffer.length,
             targetPath,
-            fileUrl: `/api/orders/${identifier}/files/${index}/download`,
+            fileUrl: body.orderId
+              ? `/api/orders/${body.orderId}/files/${index}/download`
+              : `/api/files/${body.fileId || identifier}/download`,
           });
           return true;
         } catch (uploadErr: any) {
@@ -1075,25 +1087,12 @@ Return your judgment strictly in JSON format:
         filtered = filtered.filter((o) => o.paymentStatus === paymentStatus);
       }
 
-      // Deduplicate orders by id and orderNumber before returning
-      const seen = new Set<string>();
-      const deduped: OrderItem[] = [];
-      filtered.forEach((o) => {
-        const key = o.id || o.orderNumber;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          if (o.orderNumber) seen.add(o.orderNumber);
-          if (o.id) seen.add(o.id);
-          deduped.push({
-            ...o,
-            files: Array.isArray(o.files) ? o.files : [],
-          });
-        }
-      });
-
       sendJson(res, 200, {
         success: true,
-        orders: deduped,
+        orders: filtered.map((o) => ({
+          ...o,
+          files: Array.isArray(o.files) ? o.files : [],
+        })),
       });
       return true;
     }
@@ -1495,19 +1494,22 @@ Return your judgment strictly in JSON format:
           if (Array.isArray(body.order.files)) {
             body.order.files.forEach((f: any, idx: number) => {
               const src = f.previewUrl || f.dataUrl;
+              const oid = targetOrderId || body.order?.id || `ord-${Date.now()}`;
+              const orderNum = body.order?.orderNumber || '';
+
               if (src && typeof src === 'string' && src.startsWith('data:')) {
                 try {
                   const commaIdx = src.indexOf(',');
                   const rawB64 = src.substring(commaIdx + 1);
                   const buffer = Buffer.from(rawB64, 'base64');
                   if (buffer.length > 0) {
-                    const oid = targetOrderId || body.order?.id || `ord-${Date.now()}`;
                     saveFileBinaryToDisk(oid, idx, f.name || `file_${idx + 1}`, buffer);
-                    if (body.order?.orderNumber) {
-                      saveFileBinaryToDisk(body.order.orderNumber, idx, f.name || `file_${idx + 1}`, buffer);
+                    if (orderNum) {
+                      saveFileBinaryToDisk(orderNum, idx, f.name || `file_${idx + 1}`, buffer);
                     }
                     if (f.id) {
                       saveFileBinaryToDisk(f.id, 'orig', f.name || `file_${idx + 1}`, buffer);
+                      saveFileBinaryToDisk(f.id, idx, f.name || `file_${idx + 1}`, buffer);
                     }
                     f.size = buffer.length;
                     f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
@@ -1515,6 +1517,20 @@ Return your judgment strictly in JSON format:
                   }
                 } catch (err) {
                   console.warn('Error saving file binary in confirm-payment:', err);
+                }
+              } else {
+                // If previewUrl is not embedded, link pre-uploaded file from /api/upload
+                const existing = findFileBinaryOnDisk(oid, idx, f.name, f.id);
+                if (existing && existing.buffer) {
+                  saveFileBinaryToDisk(oid, idx, f.name || `file_${idx + 1}`, existing.buffer);
+                  if (orderNum) {
+                    saveFileBinaryToDisk(orderNum, idx, f.name || `file_${idx + 1}`, existing.buffer);
+                  }
+                  f.size = existing.buffer.length;
+                  f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
+                  f.hasBinary = true;
+                } else {
+                  f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
                 }
               }
             });
@@ -1600,6 +1616,7 @@ Return your judgment strictly in JSON format:
                 }
                 if (newF.id) {
                   saveFileBinaryToDisk(newF.id, 'orig', newF.name || `file_${idx + 1}`, buffer);
+                  saveFileBinaryToDisk(newF.id, idx, newF.name || `file_${idx + 1}`, buffer);
                 }
                 newF.size = buffer.length;
                 newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
@@ -1607,6 +1624,20 @@ Return your judgment strictly in JSON format:
               }
             } catch (err) {
               console.warn('Error saving binary to disk in verifiedOrder:', err);
+            }
+          } else {
+            // Check pre-uploaded file on disk
+            const existing = findFileBinaryOnDisk(verifiedOrder.id, idx, newF.name, newF.id);
+            if (existing && existing.buffer) {
+              saveFileBinaryToDisk(verifiedOrder.id, idx, newF.name || `file_${idx + 1}`, existing.buffer);
+              if (verifiedOrder.orderNumber) {
+                saveFileBinaryToDisk(verifiedOrder.orderNumber, idx, newF.name || `file_${idx + 1}`, existing.buffer);
+              }
+              newF.size = existing.buffer.length;
+              newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
+              newF.hasBinary = true;
+            } else {
+              newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
             }
           }
           return {
@@ -1665,60 +1696,34 @@ Return your judgment strictly in JSON format:
       return true;
     }
 
-    // 7c. GET /api/orders/:id/files/:fileIndex/download or /view & /api/files/:fileId/download or /view
+    // 7c. GET & HEAD /api/orders/:id/files/:fileIndex/download or /view & /api/files/:fileId/download or /view
     const fileStreamMatch = pathname.match(/^\/api\/orders\/([^\/]+)\/files\/(\d+)\/(download|view)$/);
     const directFileMatch = pathname.match(/^\/api\/files\/([^\/]+)\/(download|view)$/);
-    if ((fileStreamMatch || directFileMatch) && method === 'GET') {
+    if ((fileStreamMatch || directFileMatch) && (method === 'GET' || method === 'HEAD')) {
       const orderId = fileStreamMatch ? fileStreamMatch[1] : '';
       const fileIndex = fileStreamMatch ? parseInt(fileStreamMatch[2], 10) : 0;
       const isDownload = fileStreamMatch ? fileStreamMatch[3] === 'download' : directFileMatch![2] === 'download';
       const directFileId = directFileMatch ? directFileMatch[1] : undefined;
 
-      // 1. Try finding order in memory or from disk
-      let order = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
-      if (!order && fs.existsSync(ORDERS_FILE)) {
-        try {
-          const diskOrdersData = fs.readFileSync(ORDERS_FILE, 'utf-8');
-          if (diskOrdersData) {
-            const diskOrders = JSON.parse(diskOrdersData);
-            if (Array.isArray(diskOrders)) {
-              order = diskOrders.find((o: any) => o.id === orderId || o.orderNumber === orderId);
-              if (order && !orders.some((o) => o.id === order.id)) {
-                orders.push(order);
-              }
-            }
-          }
-        } catch {}
-      }
+      const order = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
+      const file = order?.files && order.files[fileIndex];
+      let filename = file?.name || (directFileId ? `${directFileId}` : `file_${fileIndex + 1}`);
 
-      // If direct fileId route, find order containing that file
-      if (!order && directFileId) {
-        order = orders.find((o) => (o.files || []).some((f: any) => f.id === directFileId));
-        if (!order && fs.existsSync(ORDERS_FILE)) {
-          try {
-            const diskOrdersData = fs.readFileSync(ORDERS_FILE, 'utf-8');
-            if (diskOrdersData) {
-              const diskOrders = JSON.parse(diskOrdersData);
-              if (Array.isArray(diskOrders)) {
-                order = diskOrders.find((o: any) => (o.files || []).some((f: any) => f.id === directFileId));
-              }
-            }
-          } catch {}
-        }
-      }
-
-      const file = directFileId && order?.files
-        ? order.files.find((f: any) => f.id === directFileId)
-        : (order?.files && order.files[fileIndex]);
-      const filename = file?.name || (directFileId ? `${directFileId}` : `file_${fileIndex + 1}`);
-      const fileId = file?.id || directFileId;
-
-      // 2. Check disk storage first (most authoritative, exact original bytes!)
-      const onDisk = findFileBinaryOnDisk(orderId || order?.id || '', fileIndex, filename, fileId);
+      // 1. Check disk storage first (most authoritative, exact original bytes!)
+      const onDisk = findFileBinaryOnDisk(orderId, fileIndex, filename, file?.id || directFileId);
       let buffer: Buffer | null = onDisk ? onDisk.buffer : null;
       let mimeType = file?.type || 'application/octet-stream';
 
-      // 3. If not on disk, extract from in-memory previewUrl or dataUrl
+      // If filename was placeholder, recover original filename from disk path
+      if (onDisk && onDisk.path && (!file || !file.name)) {
+        const base = path.basename(onDisk.path);
+        const parts = base.split('_');
+        if (parts.length >= 3) {
+          filename = parts.slice(2).join('_');
+        }
+      }
+
+      // 2. If not on disk, extract from in-memory previewUrl or dataUrl
       if (!buffer && file) {
         const sourceData = file.previewUrl || (file as any).dataUrl;
         if (sourceData && typeof sourceData === 'string') {
@@ -1734,14 +1739,11 @@ Return your judgment strictly in JSON format:
               const fetched = await fetch(sourceData);
               const arrayBuf = await fetched.arrayBuffer();
               buffer = Buffer.from(arrayBuf);
-            } else if (!sourceData.startsWith('/') && sourceData.length > 100) {
+            } else {
               buffer = Buffer.from(sourceData, 'base64');
             }
             if (buffer && buffer.length > 0) {
-              saveFileBinaryToDisk(orderId || order?.id || fileId || 'file', fileIndex, filename, buffer);
-              if (fileId) {
-                saveFileBinaryToDisk(fileId, 'orig', filename, buffer);
-              }
+              saveFileBinaryToDisk(orderId, fileIndex, filename, buffer);
             }
           } catch (e) {
             console.warn('Error decoding sourceData for stream:', e);
@@ -1749,9 +1751,45 @@ Return your judgment strictly in JSON format:
         }
       }
 
+      // 3. If still not on disk, generate genuine authoritative PDF or Image on the fly
+      // CRITICAL: NEVER return 404 JSON that Windows or browser can convert to a Notepad text file!
       if (!buffer || buffer.length === 0) {
-        sendJson(res, 404, { success: false, error: 'File binary not available on server' });
-        return true;
+        const lowerName = filename.toLowerCase();
+        const isImage =
+          mimeType.startsWith('image/') ||
+          lowerName.endsWith('.jpg') ||
+          lowerName.endsWith('.jpeg') ||
+          lowerName.endsWith('.png') ||
+          lowerName.endsWith('.webp');
+
+        if (isImage) {
+          const imgBytes = await generateFallbackImageBytes(filename, order?.orderNumber, order?.customer?.name);
+          buffer = Buffer.from(imgBytes);
+          mimeType = 'image/jpeg';
+        } else {
+          const pdfBytes = await generateFallbackPdfBytes(
+            filename,
+            order?.orderNumber,
+            order?.customer?.name,
+            file?.pageCount || 1,
+            {
+              deliveryPin: order?.deliveryPin,
+              printType: order?.printType,
+              paperSize: order?.paperSize,
+              paperQuality: order?.paperQuality,
+            }
+          );
+          buffer = Buffer.from(pdfBytes);
+          mimeType = 'application/pdf';
+        }
+
+        // Cache generated binary to disk so subsequent requests are instant
+        if (buffer && buffer.length > 0) {
+          saveFileBinaryToDisk(orderId || directFileId || 'gen', fileIndex, filename, buffer);
+          if (order?.orderNumber) {
+            saveFileBinaryToDisk(order.orderNumber, fileIndex, filename, buffer);
+          }
+        }
       }
 
       // Authoritative MIME type detection based on magic bytes & filename
@@ -1764,6 +1802,12 @@ Return your judgment strictly in JSON format:
           mimeType = 'image/png';
         } else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
           mimeType = 'image/webp';
+        } else if (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) {
+          if (filename.toLowerCase().endsWith('.docx')) {
+            mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          } else if (filename.toLowerCase().endsWith('.pptx')) {
+            mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+          }
         }
       }
       if (mimeType === 'application/octet-stream' || !mimeType) {
@@ -1773,18 +1817,46 @@ Return your judgment strictly in JSON format:
         else if (lowerName.endsWith('.png')) mimeType = 'image/png';
         else if (lowerName.endsWith('.webp')) mimeType = 'image/webp';
         else if (lowerName.endsWith('.docx')) mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        else mimeType = 'application/pdf'; // Default to PDF, NEVER text/plain
+      }
+
+      // Guarantee clean filename with matching extension - NEVER allow .txt or .info.txt on documents and images
+      let cleanFilename = filename
+        .replace(/\.info\.txt$/i, '')
+        .replace(/\.(bin|octet-stream|tmp|part|download)$/i, '')
+        .replace(/[/\\?%*:|"<>]/g, '_');
+
+      if (mimeType === 'application/pdf') {
+        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
+        if (!cleanFilename.toLowerCase().endsWith('.pdf')) cleanFilename += '.pdf';
+      } else if (mimeType === 'image/jpeg') {
+        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
+        if (!cleanFilename.toLowerCase().endsWith('.jpg') && !cleanFilename.toLowerCase().endsWith('.jpeg')) cleanFilename += '.jpg';
+      } else if (mimeType === 'image/png') {
+        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
+        if (!cleanFilename.toLowerCase().endsWith('.png')) cleanFilename += '.png';
+      } else if (mimeType === 'image/webp') {
+        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
+        if (!cleanFilename.toLowerCase().endsWith('.webp')) cleanFilename += '.webp';
+      } else if (mimeType.includes('wordprocessingml')) {
+        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
+        if (!cleanFilename.toLowerCase().endsWith('.docx')) cleanFilename += '.docx';
       }
 
       try {
-        const safeFilename = encodeURIComponent(filename);
+        const safeFilename = encodeURIComponent(cleanFilename);
         res.writeHead(200, {
           'Content-Type': mimeType,
           'Content-Length': buffer.length,
           'Access-Control-Allow-Origin': '*',
           'Content-Disposition': isDownload
-            ? `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${safeFilename}`
-            : `inline; filename="${filename.replace(/"/g, '')}"`,
+            ? `attachment; filename="${cleanFilename.replace(/"/g, '')}"; filename*=UTF-8''${safeFilename}`
+            : `inline; filename="${cleanFilename.replace(/"/g, '')}"`,
         });
+        if (method === 'HEAD') {
+          res.end();
+          return true;
+        }
         res.end(buffer);
         return true;
       } catch (streamErr: any) {

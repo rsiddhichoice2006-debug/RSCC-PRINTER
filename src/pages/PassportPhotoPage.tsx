@@ -36,6 +36,7 @@ import {
   ShopSettings,
 } from '../types';
 import { isExcelFile, isWebPFile, convertWebPToJpg } from '../utils/fileProcessor';
+import { saveFileToStorage } from '../utils/fileStorage';
 import { DEFAULT_PRICING } from '../utils/pricingCalculator';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -227,7 +228,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
     return Object.keys(errs).length === 0;
   };
 
-  const handleProceed = () => {
+  const handleProceed = async () => {
     if (settings.isAcceptingOrders === false) {
       alert(settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand.');
       return;
@@ -256,6 +257,28 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
         ? `Standard Passport Photos (10 Photos – ₹${standardRate}, ${bgName} BG)`
         : `Mixed Size Photos (10 Photos – ₹${mixedRate}, ${bgName} BG)`;
 
+    const photoId = 'photo-' + Date.now();
+    const passportFilename = `Passport_${selectedBgColor.toUpperCase()}_${photoFile.name}`;
+
+    if (processedPhotoUrl) {
+      saveFileToStorage(photoId, processedPhotoUrl, {
+        name: passportFilename,
+        type: 'image/jpeg',
+      }).catch(() => {});
+      try {
+        await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: passportFilename,
+            fileType: 'image/jpeg',
+            dataUrl: processedPhotoUrl,
+            fileId: photoId,
+          }),
+        });
+      } catch {}
+    }
+
     // Use processed photo URL for order so shop admin prints the exact background & chest crop
     const orderPayload = {
       mode: 'PASSPORT_PHOTO',
@@ -269,8 +292,8 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       },
       files: [
         {
-          id: 'photo-' + Date.now(),
-          name: `Passport_${selectedBgColor.toUpperCase()}_${photoFile.name}`,
+          id: photoId,
+          name: passportFilename,
           size: photoFile.size,
           type: 'image/jpeg',
           pageCount: 1,

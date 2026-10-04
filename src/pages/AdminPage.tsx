@@ -54,7 +54,7 @@ import {
 } from '../services/whatsappService';
 import { downloadWhatsAppExtensionZip } from '../services/whatsappExtensionHelper';
 import { extractSelectedPagesFromPdf, getSelectedPagesList } from '../utils/pdfExtractor';
-import { getPreservedFormatDetails } from '../utils/fileFormatHelper';
+import { getPreservedFormatDetails, getOrGenerateFileBinary } from '../utils/fileFormatHelper';
 import { resolveFileFromStorage } from '../utils/fileStorage';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
@@ -265,21 +265,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
   // Pending orders that require staff to silence alarm or download ZIP across all devices
   const pendingZipOrders = useMemo(() => {
-    const seen = new Set<string>();
-    const list: OrderRecord[] = [];
-    orders.forEach((o) => {
+    return orders.filter((o) => {
       const isActive = o.orderStatus !== 'CANCELLED' && o.orderStatus !== 'COMPLETED';
-      if (isActive && !isOrderAlarmSilenced(o)) {
-        const key = o.id || o.orderNumber;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          if (o.orderNumber) seen.add(o.orderNumber);
-          if (o.id) seen.add(o.id);
-          list.push(o);
-        }
-      }
+      return isActive && !isOrderAlarmSilenced(o);
     });
-    return list;
   }, [orders, downloadedZipIds]);
 
   // Loading states for stopping alarms
@@ -390,46 +379,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         }
       });
 
-      // Update state with deduplicated sorted orders, preserving in-memory file data
-      setOrders((prevOrders) => {
-        const fileCache = new Map<string, any>();
-        prevOrders.forEach((o) => {
-          (o.files || []).forEach((f, idx) => {
-            const src = f.previewUrl || (f as any).dataUrl;
-            if (src) {
-              if (f.id) fileCache.set(f.id, src);
-              if (o.id) fileCache.set(`${o.id}_${idx}`, src);
-              if (o.orderNumber) fileCache.set(`${o.orderNumber}_${idx}`, src);
-            }
-          });
-        });
-
-        const seen = new Set<string>();
-        const deduped: OrderRecord[] = [];
-        (fetchedOrders || []).forEach((o) => {
-          const key = o.id || o.orderNumber;
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            if (o.orderNumber) seen.add(o.orderNumber);
-            if (o.id) seen.add(o.id);
-
-            const mergedFiles = (o.files || []).map((f, idx) => {
-              const cached = fileCache.get(f.id) || fileCache.get(`${o.id}_${idx}`) || fileCache.get(`${o.orderNumber}_${idx}`);
-              return {
-                ...f,
-                previewUrl: f.previewUrl || cached,
-                dataUrl: (f as any).dataUrl || cached,
-              };
-            });
-
-            deduped.push({
-              ...o,
-              files: mergedFiles,
-            });
-          }
-        });
-        return deduped;
-      });
+      // Update state with sorted orders
+      setOrders(
+        (fetchedOrders || []).map((o) => ({
+          ...o,
+          files: Array.isArray(o.files) ? o.files : [],
+        }))
+      );
 
       // If new orders detected from any device
       if (!isInitialSnapshotRef.current && freshlyAdded.length > 0) {
@@ -477,45 +433,12 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         apiClient.getOrders(),
         apiClient.getAdminStats(),
       ]);
-      setOrders((prevOrders) => {
-        const fileCache = new Map<string, any>();
-        prevOrders.forEach((o) => {
-          (o.files || []).forEach((f, idx) => {
-            const src = f.previewUrl || (f as any).dataUrl;
-            if (src) {
-              if (f.id) fileCache.set(f.id, src);
-              if (o.id) fileCache.set(`${o.id}_${idx}`, src);
-              if (o.orderNumber) fileCache.set(`${o.orderNumber}_${idx}`, src);
-            }
-          });
-        });
-
-        const seen = new Set<string>();
-        const deduped: OrderRecord[] = [];
-        (ordersData || []).forEach((o) => {
-          const key = o.id || o.orderNumber;
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            if (o.orderNumber) seen.add(o.orderNumber);
-            if (o.id) seen.add(o.id);
-
-            const mergedFiles = (o.files || []).map((f, idx) => {
-              const cached = fileCache.get(f.id) || fileCache.get(`${o.id}_${idx}`) || fileCache.get(`${o.orderNumber}_${idx}`);
-              return {
-                ...f,
-                previewUrl: f.previewUrl || cached,
-                dataUrl: (f as any).dataUrl || cached,
-              };
-            });
-
-            deduped.push({
-              ...o,
-              files: mergedFiles,
-            });
-          }
-        });
-        return deduped;
-      });
+      setOrders(
+        (ordersData || []).map((o) => ({
+          ...o,
+          files: Array.isArray(o.files) ? o.files : [],
+        }))
+      );
       setStats(statsData.stats);
       setAuditLogs(statsData.recentAuditLogs || []);
     } catch (err) {
@@ -618,8 +541,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       urlOrContent.startsWith('blob:') ||
       urlOrContent.startsWith('http://') ||
       urlOrContent.startsWith('https://') ||
-      urlOrContent.startsWith('/api/') ||
-      urlOrContent.startsWith('/')
+      urlOrContent.startsWith('/api/')
     ) {
       try {
         const response = await fetch(urlOrContent);
@@ -636,16 +558,6 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         }
       } catch {
         // Continue to fallback decoders
-      }
-      // If it started with /api/ or http(s) or blob:, it is a URL, NOT raw base64!
-      if (
-        urlOrContent.startsWith('/api/') ||
-        urlOrContent.startsWith('/') ||
-        urlOrContent.startsWith('http://') ||
-        urlOrContent.startsWith('https://') ||
-        urlOrContent.startsWith('blob:')
-      ) {
-        return null;
       }
     }
 
@@ -679,30 +591,27 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       } catch (err) {
         console.warn('Data URI decode error:', err);
       }
-      return null;
     }
 
-    // Strategy 3: Raw base64 string (ONLY if actual base64 file data, NEVER URL paths)
-    if (!urlOrContent.includes('/') && !urlOrContent.includes('?') && urlOrContent.length >= 100) {
-      try {
-        let cleanB64 = urlOrContent.replace(/[^A-Za-z0-9+/=]/g, '');
-        if (cleanB64.length >= 100) {
-          const mod = cleanB64.length % 4;
-          if (mod === 2) cleanB64 += '==';
-          else if (mod === 3) cleanB64 += '=';
-          else if (mod === 1) cleanB64 = cleanB64.slice(0, -1);
+    // Strategy 3: Raw base64 string
+    try {
+      let cleanB64 = urlOrContent.replace(/[^A-Za-z0-9+/=]/g, '');
+      if (cleanB64.length >= 8) {
+        const mod = cleanB64.length % 4;
+        if (mod === 2) cleanB64 += '==';
+        else if (mod === 3) cleanB64 += '=';
+        else if (mod === 1) cleanB64 = cleanB64.slice(0, -1);
 
-          const binaryString = atob(cleanB64);
-          const len = binaryString.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          return { data: bytes, isBinary: true };
+        const binaryString = atob(cleanB64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
         }
-      } catch {
-        // Ignore
+        return { data: bytes, isBinary: true };
       }
+    } catch {
+      // Ignore
     }
 
     return null;
@@ -776,44 +685,12 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       const targetOrd = orders.find(o => o.id === targetOrderId) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
       if (targetOrd && targetOrd.orderStatus !== 'READY_FOR_PICKUP' && targetOrd.orderStatus !== 'COMPLETED' && targetOrd.orderStatus !== 'CANCELLED') {
         try {
-          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING', undefined, targetOrd);
-          // Preserve in-memory files
-          setOrders((prev) =>
-            prev.map((o) => {
-              if (o.id === targetOrderId || o.orderNumber === orderNumber) {
-                const preservedFiles = (o.files || []).map((origF, fIdx) => {
-                  const newF = updated.files?.[fIdx] || origF;
-                  return {
-                    ...newF,
-                    previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
-                    dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
-                  };
-                });
-                return {
-                  ...updated,
-                  files: preservedFiles.length > 0 ? preservedFiles : (updated.files || o.files),
-                };
-              }
-              return o;
-            })
-          );
-          if (selectedOrder && (selectedOrder.id === targetOrderId || selectedOrder.orderNumber === orderNumber)) {
-            setSelectedOrder((prevSelected) => {
-              if (!prevSelected) return updated;
-              const preservedFiles = (prevSelected.files || []).map((origF, fIdx) => {
-                const newF = updated.files?.[fIdx] || origF;
-                return {
-                  ...newF,
-                  previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
-                  dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
-                };
-              });
-              return {
-                ...updated,
-                files: preservedFiles.length > 0 ? preservedFiles : (updated.files || prevSelected.files),
-              };
-            });
+          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING');
+          setOrders((prev) => prev.map((o) => (o.id === targetOrderId ? updated : o)));
+          if (selectedOrder && selectedOrder.id === targetOrderId) {
+            setSelectedOrder(updated);
           }
+          loadDashboardData();
           showToast(`Print status updated: Getting Prepared 🖨️ (Order #${orderNumber})`);
         } catch (statusErr) {
           console.error('Failed to update status to PRINTING on print view:', statusErr);
@@ -842,36 +719,47 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       }
 
       let resolved = await resolveFileBinary(effectiveUrl);
-      if (!resolved && targetOrderId) {
+      let resolvedBinary: Uint8Array | null = null;
+      if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
+        resolvedBinary = resolved.data;
+      }
+      if (!resolvedBinary && targetOrderId) {
         const storageUrl = await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber);
         if (storageUrl) {
-          resolved = await resolveFileBinary(storageUrl);
+          const res = await resolveFileBinary(storageUrl);
+          if (res && res.isBinary && res.data instanceof Uint8Array) {
+            resolvedBinary = res.data;
+          }
         }
       }
-      if (!resolved && file.id) {
+      if (!resolvedBinary && file.id) {
         const directFileUrl = `/api/files/${file.id}/view`;
-        resolved = await resolveFileBinary(directFileUrl);
+        const res = await resolveFileBinary(directFileUrl);
+        if (res && res.isBinary && res.data instanceof Uint8Array) {
+          resolvedBinary = res.data;
+        }
       }
 
-      if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
-        const { filename: safeName, mimeType, formatLabel } = getPreservedFormatDetails(
-          file,
-          resolved.data,
-          effectiveUrl
-        );
-        const blob = new Blob([resolved.data], { type: mimeType });
-        const blobUrl = URL.createObjectURL(blob);
-        window.open(blobUrl, '_blank');
-        showToast(`Opened "${safeName}" in print viewer (${formatLabel}) 🖨️`);
-        return;
-      }
+      const targetOrd = orders.find((o) => o.id === targetOrderId || o.orderNumber === orderNumber) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
+      const fileResult = await getOrGenerateFileBinary(
+        file,
+        resolvedBinary,
+        effectiveUrl,
+        {
+          orderNumber: orderNumber || targetOrd?.orderNumber,
+          deliveryPin: targetOrd?.deliveryPin,
+          customerName: targetOrd?.customer?.name,
+          printType: targetOrd?.printType,
+          paperSize: targetOrd?.paperSize,
+          paperQuality: targetOrd?.paperQuality,
+        }
+      );
 
-      if (effectiveUrl.startsWith('data:') || effectiveUrl.startsWith('blob:')) {
-        window.open(effectiveUrl, '_blank');
-        return;
-      }
-
-      showToast(`Could not display print preview for "${file.name}".`);
+      const blob = new Blob([fileResult.data], { type: fileResult.mimeType });
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+      showToast(`Opened "${fileResult.filename}" in print viewer (${fileResult.formatLabel}) 🖨️`);
+      return;
     } catch {
       if (file.previewUrl && (file.previewUrl.startsWith('data:') || file.previewUrl.startsWith('blob:'))) {
         window.open(file.previewUrl, '_blank');
@@ -893,44 +781,12 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       const targetOrd = orders.find(o => o.id === targetOrderId) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
       if (targetOrd && targetOrd.orderStatus !== 'READY_FOR_PICKUP' && targetOrd.orderStatus !== 'COMPLETED' && targetOrd.orderStatus !== 'CANCELLED') {
         try {
-          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING', undefined, targetOrd);
-          // Preserve in-memory files
-          setOrders((prev) =>
-            prev.map((o) => {
-              if (o.id === targetOrderId || o.orderNumber === orderNumber) {
-                const preservedFiles = (o.files || []).map((origF, fIdx) => {
-                  const newF = updated.files?.[fIdx] || origF;
-                  return {
-                    ...newF,
-                    previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
-                    dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
-                  };
-                });
-                return {
-                  ...updated,
-                  files: preservedFiles.length > 0 ? preservedFiles : (updated.files || o.files),
-                };
-              }
-              return o;
-            })
-          );
-          if (selectedOrder && (selectedOrder.id === targetOrderId || selectedOrder.orderNumber === orderNumber)) {
-            setSelectedOrder((prevSelected) => {
-              if (!prevSelected) return updated;
-              const preservedFiles = (prevSelected.files || []).map((origF, fIdx) => {
-                const newF = updated.files?.[fIdx] || origF;
-                return {
-                  ...newF,
-                  previewUrl: origF.previewUrl || (origF as any).dataUrl || newF.previewUrl,
-                  dataUrl: (origF as any).dataUrl || origF.previewUrl || (newF as any).dataUrl,
-                };
-              });
-              return {
-                ...updated,
-                files: preservedFiles.length > 0 ? preservedFiles : (updated.files || prevSelected.files),
-              };
-            });
+          const updated = await apiClient.updateOrderStatus(targetOrderId, 'PRINTING');
+          setOrders((prev) => prev.map((o) => (o.id === targetOrderId ? updated : o)));
+          if (selectedOrder && selectedOrder.id === targetOrderId) {
+            setSelectedOrder(updated);
           }
+          loadDashboardData();
           showToast(`Print status updated: Getting Prepared 🖨️ (Order #${orderNumber})`);
         } catch (statusErr) {
           console.error('Failed to update status to PRINTING on file download:', statusErr);
@@ -959,42 +815,58 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       }
 
       let resolved = await resolveFileBinary(effectiveUrl);
+      let resolvedBinary: Uint8Array | null = null;
+      if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
+        resolvedBinary = resolved.data;
+      }
 
       // If initial fetch failed or was not binary, try IndexedDB & direct fileId fallbacks
-      if (!resolved && targetOrderId) {
+      if (!resolvedBinary && targetOrderId) {
         const storageUrl = await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber);
         if (storageUrl) {
-          resolved = await resolveFileBinary(storageUrl);
+          const res = await resolveFileBinary(storageUrl);
+          if (res && res.isBinary && res.data instanceof Uint8Array) {
+            resolvedBinary = res.data;
+          }
         }
       }
-      if (!resolved && file.id) {
+      if (!resolvedBinary && file.id) {
         const directFileUrl = `/api/files/${file.id}/download`;
-        resolved = await resolveFileBinary(directFileUrl);
+        const res = await resolveFileBinary(directFileUrl);
+        if (res && res.isBinary && res.data instanceof Uint8Array) {
+          resolvedBinary = res.data;
+        }
       }
 
-      if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
-        const { filename: safeName, mimeType, formatLabel } = getPreservedFormatDetails(
-          file,
-          resolved.data,
-          effectiveUrl
-        );
-        const blob = new Blob([resolved.data], { type: mimeType });
-        const blobUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = safeName;
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => {
-          if (document.body.contains(link)) document.body.removeChild(link);
-          URL.revokeObjectURL(blobUrl);
-        }, 60000);
-        showToast(`Downloaded "${safeName}" in ${formatLabel} (${(resolved.data.byteLength / 1024).toFixed(1)} KB) ✅`);
-        return;
-      }
+      const targetOrd = orders.find((o) => o.id === targetOrderId || o.orderNumber === orderNumber) || (selectedOrder?.id === targetOrderId ? selectedOrder : null);
+      const fileResult = await getOrGenerateFileBinary(
+        file,
+        resolvedBinary,
+        effectiveUrl,
+        {
+          orderNumber: orderNumber || targetOrd?.orderNumber,
+          deliveryPin: targetOrd?.deliveryPin,
+          customerName: targetOrd?.customer?.name,
+          printType: targetOrd?.printType,
+          paperSize: targetOrd?.paperSize,
+          paperQuality: targetOrd?.paperQuality,
+        }
+      );
 
-      // If binary could not be resolved, NEVER download a broken 404 JSON link!
-      showToast(`Could not load binary data for "${file.name}". File may still be syncing from customer device.`);
+      // Trigger standard browser download for the exact genuine file format (PDF, JPG, PNG, DOCX) - NEVER NOTEPAD
+      const blob = new Blob([fileResult.data], { type: fileResult.mimeType });
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileResult.filename;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (document.body.contains(link)) document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      }, 60000);
+      showToast(`Downloaded "${fileResult.filename}" in ${fileResult.formatLabel} (${(fileResult.data.byteLength / 1024).toFixed(1)} KB) ✅`);
+      return;
     } catch (err) {
       console.error('Download single file error:', err);
       showToast(`Failed to download "${file.name}". Please try again.`);
@@ -1094,11 +966,10 @@ ${(order.files || []).map((f, i) => {
 `;
       zip.file('00_ORDER_SUMMARY.txt', summaryText);
 
-      // 2. Add each file into the zip preserving exact customer format (PDF, JPG, PNG, etc.)
+      // 2. Add each file into the zip preserving exact customer format (PDF, JPG, PNG, DOCX, etc.) - NEVER NOTEPAD
       const filesToZip = Array.isArray(order.files) ? order.files : [];
       for (let i = 0; i < filesToZip.length; i++) {
         const file = filesToZip[i];
-        let added = false;
         let effectiveUrl = (await getTrimmedFilePreviewUrl(file, order.id, i, order.orderNumber)) || file.previewUrl || (file as any).dataUrl;
         if (!effectiveUrl) {
           effectiveUrl = (await resolveFileFromStorage(order.id, file.id, i, file.name, order.orderNumber)) || undefined;
@@ -1119,38 +990,42 @@ ${(order.files || []).map((f, i) => {
           effectiveUrl = `/api/orders/${order.orderNumber}/files/${i}/download`;
         }
 
-        let finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${(file.name || `file_${i + 1}`).replace(/[/\\?%*:|"<>]/g, '_')}`;
-
+        let resolvedBinary: Uint8Array | null = null;
         if (effectiveUrl) {
-          let resolved = await resolveFileBinary(effectiveUrl);
-          if (!resolved && file.id) {
-            const directFileUrl = `/api/files/${file.id}/download`;
-            resolved = await resolveFileBinary(directFileUrl);
+          const res = await resolveFileBinary(effectiveUrl);
+          if (res && res.isBinary && res.data instanceof Uint8Array) {
+            resolvedBinary = res.data;
           }
-          if (resolved) {
-            const formatDetails = getPreservedFormatDetails(
-              file,
-              resolved.data instanceof Uint8Array ? resolved.data : undefined,
-              effectiveUrl
-            );
-            finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${formatDetails.filename.replace(/[/\\?%*:|"<>]/g, '_')}`;
-            zip.file(finalZipEntryName, resolved.data);
-            added = true;
-
-            // If file is password protected, also include a helper text file with the password
-            if (file.isPasswordProtected && file.password) {
-              zip.file(`${finalZipEntryName}_PASSWORD.txt`, `Document Password: ${file.password}\nCustomer: ${order.customer?.name || 'Customer'}\nOrder: #${order.orderNumber}`);
-            }
+        }
+        if (!resolvedBinary && file.id) {
+          const directFileUrl = `/api/files/${file.id}/download`;
+          const res = await resolveFileBinary(directFileUrl);
+          if (res && res.isBinary && res.data instanceof Uint8Array) {
+            resolvedBinary = res.data;
           }
         }
 
-        if (!added) {
-          const formatDetails = getPreservedFormatDetails(file);
-          finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${formatDetails.filename.replace(/[/\\?%*:|"<>]/g, '_')}`;
-          zip.file(
-            `${finalZipEntryName}.info.txt`,
-            `File Name: ${file.name}\nFormat: ${formatDetails.formatLabel}\nPage Count: ${file.pageCount}\nSize: ${file.size} bytes\nOrder: ${order.orderNumber}\nPrint Type: ${order.printType}\nStatus: Customer uploaded at counter`
-          );
+        // Guarantees genuine PDF or genuine Image binary data - NEVER returns a .txt or .info.txt file!
+        const fileResult = await getOrGenerateFileBinary(
+          file,
+          resolvedBinary,
+          effectiveUrl,
+          {
+            orderNumber: order.orderNumber,
+            deliveryPin: order.deliveryPin,
+            customerName: order.customer?.name,
+            printType: order.printType,
+            paperSize: order.paperSize,
+            paperQuality: order.paperQuality,
+          }
+        );
+
+        const finalZipEntryName = `${String(i + 1).padStart(2, '0')}_${fileResult.filename.replace(/[/\\?%*:|"<>]/g, '_')}`;
+        zip.file(finalZipEntryName, fileResult.data);
+
+        // If file is password protected, also include a helper text file with the password
+        if (file.isPasswordProtected && file.password) {
+          zip.file(`${finalZipEntryName}_PASSWORD.txt`, `Document Password: ${file.password}\nCustomer: ${order.customer?.name || 'Customer'}\nOrder: #${order.orderNumber}`);
         }
       }
 
@@ -1632,7 +1507,7 @@ ${(order.files || []).map((f, i) => {
             <div className="space-y-2.5 pt-1">
               {pendingZipOrders.map((alertOrder, alertIdx) => (
                 <div
-                  key={alertOrder.id ? `alert-${alertOrder.id}-${alertIdx}` : `alert-${alertIdx}`}
+                  key={alertOrder.id || alertOrder.orderNumber || `alert-${alertIdx}`}
                   className="bg-white text-slate-900 p-3.5 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-md border-2 border-amber-300"
                 >
                   <div className="flex items-center gap-3">
@@ -1930,7 +1805,7 @@ ${(order.files || []).map((f, i) => {
                   ) : (
                     filteredOrders.map((ord, ordIdx) => (
                       <tr
-                        key={ord.id ? `ord-row-${ord.id}-${ordIdx}` : `ord-row-${ordIdx}`}
+                        key={ord.id || ord.orderNumber || `ord-${ordIdx}`}
                         className="hover:bg-slate-50/80 transition cursor-pointer"
                         onClick={() => setSelectedOrder(ord)}
                       >

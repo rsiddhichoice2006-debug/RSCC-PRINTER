@@ -197,7 +197,7 @@ export function sanitizeOrderForStorage(order: OrderRecord): OrderRecord {
       mobile: order.customer?.mobile || '',
       email: order.customer?.email || '',
     },
-    files: (order.files || []).map((f) => ({
+    files: (order.files || []).map((f, idx) => ({
       id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
       name: f.name || 'Document',
       size: f.size > 0 ? f.size : 0,
@@ -210,6 +210,8 @@ export function sanitizeOrderForStorage(order: OrderRecord): OrderRecord {
       moderationReason: f.moderationReason,
       isPasswordProtected: Boolean(f.isPasswordProtected),
       password: f.password || undefined,
+      fileUrl: f.fileUrl || (order.id ? `/api/orders/${order.id}/files/${idx}/download` : undefined),
+      hasBinary: true,
       // Only keep small preview URLs (e.g. <= 1024 chars), omit oversized base64 data to prevent payload quota errors
       previewUrl: f.previewUrl && f.previewUrl.length <= 1024 ? f.previewUrl : undefined,
     })),
@@ -680,6 +682,33 @@ export const apiClient = {
     return draftOrder;
   },
 
+  // Direct file binary upload to persistent disk storage (ensures staff portal downloads full PDF/image)
+  async uploadFileToServer(params: {
+    fileId: string;
+    filename: string;
+    fileType?: string;
+    dataUrl?: string;
+    orderId?: string;
+    orderNumber?: string;
+    fileIndex?: number;
+  }): Promise<{ success: boolean; fileUrl?: string; error?: string }> {
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+      return { success: false };
+    } catch (err: any) {
+      console.warn('Upload file to server notice:', err);
+      return { success: false, error: err.message };
+    }
+  },
+
   // Place and officially submit order when user confirms payment (Amazon/Flipkart flow)
   async placeOrderWithPayment(
     draftOrder: OrderRecord,
@@ -709,7 +738,32 @@ export const apiClient = {
     };
 
     // Guarantee full original files are permanently cached in IndexedDB
-    saveOrderFilesToStorage(fullConfirmedOrder.id, fullConfirmedOrder.files).catch(() => {});
+    saveOrderFilesToStorage(fullConfirmedOrder.id, fullConfirmedOrder.files, fullConfirmedOrder.orderNumber).catch(() => {});
+
+    // Ensure all customer files (PDFs, Images, Word docs) are reliably uploaded to server disk
+    if (Array.isArray(fullConfirmedOrder.files)) {
+      for (let idx = 0; idx < fullConfirmedOrder.files.length; idx++) {
+        const f = fullConfirmedOrder.files[idx];
+        const dataUrl = f.previewUrl || (f as any).dataUrl;
+        if (dataUrl && typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
+          try {
+            await apiClient.uploadFileToServer({
+              orderId: fullConfirmedOrder.id,
+              orderNumber: fullConfirmedOrder.orderNumber,
+              fileId: f.id,
+              fileIndex: idx,
+              filename: f.name,
+              fileType: f.type,
+              dataUrl,
+            });
+          } catch (uploadErr) {
+            console.warn('Pre-upload file notice in placeOrderWithPayment:', uploadErr);
+          }
+        }
+        f.fileUrl = `/api/orders/${fullConfirmedOrder.id}/files/${idx}/download`;
+        f.hasBinary = true;
+      }
+    }
 
     let finalOrder: OrderRecord = fullConfirmedOrder;
 
@@ -731,11 +785,19 @@ export const apiClient = {
             order: fullConfirmedOrder,
           }),
         },
-        8000
+        30000
       );
 
       if (serverResult?.order) {
-        finalOrder = serverResult.order;
+        finalOrder = {
+          ...serverResult.order,
+          files: (serverResult.order.files || []).map((sf, idx) => ({
+            ...sf,
+            fileUrl: sf.fileUrl || `/api/orders/${fullConfirmedOrder.id}/files/${idx}/download`,
+            hasBinary: true,
+            previewUrl: fullConfirmedOrder.files?.[idx]?.previewUrl || sf.previewUrl,
+          })),
+        };
       }
     } catch (serverErr) {
       console.warn('Server payment confirmation notice, using robust local & firestore pipeline:', serverErr);

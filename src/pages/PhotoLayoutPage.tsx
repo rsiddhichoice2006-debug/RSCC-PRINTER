@@ -33,6 +33,7 @@ import {
 } from '../types';
 import { PHOTO_LAYOUTS, calculateRequiredSheets, generateSheetSlots } from '../utils/photoLayouts';
 import { formatFileSize, processUploadedFile, isExcelFile, isWebPFile, convertWebPToJpg } from '../utils/fileProcessor';
+import { saveFileToStorage } from '../utils/fileStorage';
 import { useAuth } from '../context/AuthContext';
 
 export interface LayoutPhotoItem {
@@ -283,7 +284,7 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
     return Object.keys(errs).length === 0;
   };
 
-  const handleProceed = () => {
+  const handleProceed = async () => {
     if (settings.isAcceptingOrders === false) {
       alert(settings.pauseOrderReason || 'Currently Not Accepting Orders Due to High Demand. Please check back later.');
       return;
@@ -305,6 +306,30 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
       return;
     }
 
+    // Pre-upload all photos to server disk so they are available immediately across all devices
+    await Promise.all(
+      uploadedPhotos.map(async (p) => {
+        if (p.previewUrl) {
+          saveFileToStorage(p.id, p.previewUrl, {
+            name: p.name,
+            type: p.file?.type || 'image/jpeg',
+          }).catch(() => {});
+          try {
+            await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                filename: p.name,
+                fileType: p.file?.type || 'image/jpeg',
+                dataUrl: p.previewUrl,
+                fileId: p.id,
+              }),
+            });
+          } catch {}
+        }
+      })
+    );
+
     const orderPayload = {
       mode: 'PHOTO',
       paperSize,
@@ -315,15 +340,17 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
         mobile: customer?.mobile?.trim() || '',
         email: customer?.email?.trim() || undefined,
       },
-      files: uploadedPhotos.map((p) => ({
-        id: p.id,
-        name: p.name,
-        size: p.size,
-        type: p.file.type || 'image/jpeg',
-        pageCount: 1,
-        moderationStatus: 'SAFE',
-        previewUrl: p.previewUrl,
-      })),
+      files: uploadedPhotos.map((p) => {
+        return {
+          id: p.id,
+          name: p.name,
+          size: p.size,
+          type: p.file.type || 'image/jpeg',
+          pageCount: 1,
+          moderationStatus: 'SAFE',
+          previewUrl: p.previewUrl,
+        };
+      }),
       totalPages: uploadedPhotos.length,
       totalSheets: requiredSheets,
       copies,

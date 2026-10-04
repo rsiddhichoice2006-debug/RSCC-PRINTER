@@ -554,6 +554,26 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   const nupFilename = `${cleanBase}_${pagesPerSheet}in1_layout.pdf`;
                   const nupSummary = `${summary} • ${pagesPerSheet} Pages on 1 Side (${nupOrientation === 'SIDE_BY_SIDE' ? 'Side-by-Side' : 'Top & Bottom'})`;
 
+                  // Cache in IndexedDB and server disk
+                  if (nupResult.dataUrl) {
+                    saveFileToStorage(f.id, nupResult.dataUrl, {
+                      name: nupFilename,
+                      type: 'application/pdf',
+                    }).catch(() => {});
+                    try {
+                      await fetch('/api/upload', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          filename: nupFilename,
+                          fileType: 'application/pdf',
+                          dataUrl: nupResult.dataUrl,
+                          fileId: f.id,
+                        }),
+                      });
+                    } catch {}
+                  }
+
                   return {
                     id: f.id,
                     name: nupFilename,
@@ -585,6 +605,26 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
                   currentMode,
                   f.customPageRange
                 );
+
+                // Cache in IndexedDB and server disk
+                if (extracted.dataUrl) {
+                  saveFileToStorage(f.id, extracted.dataUrl, {
+                    name: trimmedFilename,
+                    type: 'application/pdf',
+                  }).catch(() => {});
+                  try {
+                    await fetch('/api/upload', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        filename: trimmedFilename,
+                        fileType: 'application/pdf',
+                        dataUrl: extracted.dataUrl,
+                        fileId: f.id,
+                      }),
+                    });
+                  } catch {}
+                }
 
                 return {
                   id: f.id,
