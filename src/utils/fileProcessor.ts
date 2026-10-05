@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { PDFDocument } from 'pdf-lib';
 import { UploadedFileItem } from '../types';
+import { inferMimeType } from './fileFormatHelper';
 
 /**
  * Accurately extracts page count and encryption status from PDF binary data.
@@ -268,8 +269,8 @@ export function fileToDataUrl(file: File): Promise<string> {
  * 3. Calls server-side Gemini moderation check for prohibited content
  */
 export async function processUploadedFile(rawFile: File, maxFileSizeMb: number = 50): Promise<UploadedFileItem> {
-  // If WebP, convert to JPG first as requested
-  const file = isWebPFile(rawFile) ? await convertWebPToJpg(rawFile) : rawFile;
+  // Preserve exact customer file format as uploaded (WebP, JPG, JPEG, PNG, PDF, Word, etc.)
+  const file = rawFile;
 
   const id = 'f-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
   const sizeMb = file.size / (1024 * 1024);
@@ -410,7 +411,7 @@ export async function processUploadedFile(rawFile: File, maxFileSizeMb: number =
     file,
     name: file.name,
     size: file.size,
-    type: file.type || 'application/octet-stream',
+    type: inferMimeType(file.name, file.type),
     previewUrl,
     pageCount: Math.max(1, pageCount),
     isPasswordProtected,

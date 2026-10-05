@@ -54,7 +54,7 @@ import {
 } from '../services/whatsappService';
 import { downloadWhatsAppExtensionZip } from '../services/whatsappExtensionHelper';
 import { extractSelectedPagesFromPdf, getSelectedPagesList } from '../utils/pdfExtractor';
-import { getPreservedFormatDetails, getOrGenerateFileBinary } from '../utils/fileFormatHelper';
+import { getPreservedFormatDetails, getOrGenerateFileBinary, getFormatBadgeStyle } from '../utils/fileFormatHelper';
 import { resolveFileFromStorage } from '../utils/fileStorage';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
@@ -1849,6 +1849,22 @@ ${(order.files || []).map((f, i) => {
                               ✨ 2-in-1 (Same Side)
                             </span>
                           )}
+                          {Array.isArray(ord.files) && ord.files.length > 0 && (
+                            <div className="flex items-center gap-1 mt-1 flex-wrap">
+                              {ord.files.map((fileItem, fIdx) => {
+                                const fmt = getPreservedFormatDetails(fileItem);
+                                return (
+                                  <span
+                                    key={`row-fmt-${ord.id || ord.orderNumber}-${fIdx}`}
+                                    className={`font-mono font-extrabold text-[9px] px-1.5 py-0.2 rounded border uppercase ${getFormatBadgeStyle(fmt.extension)}`}
+                                    title={`${fmt.filename} (${fmt.formatLabel})`}
+                                  >
+                                    {fmt.extension ? fmt.extension.replace('.', '').toUpperCase() : 'FILE'}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-3.5 px-4">
@@ -3406,7 +3422,7 @@ ${(order.files || []).map((f, i) => {
                               <span className="font-bold text-slate-900 truncate max-w-[190px] sm:max-w-[270px]">
                                 {format.filename}
                               </span>
-                              <span className="bg-slate-100 text-slate-700 border border-slate-300 font-mono font-bold text-[10px] px-1.5 py-0.2 rounded uppercase">
+                              <span className={`font-mono font-extrabold text-[10px] px-1.5 py-0.2 rounded border uppercase ${getFormatBadgeStyle(format.extension)}`}>
                                 {format?.extension ? format.extension.replace('.', '') : 'FILE'}
                               </span>
                               {isTrimmed && (
@@ -3435,7 +3451,7 @@ ${(order.files || []).map((f, i) => {
                               <span>•</span>
                               <span>{(f.size / 1024).toFixed(1)} KB</span>
                               <span>•</span>
-                              <span className="text-slate-500 font-sans">{format.formatLabel}</span>
+                              <span className="text-slate-600 font-sans font-bold">{format.formatLabel} (Original Format)</span>
                               {f.isPasswordProtected && f.password && (
                                 <>
                                   <span>•</span>
@@ -3470,7 +3486,7 @@ ${(order.files || []).map((f, i) => {
                           <button
                             type="button"
                             onClick={() => handleDownloadSingleFile(f, selectedOrder.orderNumber, selectedOrder.id, i)}
-                            className="p-1.5 px-2 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 transition flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                            className="p-1.5 px-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 hover:border-emerald-400 transition flex items-center gap-1 text-[11px] font-extrabold cursor-pointer shadow-xs"
                             title={`Download in original ${format.formatLabel} format`}
                           >
                             <Download className="w-3.5 h-3.5" />

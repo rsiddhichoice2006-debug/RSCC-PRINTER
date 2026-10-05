@@ -55,6 +55,7 @@ import {
 } from '../utils/nupProcessor';
 import { DocumentPageView } from '../components/DocumentPageView';
 import { saveFileToStorage } from '../utils/fileStorage';
+import { inferMimeType } from '../utils/fileFormatHelper';
 import {
   DEFAULT_PRICING,
   getDocumentRate,
@@ -325,15 +326,6 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         continue;
       }
 
-      // Convert WebP image to JPG
-      if (isWebPFile(rawFile)) {
-        try {
-          rawFile = await convertWebPToJpg(rawFile);
-        } catch (err) {
-          console.warn('Failed to convert WebP to JPG:', err);
-        }
-      }
-
       const maxBytes = (settings.maxFileSizeMb || 50) * 1024 * 1024;
 
       if (rawFile.size > maxBytes) {
@@ -342,7 +334,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
           file: rawFile,
           name: rawFile.name,
           size: rawFile.size,
-          type: rawFile.type || 'application/octet-stream',
+          type: inferMimeType(rawFile.name, rawFile.type),
           pageCount: 0,
           isProcessing: false,
           error: `File size exceeds ${settings.maxFileSizeMb}MB limit.`,
@@ -351,14 +343,14 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
         continue;
       }
 
-      // Initial loading state item
+      // Initial loading state item (preserve exact customer format as uploaded)
       const tempId = `f-${Date.now()}-${i}`;
       const placeholderItem: UploadedFileItem = {
         id: tempId,
         file: rawFile,
         name: rawFile.name,
         size: rawFile.size,
-        type: rawFile.type || 'application/octet-stream',
+        type: inferMimeType(rawFile.name, rawFile.type),
         pageCount: 1,
         isProcessing: true,
         moderationStatus: 'PENDING',
@@ -696,7 +688,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
             id: f.id,
             name: f.file?.name || f.name,
             size: originalBytesSize,
-            type: f.file?.type || f.type || 'application/octet-stream',
+            type: inferMimeType(f.file?.name || f.name, f.file?.type || f.type),
             pageCount: f.pageCount,
             originalPageCount: f.pageCount,
             sets: f.sets || copies,

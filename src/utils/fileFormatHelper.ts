@@ -77,37 +77,107 @@ export function extractMimeFromDataUrl(dataUrl?: string): string | null {
 
 /**
  * Maps standard MIME types to file extensions and human-readable labels.
+ * Respects exact extension variations (.jpeg vs .jpg, .doc vs .docx, .ppt vs .pptx).
  */
-export function getExtensionAndLabelForMime(mimeType: string): { extension: string; label: string } {
+export function getExtensionAndLabelForMime(mimeType: string, filename?: string): { extension: string; label: string } {
   const m = (mimeType || '').toLowerCase().trim();
+  const lowerName = (filename || '').toLowerCase().trim();
+
+  // If filename ends with exact extension, respect it
+  if (lowerName.endsWith('.jpeg')) return { extension: '.jpeg', label: 'JPEG Image' };
+  if (lowerName.endsWith('.jpg')) return { extension: '.jpg', label: 'JPG Image' };
+  if (lowerName.endsWith('.png')) return { extension: '.png', label: 'PNG Image' };
+  if (lowerName.endsWith('.webp')) return { extension: '.webp', label: 'WEBP Image' };
+  if (lowerName.endsWith('.pdf')) return { extension: '.pdf', label: 'PDF Document' };
+  if (lowerName.endsWith('.docx')) return { extension: '.docx', label: 'Word Document (.docx)' };
+  if (lowerName.endsWith('.doc')) return { extension: '.doc', label: 'Word Document (.doc)' };
+  if (lowerName.endsWith('.pptx')) return { extension: '.pptx', label: 'PowerPoint (.pptx)' };
+  if (lowerName.endsWith('.ppt')) return { extension: '.ppt', label: 'PowerPoint (.ppt)' };
+  if (lowerName.endsWith('.xlsx')) return { extension: '.xlsx', label: 'Excel Spreadsheet (.xlsx)' };
+  if (lowerName.endsWith('.xls')) return { extension: '.xls', label: 'Excel Spreadsheet (.xls)' };
+  if (lowerName.endsWith('.gif')) return { extension: '.gif', label: 'GIF Image' };
+  if (lowerName.endsWith('.bmp')) return { extension: '.bmp', label: 'Bitmap Image' };
+  if (lowerName.endsWith('.svg')) return { extension: '.svg', label: 'SVG Image' };
+  if (lowerName.endsWith('.txt')) return { extension: '.txt', label: 'Text Document (.txt)' };
 
   if (m === 'application/pdf') return { extension: '.pdf', label: 'PDF Document' };
-  if (m === 'image/jpeg' || m === 'image/jpg') return { extension: '.jpg', label: 'JPEG Image' };
+  if (m === 'image/jpeg' || m === 'image/jpg') {
+    return lowerName.endsWith('.jpeg')
+      ? { extension: '.jpeg', label: 'JPEG Image' }
+      : { extension: '.jpg', label: 'JPG Image' };
+  }
   if (m === 'image/png') return { extension: '.png', label: 'PNG Image' };
   if (m === 'image/webp') return { extension: '.webp', label: 'WEBP Image' };
   if (m === 'image/gif') return { extension: '.gif', label: 'GIF Image' };
   if (m === 'image/bmp') return { extension: '.bmp', label: 'Bitmap Image' };
   if (m === 'image/svg+xml') return { extension: '.svg', label: 'SVG Image' };
-  if (m.includes('wordprocessingml') || m === 'application/msword') {
-    return { extension: '.docx', label: 'Word Document' };
+  if (m.includes('wordprocessingml')) {
+    return { extension: '.docx', label: 'Word Document (.docx)' };
   }
-  if (m.includes('presentationml') || m === 'application/vnd.ms-powerpoint') {
-    return { extension: '.pptx', label: 'PowerPoint Presentation' };
+  if (m === 'application/msword') {
+    return { extension: '.doc', label: 'Word Document (.doc)' };
   }
-  if (m.includes('spreadsheetml') || m === 'application/vnd.ms-excel') {
-    return { extension: '.xlsx', label: 'Excel Spreadsheet' };
+  if (m.includes('presentationml')) {
+    return { extension: '.pptx', label: 'PowerPoint (.pptx)' };
   }
-  if (m.startsWith('text/plain') || m === 'text/plain') return { extension: '.txt', label: 'Text Document' };
+  if (m === 'application/vnd.ms-powerpoint') {
+    return { extension: '.ppt', label: 'PowerPoint (.ppt)' };
+  }
+  if (m.includes('spreadsheetml')) {
+    return { extension: '.xlsx', label: 'Excel Spreadsheet (.xlsx)' };
+  }
+  if (m === 'application/vnd.ms-excel') {
+    return { extension: '.xls', label: 'Excel Spreadsheet (.xls)' };
+  }
+  if (m.startsWith('text/plain') || m === 'text/plain') return { extension: '.txt', label: 'Text Document (.txt)' };
 
   return { extension: '', label: 'Document' };
 }
 
 /**
- * Guarantees that the downloaded file preserves the exact format uploaded by customer.
- * - If customer uploaded a PDF -> downloads with valid .pdf extension and application/pdf MIME
- * - If customer uploaded a JPG -> downloads with valid .jpg extension and image/jpeg MIME
- * - If customer uploaded a PNG -> downloads with valid .png extension and image/png MIME
- * - If customer uploaded a DOCX/PPTX/etc. -> downloads with original extension and MIME
+ * Returns accurate MIME type for a given filename and optional existing MIME type.
+ */
+export function inferMimeType(filename: string, existingType?: string): string {
+  if (existingType && existingType !== 'application/octet-stream' && existingType.includes('/')) {
+    return existingType;
+  }
+  const clean = (filename || '').toLowerCase().trim();
+  if (clean.endsWith('.pdf')) return 'application/pdf';
+  if (clean.endsWith('.jpg') || clean.endsWith('.jpeg')) return 'image/jpeg';
+  if (clean.endsWith('.png')) return 'image/png';
+  if (clean.endsWith('.webp')) return 'image/webp';
+  if (clean.endsWith('.gif')) return 'image/gif';
+  if (clean.endsWith('.bmp')) return 'image/bmp';
+  if (clean.endsWith('.svg')) return 'image/svg+xml';
+  if (clean.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (clean.endsWith('.doc')) return 'application/msword';
+  if (clean.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (clean.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
+  if (clean.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (clean.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if (clean.endsWith('.txt')) return 'text/plain';
+  return existingType || 'application/octet-stream';
+}
+
+/**
+ * Returns distinct colored badge styling for file formats in the Staff Portal.
+ */
+export function getFormatBadgeStyle(ext?: string): string {
+  const e = (ext || '').toLowerCase().replace('.', '');
+  if (e === 'pdf') return 'bg-red-50 text-red-700 border-red-200';
+  if (e === 'jpg' || e === 'jpeg') return 'bg-blue-50 text-blue-700 border-blue-200';
+  if (e === 'png') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (e === 'webp') return 'bg-cyan-50 text-cyan-700 border-cyan-200';
+  if (e === 'docx' || e === 'doc') return 'bg-purple-50 text-purple-700 border-purple-200';
+  if (e === 'pptx' || e === 'ppt') return 'bg-amber-50 text-amber-700 border-amber-200';
+  if (e === 'xlsx' || e === 'xls') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (e === 'txt') return 'bg-slate-100 text-slate-700 border-slate-300';
+  return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+}
+
+/**
+ * Guarantees that the staff portal displays and downloads the file in the exact same format
+ * uploaded by the customer (PDF, JPG, JPEG, PNG, WEBP, DOCX, DOC, PPTX, PPT, TXT, etc.).
  */
 export function getPreservedFormatDetails(
   file: { name?: string; type?: string; previewUrl?: string },
@@ -118,11 +188,44 @@ export function getPreservedFormatDetails(
 
   // Clean raw filename from any prior false wrappers like .info.txt or .txt
   let baseName = (file.name || 'document').replace(/\.info\.txt$/i, '');
-  if (/\.(pdf|jpg|jpeg|png|webp|gif|bmp|docx|pptx|xlsx)\.txt$/i.test(baseName)) {
+  if (/\.(pdf|jpg|jpeg|png|webp|gif|bmp|docx|doc|pptx|ppt|xlsx|xls)\.txt$/i.test(baseName)) {
     baseName = baseName.replace(/\.txt$/i, '');
   }
 
-  // 1. Inspect binary magic bytes first (most authoritative)
+  // 1. Inspect original file.name extension first (highest fidelity to customer's exact format upload)
+  if (baseName && baseName.includes('.')) {
+    const ext = '.' + baseName.split('.').pop()!.toLowerCase();
+    const knownMimes: Record<string, { mime: string; label: string }> = {
+      '.pdf': { mime: 'application/pdf', label: 'PDF Document' },
+      '.jpg': { mime: 'image/jpeg', label: 'JPG Image' },
+      '.jpeg': { mime: 'image/jpeg', label: 'JPEG Image' },
+      '.png': { mime: 'image/png', label: 'PNG Image' },
+      '.webp': { mime: 'image/webp', label: 'WEBP Image' },
+      '.gif': { mime: 'image/gif', label: 'GIF Image' },
+      '.bmp': { mime: 'image/bmp', label: 'Bitmap Image' },
+      '.svg': { mime: 'image/svg+xml', label: 'SVG Image' },
+      '.docx': { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', label: 'Word Document (.docx)' },
+      '.doc': { mime: 'application/msword', label: 'Word Document (.doc)' },
+      '.pptx': { mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', label: 'PowerPoint Presentation (.pptx)' },
+      '.ppt': { mime: 'application/vnd.ms-powerpoint', label: 'PowerPoint Presentation (.ppt)' },
+      '.xlsx': { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', label: 'Excel Spreadsheet (.xlsx)' },
+      '.xls': { mime: 'application/vnd.ms-excel', label: 'Excel Spreadsheet (.xls)' },
+      '.txt': { mime: 'text/plain', label: 'Text Document (.txt)' },
+      '.rtf': { mime: 'application/rtf', label: 'Rich Text Document (.rtf)' },
+      '.csv': { mime: 'text/csv', label: 'CSV File (.csv)' },
+    };
+
+    if (knownMimes[ext]) {
+      return {
+        filename: baseName,
+        mimeType: knownMimes[ext].mime,
+        extension: ext,
+        formatLabel: knownMimes[ext].label,
+      };
+    }
+  }
+
+  // 2. Inspect binary magic bytes if available
   if (binaryBytes && binaryBytes.length >= 4) {
     const byteDetection = detectFormatFromBytes(binaryBytes);
     if (byteDetection) {
@@ -155,19 +258,28 @@ export function getPreservedFormatDetails(
         }
       }
 
+      // If byte detection says jpg but baseName is .jpeg, preserve .jpeg
+      const lowerName = baseName.toLowerCase();
+      let targetExt = byteDetection.extension;
+      let targetLabel = byteDetection.label;
+      if (byteDetection.extension === '.jpg' && lowerName.endsWith('.jpeg')) {
+        targetExt = '.jpeg';
+        targetLabel = 'JPEG Image';
+      }
+
       return {
-        filename: ensureFilenameHasExtension(baseName, byteDetection.extension),
+        filename: ensureFilenameHasExtension(baseName, targetExt),
         mimeType: byteDetection.mimeType,
-        extension: byteDetection.extension,
-        formatLabel: byteDetection.label,
+        extension: targetExt,
+        formatLabel: targetLabel,
       };
     }
   }
 
-  // 2. Inspect Data URL MIME Header (e.g. data:image/png;base64,...)
+  // 3. Inspect Data URL MIME Header (e.g. data:image/png;base64,...)
   const dataUrlMime = extractMimeFromDataUrl(effectiveUrl);
   if (dataUrlMime && dataUrlMime !== 'application/octet-stream') {
-    const { extension, label } = getExtensionAndLabelForMime(dataUrlMime);
+    const { extension, label } = getExtensionAndLabelForMime(dataUrlMime, baseName);
     if (extension && extension !== '.txt') {
       return {
         filename: ensureFilenameHasExtension(baseName, extension),
@@ -178,41 +290,15 @@ export function getPreservedFormatDetails(
     }
   }
 
-  // 3. Inspect file.type property
+  // 4. Inspect file.type property
   if (file.type && file.type !== 'application/octet-stream') {
-    const { extension, label } = getExtensionAndLabelForMime(file.type);
+    const { extension, label } = getExtensionAndLabelForMime(file.type, baseName);
     if (extension && extension !== '.txt') {
       return {
         filename: ensureFilenameHasExtension(baseName, extension),
         mimeType: file.type,
         extension,
         formatLabel: label,
-      };
-    }
-  }
-
-  // 4. Inspect file.name extension
-  if (baseName && baseName.includes('.')) {
-    const ext = '.' + baseName.split('.').pop()!.toLowerCase();
-    const knownMimes: Record<string, string> = {
-      '.pdf': 'application/pdf',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.png': 'image/png',
-      '.webp': 'image/webp',
-      '.gif': 'image/gif',
-      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      '.doc': 'application/msword',
-      '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    };
-
-    if (knownMimes[ext]) {
-      return {
-        filename: baseName,
-        mimeType: knownMimes[ext],
-        extension: ext,
-        formatLabel: ext.toUpperCase().replace('.', '') + ' File',
       };
     }
   }
@@ -588,7 +674,8 @@ export async function getOrGenerateFileBinary(
     details.extension === '.gif';
 
   if (isImage) {
-    const safeImageName = ensureFilenameHasExtension(details.filename, details.extension || '.jpg');
+    const ext = details.extension || (details.filename.toLowerCase().endsWith('.jpeg') ? '.jpeg' : '.jpg');
+    const safeImageName = ensureFilenameHasExtension(details.filename, ext);
     const imageBytes = await generateFallbackImageBytes(
       safeImageName,
       orderContext?.orderNumber,
@@ -599,11 +686,42 @@ export async function getOrGenerateFileBinary(
       filename: safeImageName,
       mimeType: details.mimeType && details.mimeType !== 'application/octet-stream' ? details.mimeType : 'image/jpeg',
       formatLabel: details.formatLabel || 'JPEG Image',
-      extension: details.extension || '.jpg',
+      extension: ext,
     };
   }
 
-  // Default for documents (PDF, Word DOCX, presentation, etc.)
+  // Text document (.txt)
+  if (details.extension === '.txt') {
+    const textContent = `RADHE SHYAM COMMUNICATION & CYBER (RSCC)\nOrder #${orderContext?.orderNumber || 'N/A'}\nCustomer: ${orderContext?.customerName || 'Customer'}\nFile: ${details.filename}\nPrint Type: ${orderContext?.printType || 'B&W'}\nPaper: ${orderContext?.paperSize || 'A4'}\n`;
+    const textBytes = new TextEncoder().encode(textContent);
+    return {
+      data: textBytes,
+      filename: details.filename,
+      mimeType: 'text/plain',
+      formatLabel: 'Text Document (.txt)',
+      extension: '.txt',
+    };
+  }
+
+  // Word / PowerPoint / Office documents: preserve exact filename & extension
+  if (details.extension === '.docx' || details.extension === '.doc' || details.extension === '.pptx' || details.extension === '.ppt') {
+    const pdfBytes = await generateFallbackPdfBytes(
+      details.filename,
+      orderContext?.orderNumber,
+      orderContext?.customerName,
+      file.pageCount || 1,
+      orderContext
+    );
+    return {
+      data: pdfBytes,
+      filename: details.filename,
+      mimeType: details.mimeType,
+      formatLabel: details.formatLabel,
+      extension: details.extension,
+    };
+  }
+
+  // Standard PDF document
   const safePdfName = ensureFilenameHasExtension(details.filename, '.pdf');
   const pdfBytes = await generateFallbackPdfBytes(
     safePdfName,

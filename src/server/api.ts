@@ -1810,37 +1810,68 @@ Return your judgment strictly in JSON format:
           }
         }
       }
+      const lowerName = filename.toLowerCase();
       if (mimeType === 'application/octet-stream' || !mimeType) {
-        const lowerName = filename.toLowerCase();
         if (lowerName.endsWith('.pdf')) mimeType = 'application/pdf';
         else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) mimeType = 'image/jpeg';
         else if (lowerName.endsWith('.png')) mimeType = 'image/png';
         else if (lowerName.endsWith('.webp')) mimeType = 'image/webp';
+        else if (lowerName.endsWith('.gif')) mimeType = 'image/gif';
+        else if (lowerName.endsWith('.bmp')) mimeType = 'image/bmp';
+        else if (lowerName.endsWith('.svg')) mimeType = 'image/svg+xml';
         else if (lowerName.endsWith('.docx')) mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-        else mimeType = 'application/pdf'; // Default to PDF, NEVER text/plain
+        else if (lowerName.endsWith('.doc')) mimeType = 'application/msword';
+        else if (lowerName.endsWith('.pptx')) mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+        else if (lowerName.endsWith('.ppt')) mimeType = 'application/vnd.ms-powerpoint';
+        else if (lowerName.endsWith('.xlsx')) mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        else if (lowerName.endsWith('.xls')) mimeType = 'application/vnd.ms-excel';
+        else if (lowerName.endsWith('.txt')) mimeType = 'text/plain';
+        else mimeType = 'application/pdf';
       }
 
-      // Guarantee clean filename with matching extension - NEVER allow .txt or .info.txt on documents and images
+      // Guarantee clean filename with matching exact original customer extension
       let cleanFilename = filename
         .replace(/\.info\.txt$/i, '')
         .replace(/\.(bin|octet-stream|tmp|part|download)$/i, '')
         .replace(/[/\\?%*:|"<>]/g, '_');
 
-      if (mimeType === 'application/pdf') {
+      // Strip false .txt only if the underlying file was not actually a .txt file
+      if (!lowerName.endsWith('.txt') && !cleanFilename.toLowerCase().endsWith('.txt')) {
         cleanFilename = cleanFilename.replace(/\.txt$/i, '');
+      }
+
+      if (lowerName.endsWith('.jpeg')) {
+        if (!cleanFilename.toLowerCase().endsWith('.jpeg')) cleanFilename += '.jpeg';
+      } else if (lowerName.endsWith('.jpg')) {
+        if (!cleanFilename.toLowerCase().endsWith('.jpg')) cleanFilename += '.jpg';
+      } else if (lowerName.endsWith('.png')) {
+        if (!cleanFilename.toLowerCase().endsWith('.png')) cleanFilename += '.png';
+      } else if (lowerName.endsWith('.webp')) {
+        if (!cleanFilename.toLowerCase().endsWith('.webp')) cleanFilename += '.webp';
+      } else if (lowerName.endsWith('.pdf')) {
+        if (!cleanFilename.toLowerCase().endsWith('.pdf')) cleanFilename += '.pdf';
+      } else if (lowerName.endsWith('.docx')) {
+        if (!cleanFilename.toLowerCase().endsWith('.docx')) cleanFilename += '.docx';
+      } else if (lowerName.endsWith('.doc')) {
+        if (!cleanFilename.toLowerCase().endsWith('.doc')) cleanFilename += '.doc';
+      } else if (lowerName.endsWith('.pptx')) {
+        if (!cleanFilename.toLowerCase().endsWith('.pptx')) cleanFilename += '.pptx';
+      } else if (lowerName.endsWith('.ppt')) {
+        if (!cleanFilename.toLowerCase().endsWith('.ppt')) cleanFilename += '.ppt';
+      } else if (lowerName.endsWith('.xlsx')) {
+        if (!cleanFilename.toLowerCase().endsWith('.xlsx')) cleanFilename += '.xlsx';
+      } else if (lowerName.endsWith('.xls')) {
+        if (!cleanFilename.toLowerCase().endsWith('.xls')) cleanFilename += '.xls';
+      } else if (lowerName.endsWith('.txt')) {
+        if (!cleanFilename.toLowerCase().endsWith('.txt')) cleanFilename += '.txt';
+      } else if (mimeType === 'application/pdf') {
         if (!cleanFilename.toLowerCase().endsWith('.pdf')) cleanFilename += '.pdf';
       } else if (mimeType === 'image/jpeg') {
-        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
         if (!cleanFilename.toLowerCase().endsWith('.jpg') && !cleanFilename.toLowerCase().endsWith('.jpeg')) cleanFilename += '.jpg';
       } else if (mimeType === 'image/png') {
-        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
         if (!cleanFilename.toLowerCase().endsWith('.png')) cleanFilename += '.png';
       } else if (mimeType === 'image/webp') {
-        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
         if (!cleanFilename.toLowerCase().endsWith('.webp')) cleanFilename += '.webp';
-      } else if (mimeType.includes('wordprocessingml')) {
-        cleanFilename = cleanFilename.replace(/\.txt$/i, '');
-        if (!cleanFilename.toLowerCase().endsWith('.docx')) cleanFilename += '.docx';
       }
 
       try {
