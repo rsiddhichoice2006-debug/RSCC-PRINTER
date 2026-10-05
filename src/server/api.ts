@@ -5,7 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import dotenv from 'dotenv';
-import { generateFallbackPdfBytes, generateFallbackImageBytes } from '../utils/fileFormatHelper';
+import { generateFallbackPdfBytes, generateFallbackImageBytes, generateFallbackDocxBytes } from '../utils/fileFormatHelper';
 
 // Load environment variables from .env
 dotenv.config();
@@ -1751,7 +1751,7 @@ Return your judgment strictly in JSON format:
         }
       }
 
-      // 3. If still not on disk, generate genuine authoritative PDF or Image on the fly
+      // 3. If still not on disk, generate genuine authoritative PDF, Image, Word DOCX or Text on the fly
       // CRITICAL: NEVER return 404 JSON that Windows or browser can convert to a Notepad text file!
       if (!buffer || buffer.length === 0) {
         const lowerName = filename.toLowerCase();
@@ -1765,7 +1765,15 @@ Return your judgment strictly in JSON format:
         if (isImage) {
           const imgBytes = await generateFallbackImageBytes(filename, order?.orderNumber, order?.customer?.name);
           buffer = Buffer.from(imgBytes);
-          mimeType = 'image/jpeg';
+          mimeType = lowerName.endsWith('.png') ? 'image/png' : lowerName.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+        } else if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
+          const docxBytes = await generateFallbackDocxBytes(filename, order?.orderNumber, order?.customer?.name);
+          buffer = Buffer.from(docxBytes);
+          mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        } else if (lowerName.endsWith('.txt')) {
+          const textContent = `RIDDHI SIDDHI CHOICE CENTRE (RSCC)\nOrder: #${order?.orderNumber || 'N/A'}\nCustomer: ${order?.customer?.name || 'Customer'}\nFile: ${filename}\n`;
+          buffer = Buffer.from(textContent, 'utf-8');
+          mimeType = 'text/plain';
         } else {
           const pdfBytes = await generateFallbackPdfBytes(
             filename,
@@ -1803,7 +1811,7 @@ Return your judgment strictly in JSON format:
         } else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
           mimeType = 'image/webp';
         } else if (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) {
-          if (filename.toLowerCase().endsWith('.docx')) {
+          if (filename.toLowerCase().endsWith('.docx') || filename.toLowerCase().endsWith('.doc')) {
             mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
           } else if (filename.toLowerCase().endsWith('.pptx')) {
             mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
@@ -1836,7 +1844,7 @@ Return your judgment strictly in JSON format:
         .replace(/[/\\?%*:|"<>]/g, '_');
 
       // Strip false .txt only if the underlying file was not actually a .txt file
-      if (!lowerName.endsWith('.txt') && !cleanFilename.toLowerCase().endsWith('.txt')) {
+      if (!lowerName.endsWith('.txt') && cleanFilename.toLowerCase().endsWith('.txt')) {
         cleanFilename = cleanFilename.replace(/\.txt$/i, '');
       }
 

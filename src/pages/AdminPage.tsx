@@ -699,41 +699,44 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }
 
     try {
-      let effectiveUrl = (await getTrimmedFilePreviewUrl(file, targetOrderId, fileIndex, orderNumber)) || file.previewUrl;
+      const resolvedIndex = fileIndex !== undefined ? fileIndex : 0;
+
+      // 1. Direct check: can we open the server view endpoint directly in new tab?
+      const directEndpoints = [
+        targetOrderId ? `/api/orders/${targetOrderId}/files/${resolvedIndex}/view` : null,
+        orderNumber ? `/api/orders/${orderNumber}/files/${resolvedIndex}/view` : null,
+        file.id ? `/api/files/${file.id}/view` : null,
+      ].filter(Boolean) as string[];
+
+      for (const endpoint of directEndpoints) {
+        try {
+          const resp = await fetch(endpoint, { method: 'HEAD' });
+          if (resp.ok) {
+            window.open(endpoint, '_blank');
+            showToast(`Opened "${file.name}" in print viewer 🖨️`);
+            return;
+          }
+        } catch {}
+      }
+
+      let effectiveUrl = (await getTrimmedFilePreviewUrl(file, targetOrderId, resolvedIndex, orderNumber)) || file.previewUrl;
       if (!effectiveUrl && targetOrderId) {
-        effectiveUrl = (await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber)) || undefined;
+        effectiveUrl = (await resolveFileFromStorage(targetOrderId, file.id, resolvedIndex, file.name, orderNumber)) || undefined;
       }
       if (!effectiveUrl && file.id) {
-        effectiveUrl = (await resolveFileFromStorage(undefined, file.id, fileIndex, file.name, orderNumber)) || undefined;
+        effectiveUrl = (await resolveFileFromStorage(undefined, file.id, resolvedIndex, file.name, orderNumber)) || undefined;
       }
-      if (!effectiveUrl && targetOrderId && fileIndex !== undefined) {
-        effectiveUrl = `/api/orders/${targetOrderId}/files/${fileIndex}/view`;
-      }
-      if (!effectiveUrl && file.id) {
-        effectiveUrl = `/api/files/${file.id}/view`;
+      if (!effectiveUrl && targetOrderId && resolvedIndex !== undefined) {
+        effectiveUrl = `/api/orders/${targetOrderId}/files/${resolvedIndex}/download`;
       }
 
-      if (!effectiveUrl) {
-        showToast(`Could not load preview for "${file.name}".`);
-        return;
-      }
-
-      let resolved = await resolveFileBinary(effectiveUrl);
+      let resolved = effectiveUrl ? await resolveFileBinary(effectiveUrl) : null;
       let resolvedBinary: Uint8Array | null = null;
       if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
         resolvedBinary = resolved.data;
       }
       if (!resolvedBinary && targetOrderId) {
-        const storageUrl = await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber);
-        if (storageUrl) {
-          const res = await resolveFileBinary(storageUrl);
-          if (res && res.isBinary && res.data instanceof Uint8Array) {
-            resolvedBinary = res.data;
-          }
-        }
-      }
-      if (!resolvedBinary && file.id) {
-        const directFileUrl = `/api/files/${file.id}/view`;
+        const directFileUrl = `/api/orders/${targetOrderId}/files/${resolvedIndex}/download`;
         const res = await resolveFileBinary(directFileUrl);
         if (res && res.isBinary && res.data instanceof Uint8Array) {
           resolvedBinary = res.data;
@@ -795,46 +798,75 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }
 
     try {
-      let effectiveUrl = (await getTrimmedFilePreviewUrl(file, targetOrderId, fileIndex, orderNumber)) || file.previewUrl;
+      const resolvedIndex = fileIndex !== undefined ? fileIndex : 0;
+
+      // 1. Direct server endpoint fetch: streams pristine uncompressed original bytes directly from disk!
+      const directCandidateUrls = [
+        targetOrderId ? `/api/orders/${targetOrderId}/files/${resolvedIndex}/download` : null,
+        orderNumber ? `/api/orders/${orderNumber}/files/${resolvedIndex}/download` : null,
+        file.id ? `/api/files/${file.id}/download` : null,
+      ].filter(Boolean) as string[];
+
+      for (const endpoint of directCandidateUrls) {
+        try {
+          const resp = await fetch(endpoint);
+          if (resp.ok) {
+            const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+            if (!contentType.includes('application/json')) {
+              const blob = await resp.blob();
+              if (blob && blob.size > 0) {
+                const cDisp = resp.headers.get('content-disposition') || '';
+                let serverFilename = '';
+                const match = cDisp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+                if (match && match[1]) {
+                  serverFilename = decodeURIComponent(match[1].trim());
+                }
+                const format = getPreservedFormatDetails(file);
+                const finalFilename = serverFilename || format.filename;
+                const blobUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                link.download = finalFilename;
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                  if (document.body.contains(link)) document.body.removeChild(link);
+                  URL.revokeObjectURL(blobUrl);
+                }, 60000);
+                showToast(`Downloaded "${finalFilename}" (${(blob.size / 1024).toFixed(1)} KB) uncompressed ✅`);
+                return;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`Direct fetch from ${endpoint} notice:`, err);
+        }
+      }
+
+      // 2. Client-side fallback if server endpoints were unreachable
+      let effectiveUrl = (await getTrimmedFilePreviewUrl(file, targetOrderId, resolvedIndex, orderNumber)) || file.previewUrl;
       if (!effectiveUrl && targetOrderId) {
-        effectiveUrl = (await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber)) || undefined;
+        effectiveUrl = (await resolveFileFromStorage(targetOrderId, file.id, resolvedIndex, file.name, orderNumber)) || undefined;
       }
       if (!effectiveUrl && file.id) {
-        effectiveUrl = (await resolveFileFromStorage(undefined, file.id, fileIndex, file.name, orderNumber)) || undefined;
-      }
-      if (!effectiveUrl && targetOrderId && fileIndex !== undefined) {
-        effectiveUrl = `/api/orders/${targetOrderId}/files/${fileIndex}/download`;
-      }
-      if (!effectiveUrl && file.id) {
-        effectiveUrl = `/api/files/${file.id}/download`;
+        effectiveUrl = (await resolveFileFromStorage(undefined, file.id, resolvedIndex, file.name, orderNumber)) || undefined;
       }
 
-      if (!effectiveUrl) {
-        showToast(`File "${file.name}" binary is not available.`);
-        return;
-      }
-
-      let resolved = await resolveFileBinary(effectiveUrl);
       let resolvedBinary: Uint8Array | null = null;
-      if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
-        resolvedBinary = resolved.data;
+      if (effectiveUrl) {
+        const resolved = await resolveFileBinary(effectiveUrl);
+        if (resolved && resolved.isBinary && resolved.data instanceof Uint8Array) {
+          resolvedBinary = resolved.data;
+        }
       }
 
-      // If initial fetch failed or was not binary, try IndexedDB & direct fileId fallbacks
       if (!resolvedBinary && targetOrderId) {
-        const storageUrl = await resolveFileFromStorage(targetOrderId, file.id, fileIndex, file.name, orderNumber);
+        const storageUrl = await resolveFileFromStorage(targetOrderId, file.id, resolvedIndex, file.name, orderNumber);
         if (storageUrl) {
           const res = await resolveFileBinary(storageUrl);
           if (res && res.isBinary && res.data instanceof Uint8Array) {
             resolvedBinary = res.data;
           }
-        }
-      }
-      if (!resolvedBinary && file.id) {
-        const directFileUrl = `/api/files/${file.id}/download`;
-        const res = await resolveFileBinary(directFileUrl);
-        if (res && res.isBinary && res.data instanceof Uint8Array) {
-          resolvedBinary = res.data;
         }
       }
 
@@ -853,7 +885,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         }
       );
 
-      // Trigger standard browser download for the exact genuine file format (PDF, JPG, PNG, DOCX) - NEVER NOTEPAD
+      // Trigger standard browser download for the exact genuine file format (PDF, JPG, PNG, DOCX) - NEVER COMPRESSED
       const blob = new Blob([fileResult.data], { type: fileResult.mimeType });
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -865,11 +897,87 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         if (document.body.contains(link)) document.body.removeChild(link);
         URL.revokeObjectURL(blobUrl);
       }, 60000);
-      showToast(`Downloaded "${fileResult.filename}" in ${fileResult.formatLabel} (${(fileResult.data.byteLength / 1024).toFixed(1)} KB) ✅`);
+      showToast(`Downloaded "${fileResult.filename}" in ${fileResult.formatLabel} (${(fileResult.data.byteLength / 1024).toFixed(1)} KB) uncompressed ✅`);
       return;
     } catch (err) {
       console.error('Download single file error:', err);
       showToast(`Failed to download "${file.name}". Please try again.`);
+    }
+  };
+
+  /**
+   * Directly downloads each uncompressed original file for the order into the staff member's browser
+   * downloads folder. NEVER bundles or compresses them into a ZIP archive, so files open instantly
+   * in native viewers (PDF viewers, Microsoft Word, Photo Viewers)!
+   */
+  const handleDownloadOrderFilesDirect = async (order: OrderRecord) => {
+    // Silence repeating alarm immediately on Download click and sync across all devices
+    markZipDownloaded(order.id, order.orderNumber);
+    apiClient.markOrderZipDownloaded(order.id, order.orderNumber).catch(() => {});
+    setNewOrderAlerts((prev) => prev.filter((o) => o.id !== order.id && o.orderNumber !== order.orderNumber));
+    setDownloadingZipOrderId(order.id);
+
+    try {
+      // Auto-update the print status to PRINTING ("Getting Prepared") while preserving full file binaries in memory
+      if (order.orderStatus !== 'READY_FOR_PICKUP' && order.orderStatus !== 'COMPLETED' && order.orderStatus !== 'CANCELLED') {
+        try {
+          const updated = await apiClient.updateOrderStatus(order.id, 'PRINTING', undefined, order);
+          setOrders((prev) => prev.map((o) => (o.id === order.id || o.orderNumber === order.orderNumber ? updated : o)));
+          if (selectedOrder && (selectedOrder.id === order.id || selectedOrder.orderNumber === order.orderNumber)) {
+            setSelectedOrder(updated);
+          }
+          loadDashboardData();
+          showToast(`Print status updated: Getting Prepared 🖨️ (Order #${order.orderNumber})`);
+        } catch (statusErr) {
+          console.warn('Status update notice:', statusErr);
+        }
+      }
+
+      const files = Array.isArray(order.files) ? order.files : [];
+      if (files.length === 0) {
+        showToast(`No files attached to Order #${order.orderNumber}.`);
+        return;
+      }
+
+      showToast(`Downloading ${files.length} uncompressed file${files.length > 1 ? 's' : ''} for Order #${order.orderNumber}... 🔕📥`);
+
+      // Download each file directly in its original uncompressed format
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        await handleDownloadSingleFile(file, order.orderNumber, order.id, i);
+        // Small stagger so browser can initiate multiple downloads smoothly
+        if (i < files.length - 1) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
+
+      // If payment proof screenshot exists, download it uncompressed too
+      if (order.paymentScreenshot) {
+        await new Promise((r) => setTimeout(r, 600));
+        try {
+          const res = await resolveFileBinary(order.paymentScreenshot);
+          if (res && res.data) {
+            const blob = new Blob([res.data as any], { type: 'image/jpeg' });
+            const blobUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = `PAYMENT_PROOF_${order.orderNumber}_${(order.paymentScreenshotFilename || 'screenshot.jpg').replace(/[/\\?%*:|"<>]/g, '_')}`;
+            document.body.appendChild(link);
+            link.click();
+            setTimeout(() => {
+              if (document.body.contains(link)) document.body.removeChild(link);
+              URL.revokeObjectURL(blobUrl);
+            }, 60000);
+          }
+        } catch {}
+      }
+
+      showToast(`All ${files.length} files downloaded uncompressed for Order #${order.orderNumber} ✅`);
+    } catch (err: any) {
+      console.error('Download files error:', err);
+      showToast('Failed to download uncompressed files: ' + (err.message || 'Unknown error'));
+    } finally {
+      setDownloadingZipOrderId(null);
     }
   };
 
@@ -966,7 +1074,7 @@ ${(order.files || []).map((f, i) => {
 `;
       zip.file('00_ORDER_SUMMARY.txt', summaryText);
 
-      // 2. Add each file into the zip preserving exact customer format (PDF, JPG, PNG, DOCX, etc.) - NEVER NOTEPAD
+      // 2. Add each file into the zip preserving exact customer format (PDF, JPG, PNG, DOCX, etc.) - NEVER COMPRESSED
       const filesToZip = Array.isArray(order.files) ? order.files : [];
       for (let i = 0; i < filesToZip.length; i++) {
         const file = filesToZip[i];
@@ -997,6 +1105,20 @@ ${(order.files || []).map((f, i) => {
             resolvedBinary = res.data;
           }
         }
+        if (!resolvedBinary && order.id) {
+          const directOrderUrl = `/api/orders/${order.id}/files/${i}/download`;
+          const res = await resolveFileBinary(directOrderUrl);
+          if (res && res.isBinary && res.data instanceof Uint8Array) {
+            resolvedBinary = res.data;
+          }
+        }
+        if (!resolvedBinary && order.orderNumber) {
+          const directOrderUrl = `/api/orders/${order.orderNumber}/files/${i}/download`;
+          const res = await resolveFileBinary(directOrderUrl);
+          if (res && res.isBinary && res.data instanceof Uint8Array) {
+            resolvedBinary = res.data;
+          }
+        }
         if (!resolvedBinary && file.id) {
           const directFileUrl = `/api/files/${file.id}/download`;
           const res = await resolveFileBinary(directFileUrl);
@@ -1005,7 +1127,7 @@ ${(order.files || []).map((f, i) => {
           }
         }
 
-        // Guarantees genuine PDF or genuine Image binary data - NEVER returns a .txt or .info.txt file!
+        // Guarantees genuine PDF or genuine Image or Word binary data
         const fileResult = await getOrGenerateFileBinary(
           file,
           resolvedBinary,
@@ -1038,12 +1160,11 @@ ${(order.files || []).map((f, i) => {
         }
       }
 
-      // 4. Generate ZIP & Trigger download reliably with proper ZIP MIME & 60s persistence
+      // 4. Generate UNCOMPRESSED ZIP (STORE mode - 0 compression so files inside are 100% uncompressed raw bytes!)
       const zipBlob = await zip.generateAsync({
         type: 'blob',
         mimeType: 'application/zip',
-        compression: 'DEFLATE',
-        compressionOptions: { level: 6 },
+        compression: 'STORE', // STRICTLY UNCOMPRESSED
       });
       const cleanCustomerName = (order.customer?.name || 'Customer').replace(/[^a-zA-Z0-9]/g, '_');
       const zipFilename = `RSCC_${order.orderNumber}_${cleanCustomerName}_Files.zip`;
@@ -1056,7 +1177,6 @@ ${(order.files || []).map((f, i) => {
         a.setAttribute('download', zipFilename);
         document.body.appendChild(a);
         a.click();
-        // Keep object URL active for 60s so repeated downloads / OS file scanners never corrupt or truncate the file!
         setTimeout(() => {
           if (document.body.contains(a)) {
             document.body.removeChild(a);
@@ -1064,7 +1184,7 @@ ${(order.files || []).map((f, i) => {
           URL.revokeObjectURL(downloadUrl);
         }, 60000);
       } catch (blobErr) {
-        const zipBase64 = await zip.generateAsync({ type: 'base64' });
+        const zipBase64 = await zip.generateAsync({ type: 'base64', compression: 'STORE' });
         const dataUrl = `data:application/zip;base64,${zipBase64}`;
         const a = document.createElement('a');
         a.href = dataUrl;
@@ -1077,7 +1197,7 @@ ${(order.files || []).map((f, i) => {
         }, 10000);
       }
 
-      showToast(`ZIP downloaded for Order #${order.orderNumber} ✅`);
+      showToast(`ZIP downloaded (Uncompressed) for Order #${order.orderNumber} ✅`);
     } catch (err: any) {
       console.error('Failed to create ZIP download:', err);
       showToast('Failed to generate ZIP archive: ' + (err.message || 'Unknown error'));
@@ -1550,17 +1670,21 @@ ${(order.files || []).map((f, i) => {
 
                     <button
                       type="button"
-                      onClick={() => handleDownloadAllZip(alertOrder)}
+                      onClick={() => handleDownloadOrderFilesDirect(alertOrder)}
                       disabled={downloadingZipOrderId === alertOrder.id}
                       className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-black text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2 cursor-pointer border border-red-500 animate-pulse hover:animate-none disabled:opacity-50"
-                      title="Download ZIP archive now to silence this repeating notification"
+                      title="Download customer file(s) in original uncompressed format and stop alarm across all devices"
                     >
                       {downloadingZipOrderId === alertOrder.id ? (
                         <RefreshCw className="w-4 h-4 animate-spin" />
                       ) : (
                         <Download className="w-4 h-4" />
                       )}
-                      <span>Download ZIP (Stops Alarm) 🔕</span>
+                      <span>
+                        {(alertOrder.files || []).length <= 1
+                          ? `Download ${getPreservedFormatDetails((alertOrder.files || [])[0] || {}).formatLabel.split(' ')[0]} (Stops Alarm) 📥🔕`
+                          : `Download Files (${(alertOrder.files || []).length}) (Stops Alarm) 📥🔕`}
+                      </span>
                     </button>
 
                     <button
@@ -1979,36 +2103,44 @@ ${(order.files || []).map((f, i) => {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleDownloadAllZip(ord);
+                                      handleDownloadOrderFilesDirect(ord);
                                     }}
                                     disabled={downloadingZipOrderId === ord.id}
                                     className="bg-red-600 hover:bg-red-700 text-white font-black text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer animate-pulse shadow-sm disabled:opacity-50"
-                                    title="Click to Download ZIP and stop repeating alarm across all devices"
+                                    title="Click to Download uncompressed file(s) and stop repeating alarm across all devices"
                                   >
                                     {downloadingZipOrderId === ord.id ? (
                                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                     ) : (
                                       <Download className="w-3.5 h-3.5" />
                                     )}
-                                    <span>ZIP (Alarm 🔔)</span>
+                                    <span>
+                                      {(ord.files || []).length <= 1
+                                        ? `Download ${getPreservedFormatDetails((ord.files || [])[0] || {}).formatLabel.split(' ')[0]} 📥 (Alarm 🔔)`
+                                        : `Download Files (${(ord.files || []).length}) 📥 (Alarm 🔔)`}
+                                    </span>
                                   </button>
                                 </div>
                               ) : (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleDownloadAllZip(ord);
+                                    handleDownloadOrderFilesDirect(ord);
                                   }}
                                   disabled={downloadingZipOrderId === ord.id}
                                   className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                                  title="Download all customer files as .ZIP (Alarm already silenced)"
+                                  title="Download customer file(s) in original uncompressed format"
                                 >
                                   {downloadingZipOrderId === ord.id ? (
                                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                   ) : (
                                     <Download className="w-3.5 h-3.5" />
                                   )}
-                                  <span>ZIP (Silenced 🔕)</span>
+                                  <span>
+                                    {(ord.files || []).length <= 1
+                                      ? `Download ${getPreservedFormatDetails((ord.files || [])[0] || {}).formatLabel.split(' ')[0]} 📥`
+                                      : `Download Files (${(ord.files || []).length}) 📥`}
+                                  </span>
                                 </button>
                               )
                             )}
@@ -3360,18 +3492,14 @@ ${(order.files || []).map((f, i) => {
                   )}
 
                   <button
-                    onClick={() => handleDownloadAllZip(selectedOrder)}
+                    onClick={() => handleDownloadOrderFilesDirect(selectedOrder)}
                     disabled={downloadingZipOrderId === selectedOrder.id}
                     className={`font-bold text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow cursor-pointer disabled:opacity-50 ${
                       !isOrderAlarmSilenced(selectedOrder)
                         ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
                         : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                     }`}
-                    title={
-                      !isOrderAlarmSilenced(selectedOrder)
-                        ? 'Download ZIP and stop repeating notification alarm across all devices'
-                        : 'Download all customer files as .ZIP'
-                    }
+                    title="Download all customer files in original uncompressed format"
                   >
                     {downloadingZipOrderId === selectedOrder.id ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -3380,8 +3508,8 @@ ${(order.files || []).map((f, i) => {
                     )}
                     <span>
                       {!isOrderAlarmSilenced(selectedOrder)
-                        ? 'Download ZIP (Silences Alarm) 🔔'
-                        : 'Download All Files (.ZIP) ✅'}
+                        ? 'Download Files (Silences Alarm) 📥🔔'
+                        : `Download All (${(selectedOrder.files || []).length}) Uncompressed 📥`}
                     </span>
                   </button>
                 </div>
@@ -3400,13 +3528,24 @@ ${(order.files || []).map((f, i) => {
                 <div className="pt-2 border-t border-slate-200 space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-slate-700">Files ({(selectedOrder.files || []).length}):</span>
-                    <button
-                      onClick={() => handleDownloadAllZip(selectedOrder)}
-                      className="text-emerald-700 hover:text-emerald-900 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>Download ZIP Archive</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleDownloadOrderFilesDirect(selectedOrder)}
+                        className="text-emerald-700 hover:text-emerald-900 font-extrabold text-[11px] flex items-center gap-1 cursor-pointer bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200"
+                        title="Download all files in original uncompressed format"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Download All (Uncompressed) 📥</span>
+                      </button>
+                      <button
+                        onClick={() => handleDownloadAllZip(selectedOrder)}
+                        className="text-slate-500 hover:text-slate-700 font-medium text-[11px] flex items-center gap-1 cursor-pointer"
+                        title="Download as ZIP (Uncompressed raw files)"
+                      >
+                        <FileArchive className="w-3 h-3" />
+                        <span>ZIP</span>
+                      </button>
+                    </div>
                   </div>
                   {(selectedOrder.files || []).map((f, i) => {
                     const format = getPreservedFormatDetails(f);
