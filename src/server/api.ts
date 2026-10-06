@@ -5,7 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import dotenv from 'dotenv';
-import { generateFallbackPdfBytes, generateFallbackImageBytes, generateFallbackDocxBytes } from '../utils/fileFormatHelper';
+import { generateFallbackPdfBytes, generateFallbackImageBytes, generateFallbackDocxBytes, generateFallbackPptxBytes } from '../utils/fileFormatHelper';
 
 // Load environment variables from .env
 dotenv.config();
@@ -217,6 +217,29 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'rscc_settings.json');
 const CUSTOMERS_FILE = path.join(DATA_DIR, 'rscc_customers.json');
 const UPLOAD_FILES_DIR = path.join(DATA_DIR, 'files');
 
+export function doesBufferMatchExtension(buf: Buffer, ext?: string): boolean {
+  if (!buf || buf.length < 4) return false;
+  if (!ext) return true;
+  const lowerExt = ext.toLowerCase().trim();
+  if (lowerExt === '.pdf') {
+    return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46; // %PDF
+  }
+  if (lowerExt === '.jpg' || lowerExt === '.jpeg') {
+    return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff; // JPEG SOI
+  }
+  if (lowerExt === '.png') {
+    return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47; // PNG
+  }
+  if (lowerExt === '.webp') {
+    return buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46; // RIFF
+  }
+  if (lowerExt === '.docx' || lowerExt === '.doc' || lowerExt === '.pptx' || lowerExt === '.xlsx') {
+    return (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04) || // PK zip
+           (buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11 && buf[3] === 0xe0); // OLE Compound
+  }
+  return true;
+}
+
 export function saveFileBinaryToDisk(
   orderIdOrFileId: string,
   indexOrName: number | string,
@@ -227,7 +250,21 @@ export function saveFileBinaryToDisk(
     if (!fs.existsSync(UPLOAD_FILES_DIR)) {
       fs.mkdirSync(UPLOAD_FILES_DIR, { recursive: true });
     }
-    const cleanName = (filename || 'file').replace(/[/\\?%*:|"<>]/g, '_');
+    let cleanName = (filename || 'file').replace(/[/\\?%*:|"<>]/g, '_');
+    // Ensure filename always has a valid matching extension based on buffer magic bytes
+    if (!path.extname(cleanName)) {
+      if (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+        cleanName += '.pdf';
+      } else if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+        cleanName += '.jpg';
+      } else if (buffer.length >= 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+        cleanName += '.png';
+      } else if (buffer.length >= 4 && buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+        cleanName += '.webp';
+      } else if (buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) {
+        cleanName += '.docx';
+      }
+    }
     const targetFilename = `${orderIdOrFileId}_${indexOrName}_${cleanName}`;
     const targetPath = path.join(UPLOAD_FILES_DIR, targetFilename);
     fs.writeFileSync(targetPath, buffer);
@@ -265,67 +302,92 @@ export function findFileBinaryOnDisk(
       }
     }
 
-    // 1. Match by exact orderId + fileIndex prefix
+    // Helper: Verify that disk file has a matching or compatible extension
+    // CRITICAL: NEVER return a DOCX binary for a PDF request, or a PDF binary for a Word request!
+    const expectedExt = resolvedFilename ? path.extname(resolvedFilename).toLowerCase() : '';
+    const isExtensionCompatible = (diskFileName: string): boolean => {
+      if (!expectedExt) return true;
+      const diskExt = path.extname(diskFileName).toLowerCase();
+      if (!diskExt) return false;
+      if (expectedExt === '.pdf') return diskExt === '.pdf';
+      if (expectedExt === '.jpg' || expectedExt === '.jpeg') return diskExt === '.jpg' || diskExt === '.jpeg';
+      if (expectedExt === '.png') return diskExt === '.png';
+      if (expectedExt === '.webp') return diskExt === '.webp';
+      if (expectedExt === '.docx' || expectedExt === '.doc') return diskExt === '.docx' || diskExt === '.doc';
+      if (expectedExt === '.pptx' || expectedExt === '.ppt') return diskExt === '.pptx' || diskExt === '.ppt';
+      if (expectedExt === '.txt') return diskExt === '.txt';
+      return diskExt === expectedExt;
+    };
+
+    const tryRead = (filenameOnDisk: string): { path: string; buffer: Buffer; size: number } | null => {
+      try {
+        const p = path.join(UPLOAD_FILES_DIR, filenameOnDisk);
+        const buf = fs.readFileSync(p);
+        if (buf && buf.length > 0) {
+          if (expectedExt && !doesBufferMatchExtension(buf, expectedExt)) {
+            return null; // Mismatched magic bytes! Do NOT serve damaged file!
+          }
+          return { path: p, buffer: buf, size: buf.length };
+        }
+      } catch {}
+      return null;
+    };
+
+    // 1. Match by exact orderId + fileIndex prefix: e.g. "ord-xxx_1_"
     if (orderId) {
       const prefix = `${orderId}_${fileIndex}_`;
       for (const f of diskFiles) {
-        if (f.startsWith(prefix)) {
-          const p = path.join(UPLOAD_FILES_DIR, f);
-          const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        if (f.startsWith(prefix) && isExtensionCompatible(f)) {
+          const res = tryRead(f);
+          if (res) return res;
         }
       }
     }
 
-    // 2. Match by exact orderNumber + fileIndex prefix
+    // 2. Match by exact orderNumber + fileIndex prefix: e.g. "RSCC-xxx_1_"
     if (orderNum) {
       const prefix = `${orderNum}_${fileIndex}_`;
       for (const f of diskFiles) {
-        if (f.startsWith(prefix)) {
-          const p = path.join(UPLOAD_FILES_DIR, f);
-          const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        if (f.startsWith(prefix) && isExtensionCompatible(f)) {
+          const res = tryRead(f);
+          if (res) return res;
         }
       }
     }
 
-    // 3. Match by fileId (prefix or includes)
+    // 3. Match by fileId specific to this file: e.g. "f-123_1_" or "f-123_orig_" or "f-123_0_"
     if (resolvedFileId) {
-      for (const f of diskFiles) {
-        if (f.startsWith(`${resolvedFileId}_`) || f.includes(resolvedFileId)) {
-          const p = path.join(UPLOAD_FILES_DIR, f);
-          const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+      const idPrefixes = [
+        `${resolvedFileId}_${fileIndex}_`,
+        `${resolvedFileId}_orig_`,
+        `${resolvedFileId}_0_`,
+      ];
+      for (const prefix of idPrefixes) {
+        for (const f of diskFiles) {
+          if (f.startsWith(prefix) && isExtensionCompatible(f)) {
+            const res = tryRead(f);
+            if (res) return res;
+          }
         }
       }
     }
 
-    // 4. Match by exact sanitized filename
-    if (resolvedFilename) {
-      const cleanName = resolvedFilename.replace(/[/\\?%*:|"<>]/g, '_');
-      for (const f of diskFiles) {
-        if (f.endsWith(`_${cleanName}`) || f === cleanName) {
-          const p = path.join(UPLOAD_FILES_DIR, f);
-          const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
-        }
-      }
-    }
-
-    // 5. Match by orderId substring and index
+    // 4. Match by orderId prefix with exact index: e.g. startsWith(orderId) and contains "_1_"
     if (orderId) {
       for (const f of diskFiles) {
-        if (f.includes(orderId) && f.includes(`_${fileIndex}_`)) {
-          const p = path.join(UPLOAD_FILES_DIR, f);
-          const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        if (f.startsWith(`${orderId}_`) && f.includes(`_${fileIndex}_`) && isExtensionCompatible(f)) {
+          const res = tryRead(f);
+          if (res) return res;
         }
       }
+    }
+
+    // 5. Match by orderNumber prefix with exact index
+    if (orderNum) {
       for (const f of diskFiles) {
-        if (f.includes(orderId)) {
-          const p = path.join(UPLOAD_FILES_DIR, f);
-          const buf = fs.readFileSync(p);
-          if (buf && buf.length > 0) return { path: p, buffer: buf, size: buf.length };
+        if (f.startsWith(`${orderNum}_`) && f.includes(`_${fileIndex}_`) && isExtensionCompatible(f)) {
+          const res = tryRead(f);
+          if (res) return res;
         }
       }
     }
@@ -1753,7 +1815,9 @@ Return your judgment strictly in JSON format:
 
       // 3. If still not on disk, generate genuine authoritative PDF, Image, Word DOCX or Text on the fly
       // CRITICAL: NEVER return 404 JSON that Windows or browser can convert to a Notepad text file!
+      let isFallbackGenerated = false;
       if (!buffer || buffer.length === 0) {
+        isFallbackGenerated = true;
         const lowerName = filename.toLowerCase();
         const isImage =
           mimeType.startsWith('image/') ||
@@ -1770,6 +1834,10 @@ Return your judgment strictly in JSON format:
           const docxBytes = await generateFallbackDocxBytes(filename, order?.orderNumber, order?.customer?.name);
           buffer = Buffer.from(docxBytes);
           mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        } else if (lowerName.endsWith('.pptx') || lowerName.endsWith('.ppt')) {
+          const pptxBytes = await generateFallbackPptxBytes(filename, order?.orderNumber, order?.customer?.name);
+          buffer = Buffer.from(pptxBytes);
+          mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
         } else if (lowerName.endsWith('.txt')) {
           const textContent = `RIDDHI SIDDHI CHOICE CENTRE (RSCC)\nOrder: #${order?.orderNumber || 'N/A'}\nCustomer: ${order?.customer?.name || 'Customer'}\nFile: ${filename}\n`;
           buffer = Buffer.from(textContent, 'utf-8');
@@ -1888,6 +1956,8 @@ Return your judgment strictly in JSON format:
           'Content-Type': mimeType,
           'Content-Length': buffer.length,
           'Access-Control-Allow-Origin': '*',
+          'Access-Control-Expose-Headers': 'Content-Disposition, Content-Type, X-Is-Fallback',
+          'X-Is-Fallback': isFallbackGenerated ? 'true' : 'false',
           'Content-Disposition': isDownload
             ? `attachment; filename="${cleanFilename.replace(/"/g, '')}"; filename*=UTF-8''${safeFilename}`
             : `inline; filename="${cleanFilename.replace(/"/g, '')}"`,

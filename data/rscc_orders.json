@@ -162,5 +162,50 @@
     "verifiedAt": "2026-08-22T18:57:23.663Z",
     "alarmSilenced": true,
     "alarmSilencedAt": "2026-10-03T04:32:09.687Z"
+  },
+  {
+    "id": "ord-debug-format-test",
+    "orderNumber": "RSCC-20261006-9991",
+    "deliveryPin": "1234",
+    "customer": {
+      "name": "Format Test User",
+      "mobile": "9876543210"
+    },
+    "mode": "DOCUMENT",
+    "paperSize": "A4",
+    "files": [
+      {
+        "id": "f-docx",
+        "name": "assignment.docx",
+        "size": 5000,
+        "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      },
+      {
+        "id": "f-jpg",
+        "name": "photo.jpg",
+        "size": 5000,
+        "type": "image/jpeg"
+      },
+      {
+        "id": "f-png",
+        "name": "graphic.png",
+        "size": 5000,
+        "type": "image/png"
+      },
+      {
+        "id": "f-pdf",
+        "name": "document.pdf",
+        "size": 5000,
+        "type": "application/pdf"
+      }
+    ],
+    "totalPages": 4,
+    "copies": 1,
+    "printType": "BW",
+    "printingSide": "SINGLE",
+    "ratePerPage": 5,
+    "totalAmount": 20,
+    "paymentStatus": "PAYMENT_VERIFIED",
+    "orderStatus": "CONFIRMED"
   }
 ]

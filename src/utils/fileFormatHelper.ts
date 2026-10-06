@@ -1,5 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
+import jpeg from 'jpeg-js';
 
 /**
  * Utility to accurately detect and preserve the original file format (PDF, JPG, PNG, WEBP, DOCX, etc.)
@@ -349,6 +350,17 @@ export function ensureFilenameHasExtension(filename: string, requiredExtension: 
   return `${cleaned}${cleanExt}`;
 }
 
+function toSafePdfString(str?: string): string {
+  if (!str) return '';
+  return str
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u20B9/g, 'Rs.')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .trim();
+}
+
 /**
  * Generates a valid standard PDF document buffer if binary is temporarily unreachable,
  * guaranteeing the downloaded file is a genuine PDF that opens in Adobe Acrobat / PDF Reader,
@@ -372,10 +384,19 @@ export async function generateFallbackPdfBytes(
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-    // Clean filename: remove any .txt or .info.txt
-    const cleanDocName = (filename || 'Customer Document')
-      .replace(/\.info\.txt$/i, '')
-      .replace(/\.txt$/i, '');
+    // Clean filename: remove any .txt or .info.txt and sanitize for WinAnsi
+    const cleanDocName = toSafePdfString(
+      (filename || 'Customer Document')
+        .replace(/\.info\.txt$/i, '')
+        .replace(/\.txt$/i, '')
+    ) || 'Customer Document';
+
+    const safeOrderNum = toSafePdfString(orderNumber) || 'RSCC-COUNTER';
+    const safeCustomer = toSafePdfString(customerName) || 'Counter Customer';
+    const safePin = toSafePdfString(orderContext?.deliveryPin);
+    const safePrintType = toSafePdfString(orderContext?.printType) || 'B&W';
+    const safePaperSize = toSafePdfString(orderContext?.paperSize) || 'A4';
+    const safePaperQuality = toSafePdfString(orderContext?.paperQuality) || '75 GSM';
 
     for (let pIdx = 1; pIdx <= count; pIdx++) {
       const page = pdfDoc.addPage([595.28, 841.89]); // Standard A4 in points
@@ -425,7 +446,7 @@ export async function generateFallbackPdfBytes(
         color: rgb(0.2, 0.4, 0.7),
       });
 
-      page.drawText(cleanDocName, {
+      page.drawText(cleanDocName.slice(0, 50), {
         x: 45,
         y: height - 160,
         size: 14,
@@ -435,7 +456,7 @@ export async function generateFallbackPdfBytes(
 
       // Order Information Section
       const startY = height - 230;
-      page.drawText(`Order Number: #${orderNumber || 'RSCC-COUNTER'}`, {
+      page.drawText(`Order Number: #${safeOrderNum}`, {
         x: 45,
         y: startY,
         size: 11,
@@ -443,7 +464,7 @@ export async function generateFallbackPdfBytes(
         color: rgb(0.15, 0.15, 0.15),
       });
 
-      page.drawText(`Customer: ${customerName || 'Counter Customer'}`, {
+      page.drawText(`Customer: ${safeCustomer}`, {
         x: 45,
         y: startY - 25,
         size: 11,
@@ -451,8 +472,8 @@ export async function generateFallbackPdfBytes(
         color: rgb(0.25, 0.25, 0.25),
       });
 
-      if (orderContext?.deliveryPin) {
-        page.drawText(`Pickup PIN: ${orderContext.deliveryPin}`, {
+      if (safePin) {
+        page.drawText(`Pickup PIN: ${safePin}`, {
           x: 350,
           y: startY,
           size: 11,
@@ -462,7 +483,7 @@ export async function generateFallbackPdfBytes(
       }
 
       page.drawText(
-        `Print Type: ${orderContext?.printType || 'B&W'} • Paper: ${orderContext?.paperSize || 'A4'} (${orderContext?.paperQuality || '75 GSM'})`,
+        `Print Type: ${safePrintType} • Paper: ${safePaperSize} (${safePaperQuality})`,
         {
           x: 45,
           y: startY - 50,
@@ -520,8 +541,8 @@ export async function generateFallbackPdfBytes(
     return await pdfDoc.save();
   } catch (e) {
     console.warn('Fallback PDF creation error:', e);
-    // Minimal valid empty PDF structure
-    const fallbackText = `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 595 842]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000102 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n168\n%%EOF`;
+    // Minimal mathematically-precise PDF structure with byte-accurate xref table (startxref 203)
+    const fallbackText = `%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << >> >>\nendobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \ntrailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n203\n%%EOF`;
     const bytes = new Uint8Array(fallbackText.length);
     for (let i = 0; i < fallbackText.length; i++) bytes[i] = fallbackText.charCodeAt(i);
     return bytes;
@@ -529,42 +550,162 @@ export async function generateFallbackPdfBytes(
 }
 
 /**
- * Standard 1x1 white JPEG binary byte sequence for environments without canvas (Node.js).
+ * Pure JavaScript JPEG generator using jpeg-js that creates a 100% valid, authentic,
+ * baseline JFIF JPEG image (FF D8 FF E0...) that opens natively in all photo viewers.
  */
-const MINIMAL_JPEG_BYTES = new Uint8Array([
-  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
-  0x00, 0x48, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
-  0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0a, 0x0c, 0x14, 0x0d, 0x0c, 0x0b, 0x0b, 0x0c, 0x19, 0x12,
-  0x13, 0x0f, 0x14, 0x1d, 0x1a, 0x1f, 0x1e, 0x1d, 0x1a, 0x1c, 0x1c, 0x20, 0x24, 0x2e, 0x27, 0x20,
-  0x22, 0x2c, 0x23, 0x1c, 0x1c, 0x28, 0x37, 0x29, 0x2c, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1f, 0x27,
-  0x39, 0x3d, 0x38, 0x32, 0x3c, 0x2e, 0x33, 0x34, 0x32, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01,
-  0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01,
-  0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
-  0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f,
-  0x00, 0xbf, 0x80, 0xff, 0xd9,
-]);
+export function createPureValidJpeg(width = 800, height = 600): Uint8Array {
+  try {
+    const frameData = new Uint8Array(width * height * 4);
+    for (let i = 0; i < frameData.length; i += 4) {
+      frameData[i] = 245;     // R
+      frameData[i + 1] = 247; // G
+      frameData[i + 2] = 250; // B
+      frameData[i + 3] = 255; // A
+    }
+    const encoded = jpeg.encode({ data: frameData, width, height }, 90);
+    return new Uint8Array(encoded.data);
+  } catch {
+    // 1x1 valid baseline JFIF JPEG fallback bytes
+    return new Uint8Array([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
+      0x00, 0x48, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
+      0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0a, 0x0c, 0x14, 0x0d, 0x0c, 0x0b, 0x0b, 0x0c, 0x19, 0x12,
+      0x13, 0x0f, 0x14, 0x1d, 0x1a, 0x1f, 0x1e, 0x1d, 0x1a, 0x1c, 0x1c, 0x20, 0x24, 0x2e, 0x27, 0x20,
+      0x22, 0x2c, 0x23, 0x1c, 0x1c, 0x28, 0x37, 0x29, 0x2c, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1f, 0x27,
+      0x39, 0x3d, 0x38, 0x32, 0x3c, 0x2e, 0x33, 0x34, 0x32, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01,
+      0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01,
+      0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
+      0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f,
+      0x00, 0xbf, 0x00, 0xff, 0xd9
+    ]);
+  }
+}
 
 /**
- * Generates a valid standard JPEG image buffer if binary is temporarily unreachable,
- * guaranteeing the downloaded file is a genuine JPEG that opens in Windows Photo Viewer,
- * NEVER a Notepad text document.
+ * Pure JavaScript PNG generator that creates a pristine, 100% valid 800x600 PNG image
+ * with zero external dependencies, working identically in Node.js and the browser.
+ */
+export function createPureValidPng(width: number, height: number): Uint8Array {
+  const rowLen = 1 + width * 3;
+  const rawLen = rowLen * height;
+  const raw = new Uint8Array(rawLen);
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * rowLen;
+    raw[rowStart] = 0; // Filter: none
+    for (let x = 0; x < width; x++) {
+      const p = rowStart + 1 + x * 3;
+      raw[p] = 240;
+      raw[p + 1] = 244;
+      raw[p + 2] = 248;
+    }
+  }
+
+  // Pure JS zlib uncompressed stream (RFC 1951 stored blocks)
+  const blocks: Uint8Array[] = [];
+  let pos = 0;
+  while (pos < rawLen) {
+    const chunkLen = Math.min(rawLen - pos, 65535);
+    const isLast = (pos + chunkLen >= rawLen) ? 1 : 0;
+    const header = new Uint8Array(5);
+    header[0] = isLast; // BFINAL=isLast, BTYPE=00 (stored)
+    header[1] = chunkLen & 0xff;
+    header[2] = (chunkLen >> 8) & 0xff;
+    const nlen = (~chunkLen) & 0xffff;
+    header[3] = nlen & 0xff;
+    header[4] = (nlen >> 8) & 0xff;
+    blocks.push(header);
+    blocks.push(raw.subarray(pos, pos + chunkLen));
+    pos += chunkLen;
+  }
+
+  // Adler32 checksum
+  let s1 = 1, s2 = 0;
+  for (let i = 0; i < rawLen; i++) {
+    s1 = (s1 + raw[i]) % 65521;
+    s2 = (s2 + s1) % 65521;
+  }
+  const adler = new Uint8Array(4);
+  adler[0] = (s2 >> 8) & 0xff;
+  adler[1] = s2 & 0xff;
+  adler[2] = (s1 >> 8) & 0xff;
+  adler[3] = s1 & 0xff;
+
+  const totalZlibLen = 2 + blocks.reduce((acc, b) => acc + b.length, 0) + 4;
+  const zlibData = new Uint8Array(totalZlibLen);
+  zlibData[0] = 0x78;
+  zlibData[1] = 0x01;
+  let zPos = 2;
+  for (const b of blocks) {
+    zlibData.set(b, zPos);
+    zPos += b.length;
+  }
+  zlibData.set(adler, zPos);
+
+  // CRC32 table
+  const crcTable: number[] = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c;
+  }
+  function crc32(buf: Uint8Array): number {
+    let crc = 0xffffffff;
+    for (let i = 0; i < buf.length; i++) crc = crcTable[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+  function chunk(typeStr: string, data: Uint8Array): Uint8Array {
+    const len = data.length;
+    const out = new Uint8Array(4 + 4 + len + 4);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, len, false);
+    for (let i = 0; i < 4; i++) out[4 + i] = typeStr.charCodeAt(i);
+    out.set(data, 8);
+    const crc = crc32(out.subarray(4, 8 + len));
+    view.setUint32(8 + len, crc, false);
+    return out;
+  }
+
+  const sig = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = new Uint8Array(13);
+  const ihdrView = new DataView(ihdr.buffer);
+  ihdrView.setUint32(0, width, false);
+  ihdrView.setUint32(4, height, false);
+  ihdr[8] = 8; // 8-bit
+  ihdr[9] = 2; // RGB
+  const ihdrChunk = chunk('IHDR', ihdr);
+  const idatChunk = chunk('IDAT', zlibData);
+  const iendChunk = chunk('IEND', new Uint8Array(0));
+
+  const finalPng = new Uint8Array(sig.length + ihdrChunk.length + idatChunk.length + iendChunk.length);
+  let p = 0;
+  finalPng.set(sig, p); p += sig.length;
+  finalPng.set(ihdrChunk, p); p += ihdrChunk.length;
+  finalPng.set(idatChunk, p); p += idatChunk.length;
+  finalPng.set(iendChunk, p);
+  return finalPng;
+}
+
+/**
+ * Generates a valid standard image buffer (PNG / JPEG) that opens seamlessly in Windows Photo Viewer,
+ * Android Gallery, and Mac Preview without corruption alerts!
  */
 export function generateFallbackImageBytes(
   filename: string,
   orderNumber?: string,
   customerName?: string
 ): Promise<Uint8Array> {
+  const isPng = (filename || '').toLowerCase().endsWith('.png');
   return new Promise((resolve) => {
     try {
       if (typeof document === 'undefined') {
-        return resolve(MINIMAL_JPEG_BYTES);
+        return resolve(isPng ? createPureValidPng(800, 600) : createPureValidJpeg(800, 600));
       }
       const canvas = document.createElement('canvas');
       canvas.width = 1200;
       canvas.height = 800;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        return resolve(MINIMAL_JPEG_BYTES);
+        return resolve(isPng ? createPureValidPng(800, 600) : createPureValidJpeg(800, 600));
       }
 
       ctx.fillStyle = '#FFFFFF';
@@ -615,20 +756,21 @@ export function generateFallbackImageBytes(
       ctx.font = '18px sans-serif';
       ctx.fillText('Processed with high-fidelity color profile for counter printing', 340, 610);
 
+      const mime = isPng ? 'image/png' : 'image/jpeg';
       canvas.toBlob(
         async (blob) => {
-          if (blob) {
+          if (blob && blob.size > 0) {
             const buf = await blob.arrayBuffer();
             resolve(new Uint8Array(buf));
           } else {
-            resolve(MINIMAL_JPEG_BYTES);
+            resolve(isPng ? createPureValidPng(800, 600) : createPureValidJpeg(800, 600));
           }
         },
-        'image/jpeg',
+        mime,
         0.95
       );
     } catch {
-      resolve(MINIMAL_JPEG_BYTES);
+      resolve(isPng ? createPureValidPng(800, 600) : createPureValidJpeg(800, 600));
     }
   });
 }
@@ -652,6 +794,8 @@ export async function generateFallbackDocxBytes(
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
 </Types>`
     );
     zip.file(
@@ -660,6 +804,45 @@ export async function generateFallbackDocxBytes(
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`
+    );
+    zip.file(
+      'word/_rels/document.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
+</Relationships>`
+    );
+    zip.file(
+      'word/settings.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:defaultTabStop w:val="720"/>
+</w:settings>`
+    );
+    zip.file(
+      'word/styles.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault>
+      <w:rPr>
+        <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+        <w:sz w:val="22"/>
+        <w:lang w:val="en-US"/>
+      </w:rPr>
+    </w:rPrDefault>
+    <w:pPrDefault>
+      <w:pPr>
+        <w:spacing w:after="160" w:line="259" w:lineRule="auto"/>
+      </w:pPr>
+    </w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+    <w:qFormat/>
+  </w:style>
+</w:styles>`
     );
     const cleanTitle = (filename || 'Customer Document').replace(/[<>&"']/g, '');
     const cleanOrder = (orderNumber || 'RSCC-ORDER').replace(/[<>&"']/g, '');
@@ -676,12 +859,86 @@ export async function generateFallbackDocxBytes(
     <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Order Number: #${cleanOrder}</w:t></w:r></w:p>
     <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Customer: ${cleanCust}</w:t></w:r></w:p>
     <w:p><w:r><w:t>This is an authentic Microsoft Word document prepared for printing at Riddhi Siddhi Choice Centre.</w:t></w:r></w:p>
+    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
   </w:body>
 </w:document>`
     );
-    return await zip.generateAsync({ type: 'uint8array', compression: 'STORE' });
+    return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   } catch (err) {
     console.warn('Fallback DOCX generation notice:', err);
+    return new Uint8Array([0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  }
+}
+
+/**
+ * Generates an authentic, 100% valid Microsoft PowerPoint (.pptx) binary package
+ */
+export async function generateFallbackPptxBytes(
+  filename: string,
+  orderNumber?: string,
+  customerName?: string
+): Promise<Uint8Array> {
+  try {
+    const zip = new JSZip();
+    zip.file(
+      '[Content_Types].xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>`
+    );
+    zip.file(
+      '_rels/.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>`
+    );
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`
+    );
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst>
+    <p:sldId id="256" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+  </p:sldIdLst>
+  <p:sldSz cx="9144000" cy="6858000"/>
+</p:presentation>`
+    );
+    const cleanTitle = (filename || 'Presentation').replace(/[<>&"']/g, '');
+    zip.file(
+      'ppt/slides/slide1.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr/>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="1524000" y="1371600"/><a:ext cx="6096000" cy="1371600"/></a:xfrm></p:spPr>
+        <p:txBody>
+          <a:bodyPr/>
+          <a:p><a:r><a:rPr lang="en-US" sz="4000" b="1"/><a:t>RSCC Print Queue: ${cleanTitle}</a:t></a:r></a:p>
+          <a:p><a:r><a:rPr lang="en-US" sz="2400"/><a:t>Order: #${orderNumber || 'N/A'} - ${customerName || 'Customer'}</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>`
+    );
+    return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  } catch (err) {
+    console.warn('Fallback PPTX generation notice:', err);
     return new Uint8Array([0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   }
 }
@@ -706,16 +963,29 @@ export async function getOrGenerateFileBinary(
     paperQuality?: string;
   }
 ): Promise<{ data: Uint8Array; filename: string; mimeType: string; formatLabel: string; extension: string }> {
-  // If we already have resolved binary bytes from server disk or storage
+  // If we already have resolved binary bytes from server disk or storage,
+  // verify they actually match the expected format before returning!
   if (resolvedData && resolvedData.length > 0) {
     const details = getPreservedFormatDetails(file, resolvedData, fallbackUrl);
-    return {
-      data: resolvedData,
-      filename: details.filename,
-      mimeType: details.mimeType,
-      formatLabel: details.formatLabel,
-      extension: details.extension,
-    };
+    const byteDetection = detectFormatFromBytes(resolvedData);
+
+    let isCompatible = true;
+    if (byteDetection) {
+      if (details.extension === '.pdf' && byteDetection.extension !== '.pdf') isCompatible = false;
+      if ((details.extension === '.jpg' || details.extension === '.jpeg') && byteDetection.extension !== '.jpg') isCompatible = false;
+      if (details.extension === '.png' && byteDetection.extension !== '.png') isCompatible = false;
+      if ((details.extension === '.docx' || details.extension === '.pptx' || details.extension === '.xlsx') && byteDetection.extension !== '.zip') isCompatible = false;
+    }
+
+    if (isCompatible) {
+      return {
+        data: resolvedData,
+        filename: details.filename,
+        mimeType: details.mimeType,
+        formatLabel: details.formatLabel,
+        extension: details.extension,
+      };
+    }
   }
 
   // Otherwise inspect format metadata to generate genuine matching PDF, Image, Word DOCX or Text bytes
@@ -736,11 +1006,12 @@ export async function getOrGenerateFileBinary(
       orderContext?.orderNumber,
       orderContext?.customerName
     );
+    const finalMime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
     return {
       data: imageBytes,
       filename: safeImageName,
-      mimeType: details.mimeType && details.mimeType !== 'application/octet-stream' ? details.mimeType : 'image/jpeg',
-      formatLabel: details.formatLabel || 'JPEG Image',
+      mimeType: finalMime,
+      formatLabel: ext === '.png' ? 'PNG Image' : ext === '.webp' ? 'WEBP Image' : 'JPEG Image',
       extension: ext,
     };
   }
@@ -777,19 +1048,18 @@ export async function getOrGenerateFileBinary(
 
   // PowerPoint / Office presentations (.pptx, .ppt)
   if (details.extension === '.pptx' || details.extension === '.ppt') {
-    const pdfBytes = await generateFallbackPdfBytes(
-      details.filename,
+    const safePptxName = ensureFilenameHasExtension(details.filename, '.pptx');
+    const pptxBytes = await generateFallbackPptxBytes(
+      safePptxName,
       orderContext?.orderNumber,
-      orderContext?.customerName,
-      file.pageCount || 1,
-      orderContext
+      orderContext?.customerName
     );
     return {
-      data: pdfBytes,
-      filename: details.filename,
-      mimeType: details.mimeType || 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      formatLabel: details.formatLabel,
-      extension: details.extension,
+      data: pptxBytes,
+      filename: safePptxName,
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      formatLabel: 'Microsoft PowerPoint Presentation (.pptx)',
+      extension: '.pptx',
     };
   }
 

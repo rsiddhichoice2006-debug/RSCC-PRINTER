@@ -373,6 +373,20 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
       try {
         const processed = await processUploadedFile(item.file);
+        if (processed.previewUrl) {
+          saveFileToStorage(item.id, processed.previewUrl, { name: item.name, type: item.type }).catch(() => {});
+          fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: item.name,
+              fileType: item.type,
+              dataUrl: processed.previewUrl,
+              fileId: item.id,
+              fileIndex: i,
+            }),
+          }).catch(() => {});
+        }
         setUploadedFiles((prev) =>
           prev.map((f) =>
             f.id === item.id
@@ -500,7 +514,7 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
       // for a PDF, extract ONLY those selected pages into a new PDF!
       // Password-protected PDFs are NEVER altered to prevent file corruption.
       const finalizedFiles = await Promise.all(
-        validFiles.map(async (f) => {
+        validFiles.map(async (f, fileIdx) => {
           const currentMode = f.pageSelectionMode || 'ALL';
           const isLocked = Boolean(f.isPasswordProtected);
           const isPdf =
