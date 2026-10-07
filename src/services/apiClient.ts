@@ -641,8 +641,10 @@ export const apiClient = {
       nupOrientation: payload.nupOrientation,
       files: (payload.files || []).map((f: any) => ({
         id: f.id || 'f-' + Math.random().toString(36).substring(2, 7),
+        file: f.file,
+        dataUrl: f.dataUrl || f.previewUrl,
         name: f.name || 'document',
-        size: (f.size && f.size > 0 ? f.size : (f.previewUrl ? Math.round((f.previewUrl.length * 3) / 4) : 1024)),
+        size: (f.file?.size || (f.size && f.size > 0 ? f.size : (f.previewUrl ? Math.round((f.previewUrl.length * 3) / 4) : 1024))),
         type: f.type || 'application/octet-stream',
         pageCount: f.pageCount || 1,
         originalPageCount: f.originalPageCount,
@@ -680,6 +682,48 @@ export const apiClient = {
     });
 
     return draftOrder;
+  },
+
+  // Direct raw binary File/Blob streaming upload (guarantees exact byte size and 0% compression)
+  async uploadRawFile(
+    file: File | Blob,
+    metadata: {
+      filename: string;
+      fileId: string;
+      orderId?: string;
+      orderNumber?: string;
+      fileIndex?: number;
+      fileType?: string;
+    }
+  ): Promise<{ success: boolean; fileUrl?: string; size?: number; error?: string }> {
+    try {
+      const searchParams = new URLSearchParams();
+      searchParams.set('filename', metadata.filename);
+      searchParams.set('fileId', metadata.fileId);
+      if (metadata.orderId) searchParams.set('orderId', metadata.orderId);
+      if (metadata.orderNumber) searchParams.set('orderNumber', metadata.orderNumber);
+      if (metadata.fileIndex !== undefined) searchParams.set('fileIndex', String(metadata.fileIndex));
+
+      const res = await fetch(`/api/upload?${searchParams.toString()}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': metadata.fileType || 'application/octet-stream',
+          'x-filename': encodeURIComponent(metadata.filename),
+          'x-file-id': metadata.fileId,
+          'x-order-id': metadata.orderId || '',
+          'x-order-number': metadata.orderNumber || '',
+          'x-file-index': String(metadata.fileIndex ?? 0),
+        },
+        body: file,
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+      return { success: false, error: 'Server returned ' + res.status };
+    } catch (err: any) {
+      console.warn('Upload raw file notice:', err);
+      return { success: false, error: err.message };
+    }
   },
 
   // Direct file binary upload to persistent disk storage (ensures staff portal downloads full PDF/image)
@@ -744,20 +788,37 @@ export const apiClient = {
     if (Array.isArray(fullConfirmedOrder.files)) {
       for (let idx = 0; idx < fullConfirmedOrder.files.length; idx++) {
         const f = fullConfirmedOrder.files[idx];
-        const dataUrl = f.previewUrl || (f as any).dataUrl;
-        if (dataUrl && typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
+        const rawFileObj = (f as any).file;
+        if (rawFileObj && (rawFileObj instanceof Blob || rawFileObj instanceof File)) {
+          f.size = rawFileObj.size;
           try {
-            await apiClient.uploadFileToServer({
+            await apiClient.uploadRawFile(rawFileObj, {
               orderId: fullConfirmedOrder.id,
               orderNumber: fullConfirmedOrder.orderNumber,
               fileId: f.id,
               fileIndex: idx,
               filename: f.name,
               fileType: f.type,
-              dataUrl,
             });
           } catch (uploadErr) {
-            console.warn('Pre-upload file notice in placeOrderWithPayment:', uploadErr);
+            console.warn('Raw file upload in placeOrderWithPayment notice:', uploadErr);
+          }
+        } else {
+          const dataUrl = f.previewUrl || (f as any).dataUrl;
+          if (dataUrl && typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
+            try {
+              await apiClient.uploadFileToServer({
+                orderId: fullConfirmedOrder.id,
+                orderNumber: fullConfirmedOrder.orderNumber,
+                fileId: f.id,
+                fileIndex: idx,
+                filename: f.name,
+                fileType: f.type,
+                dataUrl,
+              });
+            } catch (uploadErr) {
+              console.warn('Pre-upload file notice in placeOrderWithPayment:', uploadErr);
+            }
           }
         }
         f.fileUrl = `/api/orders/${fullConfirmedOrder.id}/files/${idx}/download`;

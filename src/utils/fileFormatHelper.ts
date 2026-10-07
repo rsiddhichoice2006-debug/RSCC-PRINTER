@@ -65,6 +65,11 @@ export function detectFormatFromBytes(bytes: Uint8Array): { mimeType: string; ex
     return { mimeType: 'application/zip', extension: '.zip', label: 'ZIP Archive' };
   }
 
+  // OLE Compound Document (legacy .doc, .xls, .ppt): 0xD0 0xCF 0x11 0xE0
+  if (bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
+    return { mimeType: 'application/msword', extension: '.doc', label: 'Word Document (.doc)' };
+  }
+
   return null;
 }
 
@@ -964,28 +969,18 @@ export async function getOrGenerateFileBinary(
   }
 ): Promise<{ data: Uint8Array; filename: string; mimeType: string; formatLabel: string; extension: string }> {
   // If we already have resolved binary bytes from server disk or storage,
-  // verify they actually match the expected format before returning!
+  // CRITICAL: NEVER discard user's uploaded bytes! Return exact uncompressed data as uploaded!
   if (resolvedData && resolvedData.length > 0) {
     const details = getPreservedFormatDetails(file, resolvedData, fallbackUrl);
     const byteDetection = detectFormatFromBytes(resolvedData);
 
-    let isCompatible = true;
-    if (byteDetection) {
-      if (details.extension === '.pdf' && byteDetection.extension !== '.pdf') isCompatible = false;
-      if ((details.extension === '.jpg' || details.extension === '.jpeg') && byteDetection.extension !== '.jpg') isCompatible = false;
-      if (details.extension === '.png' && byteDetection.extension !== '.png') isCompatible = false;
-      if ((details.extension === '.docx' || details.extension === '.pptx' || details.extension === '.xlsx') && byteDetection.extension !== '.zip') isCompatible = false;
-    }
-
-    if (isCompatible) {
-      return {
-        data: resolvedData,
-        filename: details.filename,
-        mimeType: details.mimeType,
-        formatLabel: details.formatLabel,
-        extension: details.extension,
-      };
-    }
+    return {
+      data: resolvedData,
+      filename: details.filename,
+      mimeType: byteDetection?.mimeType || details.mimeType,
+      formatLabel: byteDetection?.label || details.formatLabel,
+      extension: details.extension || byteDetection?.extension || '',
+    };
   }
 
   // Otherwise inspect format metadata to generate genuine matching PDF, Image, Word DOCX or Text bytes

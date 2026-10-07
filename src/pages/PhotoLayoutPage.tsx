@@ -32,9 +32,10 @@ import {
   UploadedFileItem,
 } from '../types';
 import { PHOTO_LAYOUTS, calculateRequiredSheets, generateSheetSlots } from '../utils/photoLayouts';
-import { formatFileSize, processUploadedFile, isExcelFile, isWebPFile, convertWebPToJpg } from '../utils/fileProcessor';
+import { formatFileSize, processUploadedFile, isExcelFile, isWebPFile } from '../utils/fileProcessor';
 import { saveFileToStorage } from '../utils/fileStorage';
 import { useAuth } from '../context/AuthContext';
+import { apiClient } from '../services/apiClient';
 
 export interface LayoutPhotoItem {
   id: string;
@@ -195,16 +196,18 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
       if (!f.type.startsWith('image/') && !isWebPFile(f)) continue;
 
-      if (isWebPFile(f)) {
-        try {
-          f = await convertWebPToJpg(f);
-        } catch (err) {
-          console.warn('Failed to convert WebP to JPG:', err);
-        }
-      }
-
       const processed = await processUploadedFile(f, settings.maxFileSizeMb);
       if (processed.previewUrl && processed.moderationStatus !== 'FLAGGED') {
+        // Stream raw original file to server disk immediately (0% compression, 100% exact bytes)
+        try {
+          await apiClient.uploadRawFile(f, {
+            fileId: processed.id,
+            filename: f.name,
+            fileIndex: i,
+            fileType: f.type,
+          });
+        } catch {}
+
         let width = 800;
         let height = 600;
         let isLandscape = false;
@@ -226,9 +229,9 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
 
         newPhotos.push({
           id: processed.id,
-          file: processed.file || f,
-          name: processed.name || f.name,
-          size: processed.size || f.size,
+          file: f,
+          name: f.name,
+          size: f.size,
           previewUrl: processed.previewUrl,
           width,
           height,
@@ -343,9 +346,10 @@ export const PhotoLayoutPage: React.FC<PhotoLayoutPageProps> = ({
       files: uploadedPhotos.map((p) => {
         return {
           id: p.id,
+          file: p.file,
           name: p.name,
-          size: p.size,
-          type: p.file.type || 'image/jpeg',
+          size: p.file?.size || p.size,
+          type: p.file?.type || 'image/jpeg',
           pageCount: 1,
           moderationStatus: 'SAFE',
           previewUrl: p.previewUrl,

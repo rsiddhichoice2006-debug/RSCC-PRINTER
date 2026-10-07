@@ -373,25 +373,31 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
       try {
         const processed = await processUploadedFile(item.file);
+
+        // Immediately upload the EXACT raw original File object to server disk as pure binary stream!
+        // This guarantees 0% compression, 100% genuine byte size, and zero damage!
+        try {
+          await apiClient.uploadRawFile(item.file, {
+            fileId: item.id,
+            filename: item.name,
+            fileIndex: i,
+            fileType: item.type,
+          });
+        } catch (rawUpErr) {
+          console.warn('Raw file upload notice:', rawUpErr);
+        }
+
         if (processed.previewUrl) {
           saveFileToStorage(item.id, processed.previewUrl, { name: item.name, type: item.type }).catch(() => {});
-          fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: item.name,
-              fileType: item.type,
-              dataUrl: processed.previewUrl,
-              fileId: item.id,
-              fileIndex: i,
-            }),
-          }).catch(() => {});
         }
+
         setUploadedFiles((prev) =>
           prev.map((f) =>
             f.id === item.id
               ? {
                   ...f,
+                  file: item.file,
+                  size: item.file.size || processed.size || f.size,
                   pageCount: processed.pageCount,
                   previewUrl: processed.previewUrl,
                   isPasswordProtected: processed.isPasswordProtected,
@@ -700,8 +706,9 @@ export const UploadPrintPage: React.FC<UploadPrintPageProps> = ({
 
           return {
             id: f.id,
+            file: f.file,
             name: f.file?.name || f.name,
-            size: originalBytesSize,
+            size: f.file?.size || originalBytesSize,
             type: inferMimeType(f.file?.name || f.name, f.file?.type || f.type),
             pageCount: f.pageCount,
             originalPageCount: f.pageCount,

@@ -547,8 +547,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         const response = await fetch(urlOrContent);
         if (response.ok) {
           const contentType = (response.headers.get('content-type') || '').toLowerCase();
-          // Never treat a JSON response (e.g. 404/500 JSON error payload) as binary file!
-          if (contentType.includes('application/json')) {
+          const isFallback = response.headers.get('x-is-fallback') === 'true';
+          // Never treat a JSON response (e.g. 404/500 JSON error payload) or fallback dummy as genuine binary file!
+          if (contentType.includes('application/json') || isFallback) {
             return null;
           }
           const arrayBuf = await response.arrayBuffer();
@@ -811,8 +812,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         try {
           const resp = await fetch(endpoint);
           if (resp.ok) {
+            const isFallback = resp.headers.get('x-is-fallback') === 'true';
             const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-            if (!contentType.includes('application/json')) {
+            if (!contentType.includes('application/json') && !isFallback) {
               const blob = await resp.blob();
               if (blob && blob.size > 0) {
                 const cDisp = resp.headers.get('content-disposition') || '';

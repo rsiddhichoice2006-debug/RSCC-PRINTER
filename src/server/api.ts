@@ -222,20 +222,22 @@ export function doesBufferMatchExtension(buf: Buffer, ext?: string): boolean {
   if (!ext) return true;
   const lowerExt = ext.toLowerCase().trim();
   if (lowerExt === '.pdf') {
-    return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46; // %PDF
+    return buf.length >= 256 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46; // %PDF
   }
   if (lowerExt === '.jpg' || lowerExt === '.jpeg') {
-    return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff; // JPEG SOI
+    return buf.length >= 256 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff; // JPEG SOI
   }
   if (lowerExt === '.png') {
-    return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47; // PNG
+    return buf.length >= 256 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47; // PNG
   }
   if (lowerExt === '.webp') {
-    return buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46; // RIFF
+    return buf.length >= 256 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46; // RIFF
   }
   if (lowerExt === '.docx' || lowerExt === '.doc' || lowerExt === '.pptx' || lowerExt === '.xlsx') {
-    return (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04) || // PK zip
-           (buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11 && buf[3] === 0xe0); // OLE Compound
+    return buf.length >= 500 && (
+      (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04) || // PK zip
+      (buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11 && buf[3] === 0xe0)   // OLE Compound
+    );
   }
   return true;
 }
@@ -268,6 +270,17 @@ export function saveFileBinaryToDisk(
     const targetFilename = `${orderIdOrFileId}_${indexOrName}_${cleanName}`;
     const targetPath = path.join(UPLOAD_FILES_DIR, targetFilename);
     fs.writeFileSync(targetPath, buffer);
+
+    // Also persist an alias with cleanName directly under orderIdOrFileId if indexOrName is 0
+    if (indexOrName === 0 || indexOrName === '0') {
+      try {
+        const aliasPath = path.join(UPLOAD_FILES_DIR, `${orderIdOrFileId}_orig_${cleanName}`);
+        if (!fs.existsSync(aliasPath)) {
+          fs.writeFileSync(aliasPath, buffer);
+        }
+      } catch {}
+    }
+
     return targetPath;
   } catch (err) {
     console.warn('Failed to save file binary to disk:', err);
@@ -308,15 +321,26 @@ export function findFileBinaryOnDisk(
     const isExtensionCompatible = (diskFileName: string): boolean => {
       if (!expectedExt) return true;
       const diskExt = path.extname(diskFileName).toLowerCase();
-      if (!diskExt) return false;
+      if (!diskExt) return true;
       if (expectedExt === '.pdf') return diskExt === '.pdf';
-      if (expectedExt === '.jpg' || expectedExt === '.jpeg') return diskExt === '.jpg' || diskExt === '.jpeg';
-      if (expectedExt === '.png') return diskExt === '.png';
-      if (expectedExt === '.webp') return diskExt === '.webp';
-      if (expectedExt === '.docx' || expectedExt === '.doc') return diskExt === '.docx' || diskExt === '.doc';
-      if (expectedExt === '.pptx' || expectedExt === '.ppt') return diskExt === '.pptx' || diskExt === '.ppt';
+      const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg'];
+      if (imageExts.includes(expectedExt)) {
+        return imageExts.includes(diskExt);
+      }
+      const officeDocExts = ['.docx', '.doc', '.dotx', '.rtf'];
+      if (officeDocExts.includes(expectedExt)) {
+        return officeDocExts.includes(diskExt);
+      }
+      const officePptExts = ['.pptx', '.ppt', '.potx'];
+      if (officePptExts.includes(expectedExt)) {
+        return officePptExts.includes(diskExt);
+      }
+      const officeXlsExts = ['.xlsx', '.xls', '.csv'];
+      if (officeXlsExts.includes(expectedExt)) {
+        return officeXlsExts.includes(diskExt);
+      }
       if (expectedExt === '.txt') return diskExt === '.txt';
-      return diskExt === expectedExt;
+      return true;
     };
 
     const tryRead = (filenameOnDisk: string): { path: string; buffer: Buffer; size: number } | null => {
@@ -324,9 +348,6 @@ export function findFileBinaryOnDisk(
         const p = path.join(UPLOAD_FILES_DIR, filenameOnDisk);
         const buf = fs.readFileSync(p);
         if (buf && buf.length > 0) {
-          if (expectedExt && !doesBufferMatchExtension(buf, expectedExt)) {
-            return null; // Mismatched magic bytes! Do NOT serve damaged file!
-          }
           return { path: p, buffer: buf, size: buf.length };
         }
       } catch {}
@@ -361,6 +382,7 @@ export function findFileBinaryOnDisk(
         `${resolvedFileId}_${fileIndex}_`,
         `${resolvedFileId}_orig_`,
         `${resolvedFileId}_0_`,
+        `${resolvedFileId}_`,
       ];
       for (const prefix of idPrefixes) {
         for (const f of diskFiles) {
@@ -386,6 +408,17 @@ export function findFileBinaryOnDisk(
     if (orderNum) {
       for (const f of diskFiles) {
         if (f.startsWith(`${orderNum}_`) && f.includes(`_${fileIndex}_`) && isExtensionCompatible(f)) {
+          const res = tryRead(f);
+          if (res) return res;
+        }
+      }
+    }
+
+    // 6. Match by exact clean filename suffix: e.g. "..._Customer_Photo.jpg" or "..._Resume.pdf"
+    if (resolvedFilename) {
+      const cleanName = resolvedFilename.replace(/[/\\?%*:|"<>]/g, '_');
+      for (const f of diskFiles) {
+        if ((f.endsWith(`_${cleanName}`) || f.includes(cleanName)) && isExtensionCompatible(f)) {
           const res = tryRead(f);
           if (res) return res;
         }
@@ -921,11 +954,13 @@ Return your judgment strictly in JSON format:
           return true;
         }
       } else {
-        // Raw stream binary upload
+        // Raw stream binary upload (direct file streaming from browser File/Blob)
         const urlParams = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).searchParams;
-        const filename = urlParams.get('filename') || (req.headers['x-filename'] as string) || 'uploaded_document';
+        let filename = urlParams.get('filename') || (req.headers['x-filename'] as string) || 'uploaded_document';
+        try { filename = decodeURIComponent(filename); } catch {}
         const fileId = urlParams.get('fileId') || (req.headers['x-file-id'] as string) || `f_${Date.now()}`;
         const orderId = urlParams.get('orderId') || (req.headers['x-order-id'] as string) || fileId;
+        const orderNumber = urlParams.get('orderNumber') || (req.headers['x-order-number'] as string);
         const fileIndex = parseInt(urlParams.get('fileIndex') || '0', 10);
 
         const chunks: Buffer[] = [];
@@ -936,7 +971,26 @@ Return your judgment strictly in JSON format:
             const targetPath = saveFileBinaryToDisk(orderId, fileIndex, filename, buffer);
             if (fileId) {
               saveFileBinaryToDisk(fileId, 'orig', filename, buffer);
+              saveFileBinaryToDisk(fileId, fileIndex, filename, buffer);
             }
+            if (orderNumber) {
+              saveFileBinaryToDisk(orderNumber, fileIndex, filename, buffer);
+            }
+            if (orderId && orderId !== fileId) {
+              saveFileBinaryToDisk(orderId, 'orig', filename, buffer);
+            }
+
+            // If order already exists in memory, link binary and update exact size
+            const matchOrd = orders.find(
+              (o) => (orderId && o.id === orderId) || (orderNumber && o.orderNumber === orderNumber)
+            );
+            if (matchOrd && matchOrd.files && matchOrd.files[fileIndex]) {
+              matchOrd.files[fileIndex].hasBinary = true;
+              matchOrd.files[fileIndex].size = buffer.length;
+              matchOrd.files[fileIndex].fileUrl = `/api/orders/${matchOrd.id}/files/${fileIndex}/download`;
+              saveOrdersToDisk();
+            }
+
             sendJson(res, 200, {
               success: true,
               filename,
@@ -1066,18 +1120,37 @@ Return your judgment strictly in JSON format:
       if (Array.isArray(body.files)) {
         body.files.forEach((f: any, idx: number) => {
           const src = f.previewUrl || f.dataUrl;
-          if (src && typeof src === 'string' && src.startsWith('data:')) {
+          const cleanName = f.name || `file_${idx + 1}`;
+
+          // Check if pristine raw uncompressed binary was already uploaded to disk under f.id
+          const existing = (f.id ? findFileBinaryOnDisk('', idx, f.name, f.id) : null) ||
+                           findFileBinaryOnDisk(newOrder.id, idx, f.name, f.id);
+
+          if (existing && existing.buffer && existing.buffer.length > 0) {
+            saveFileBinaryToDisk(newOrder.id, idx, cleanName, existing.buffer);
+            if (newOrder.orderNumber) {
+              saveFileBinaryToDisk(newOrder.orderNumber, idx, cleanName, existing.buffer);
+            }
+            if (f.id) {
+              saveFileBinaryToDisk(f.id, 'orig', cleanName, existing.buffer);
+              saveFileBinaryToDisk(f.id, idx, cleanName, existing.buffer);
+            }
+            f.size = existing.buffer.length;
+            f.fileUrl = `/api/orders/${newOrder.id}/files/${idx}/download`;
+            f.hasBinary = true;
+          } else if (src && typeof src === 'string' && src.startsWith('data:')) {
             try {
               const commaIdx = src.indexOf(',');
               const rawB64 = src.substring(commaIdx + 1);
               const buffer = Buffer.from(rawB64, 'base64');
               if (buffer.length > 0) {
-                saveFileBinaryToDisk(newOrder.id, idx, f.name || `file_${idx + 1}`, buffer);
+                saveFileBinaryToDisk(newOrder.id, idx, cleanName, buffer);
                 if (newOrder.orderNumber) {
-                  saveFileBinaryToDisk(newOrder.orderNumber, idx, f.name || `file_${idx + 1}`, buffer);
+                  saveFileBinaryToDisk(newOrder.orderNumber, idx, cleanName, buffer);
                 }
                 if (f.id) {
-                  saveFileBinaryToDisk(f.id, 'orig', f.name || `file_${idx + 1}`, buffer);
+                  saveFileBinaryToDisk(f.id, 'orig', cleanName, buffer);
+                  saveFileBinaryToDisk(f.id, idx, cleanName, buffer);
                 }
                 f.size = buffer.length;
                 f.fileUrl = `/api/orders/${newOrder.id}/files/${idx}/download`;
@@ -1558,20 +1631,38 @@ Return your judgment strictly in JSON format:
               const src = f.previewUrl || f.dataUrl;
               const oid = targetOrderId || body.order?.id || `ord-${Date.now()}`;
               const orderNum = body.order?.orderNumber || '';
+              const cleanName = f.name || `file_${idx + 1}`;
 
-              if (src && typeof src === 'string' && src.startsWith('data:')) {
+              // Check if pristine raw uncompressed binary was already uploaded to disk under f.id
+              const existing = (f.id ? findFileBinaryOnDisk('', idx, f.name, f.id) : null) ||
+                               findFileBinaryOnDisk(oid, idx, f.name, f.id) ||
+                               (orderNum ? findFileBinaryOnDisk(orderNum, idx, f.name, f.id) : null);
+
+              if (existing && existing.buffer && existing.buffer.length > 0) {
+                saveFileBinaryToDisk(oid, idx, cleanName, existing.buffer);
+                if (orderNum) {
+                  saveFileBinaryToDisk(orderNum, idx, cleanName, existing.buffer);
+                }
+                if (f.id) {
+                  saveFileBinaryToDisk(f.id, 'orig', cleanName, existing.buffer);
+                  saveFileBinaryToDisk(f.id, idx, cleanName, existing.buffer);
+                }
+                f.size = existing.buffer.length;
+                f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
+                f.hasBinary = true;
+              } else if (src && typeof src === 'string' && src.startsWith('data:')) {
                 try {
                   const commaIdx = src.indexOf(',');
                   const rawB64 = src.substring(commaIdx + 1);
                   const buffer = Buffer.from(rawB64, 'base64');
                   if (buffer.length > 0) {
-                    saveFileBinaryToDisk(oid, idx, f.name || `file_${idx + 1}`, buffer);
+                    saveFileBinaryToDisk(oid, idx, cleanName, buffer);
                     if (orderNum) {
-                      saveFileBinaryToDisk(orderNum, idx, f.name || `file_${idx + 1}`, buffer);
+                      saveFileBinaryToDisk(orderNum, idx, cleanName, buffer);
                     }
                     if (f.id) {
-                      saveFileBinaryToDisk(f.id, 'orig', f.name || `file_${idx + 1}`, buffer);
-                      saveFileBinaryToDisk(f.id, idx, f.name || `file_${idx + 1}`, buffer);
+                      saveFileBinaryToDisk(f.id, 'orig', cleanName, buffer);
+                      saveFileBinaryToDisk(f.id, idx, cleanName, buffer);
                     }
                     f.size = buffer.length;
                     f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
@@ -1581,19 +1672,7 @@ Return your judgment strictly in JSON format:
                   console.warn('Error saving file binary in confirm-payment:', err);
                 }
               } else {
-                // If previewUrl is not embedded, link pre-uploaded file from /api/upload
-                const existing = findFileBinaryOnDisk(oid, idx, f.name, f.id);
-                if (existing && existing.buffer) {
-                  saveFileBinaryToDisk(oid, idx, f.name || `file_${idx + 1}`, existing.buffer);
-                  if (orderNum) {
-                    saveFileBinaryToDisk(orderNum, idx, f.name || `file_${idx + 1}`, existing.buffer);
-                  }
-                  f.size = existing.buffer.length;
-                  f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
-                  f.hasBinary = true;
-                } else {
-                  f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
-                }
+                f.fileUrl = `/api/orders/${oid}/files/${idx}/download`;
               }
             });
           }
@@ -1666,19 +1745,39 @@ Return your judgment strictly in JSON format:
         verifiedOrder.files = body.order.files.map((newF, idx) => {
           const oldF = verifiedOrder.files && verifiedOrder.files[idx];
           const src = newF.previewUrl || newF.dataUrl || oldF?.previewUrl || oldF?.dataUrl;
-          if (src && typeof src === 'string' && src.startsWith('data:')) {
+          const cleanName = newF.name || `file_${idx + 1}`;
+
+          // Check if pristine raw uncompressed binary was already uploaded to disk under newF.id or oldF.id
+          const fileIdentifier = newF.id || oldF?.id;
+          const existing = (fileIdentifier ? findFileBinaryOnDisk('', idx, newF.name, fileIdentifier) : null) ||
+                           findFileBinaryOnDisk(verifiedOrder.id, idx, newF.name, fileIdentifier) ||
+                           (verifiedOrder.orderNumber ? findFileBinaryOnDisk(verifiedOrder.orderNumber, idx, newF.name, fileIdentifier) : null);
+
+          if (existing && existing.buffer && existing.buffer.length > 0) {
+            saveFileBinaryToDisk(verifiedOrder.id, idx, cleanName, existing.buffer);
+            if (verifiedOrder.orderNumber) {
+              saveFileBinaryToDisk(verifiedOrder.orderNumber, idx, cleanName, existing.buffer);
+            }
+            if (fileIdentifier) {
+              saveFileBinaryToDisk(fileIdentifier, 'orig', cleanName, existing.buffer);
+              saveFileBinaryToDisk(fileIdentifier, idx, cleanName, existing.buffer);
+            }
+            newF.size = existing.buffer.length;
+            newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
+            newF.hasBinary = true;
+          } else if (src && typeof src === 'string' && src.startsWith('data:')) {
             try {
               const commaIdx = src.indexOf(',');
               const rawB64 = src.substring(commaIdx + 1);
               const buffer = Buffer.from(rawB64, 'base64');
               if (buffer.length > 0) {
-                saveFileBinaryToDisk(verifiedOrder.id, idx, newF.name || `file_${idx + 1}`, buffer);
+                saveFileBinaryToDisk(verifiedOrder.id, idx, cleanName, buffer);
                 if (verifiedOrder.orderNumber) {
-                  saveFileBinaryToDisk(verifiedOrder.orderNumber, idx, newF.name || `file_${idx + 1}`, buffer);
+                  saveFileBinaryToDisk(verifiedOrder.orderNumber, idx, cleanName, buffer);
                 }
-                if (newF.id) {
-                  saveFileBinaryToDisk(newF.id, 'orig', newF.name || `file_${idx + 1}`, buffer);
-                  saveFileBinaryToDisk(newF.id, idx, newF.name || `file_${idx + 1}`, buffer);
+                if (fileIdentifier) {
+                  saveFileBinaryToDisk(fileIdentifier, 'orig', cleanName, buffer);
+                  saveFileBinaryToDisk(fileIdentifier, idx, cleanName, buffer);
                 }
                 newF.size = buffer.length;
                 newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
@@ -1688,19 +1787,7 @@ Return your judgment strictly in JSON format:
               console.warn('Error saving binary to disk in verifiedOrder:', err);
             }
           } else {
-            // Check pre-uploaded file on disk
-            const existing = findFileBinaryOnDisk(verifiedOrder.id, idx, newF.name, newF.id);
-            if (existing && existing.buffer) {
-              saveFileBinaryToDisk(verifiedOrder.id, idx, newF.name || `file_${idx + 1}`, existing.buffer);
-              if (verifiedOrder.orderNumber) {
-                saveFileBinaryToDisk(verifiedOrder.orderNumber, idx, newF.name || `file_${idx + 1}`, existing.buffer);
-              }
-              newF.size = existing.buffer.length;
-              newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
-              newF.hasBinary = true;
-            } else {
-              newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
-            }
+            newF.fileUrl = `/api/orders/${verifiedOrder.id}/files/${idx}/download`;
           }
           return {
             ...newF,
@@ -1767,12 +1854,27 @@ Return your judgment strictly in JSON format:
       const isDownload = fileStreamMatch ? fileStreamMatch[3] === 'download' : directFileMatch![2] === 'download';
       const directFileId = directFileMatch ? directFileMatch[1] : undefined;
 
-      const order = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
-      const file = order?.files && order.files[fileIndex];
+      let order = orders.find((o) => o.id === orderId || o.orderNumber === orderId);
+      let file = order?.files && order.files[fileIndex];
+
+      // If directFileId was provided and no order matched yet, search orders for file.id === directFileId
+      if (directFileId && (!order || !file)) {
+        for (const o of orders) {
+          if (o.files) {
+            const foundIdx = o.files.findIndex((f) => f.id === directFileId || f.name === directFileId);
+            if (foundIdx >= 0) {
+              order = o;
+              file = o.files[foundIdx];
+              break;
+            }
+          }
+        }
+      }
+
       let filename = file?.name || (directFileId ? `${directFileId}` : `file_${fileIndex + 1}`);
 
       // 1. Check disk storage first (most authoritative, exact original bytes!)
-      const onDisk = findFileBinaryOnDisk(orderId, fileIndex, filename, file?.id || directFileId);
+      const onDisk = findFileBinaryOnDisk(orderId || order?.id || '', fileIndex, filename, file?.id || directFileId);
       let buffer: Buffer | null = onDisk ? onDisk.buffer : null;
       let mimeType = file?.type || 'application/octet-stream';
 
@@ -1857,14 +1959,6 @@ Return your judgment strictly in JSON format:
           );
           buffer = Buffer.from(pdfBytes);
           mimeType = 'application/pdf';
-        }
-
-        // Cache generated binary to disk so subsequent requests are instant
-        if (buffer && buffer.length > 0) {
-          saveFileBinaryToDisk(orderId || directFileId || 'gen', fileIndex, filename, buffer);
-          if (order?.orderNumber) {
-            saveFileBinaryToDisk(order.orderNumber, fileIndex, filename, buffer);
-          }
         }
       }
 

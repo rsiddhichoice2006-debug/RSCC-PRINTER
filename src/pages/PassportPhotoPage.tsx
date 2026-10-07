@@ -35,10 +35,11 @@ import {
   PassportServiceType,
   ShopSettings,
 } from '../types';
-import { isExcelFile, isWebPFile, convertWebPToJpg } from '../utils/fileProcessor';
+import { isExcelFile, isWebPFile } from '../utils/fileProcessor';
 import { saveFileToStorage } from '../utils/fileStorage';
 import { DEFAULT_PRICING } from '../utils/pricingCalculator';
 import { useAuth } from '../context/AuthContext';
+import { apiClient } from '../services/apiClient';
 import {
   PASSPORT_BG_COLORS,
   generatePassportPhoto,
@@ -174,16 +175,7 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       return;
     }
 
-    // Convert WebP image to JPG
     let file = rawFile;
-    if (isWebPFile(rawFile)) {
-      try {
-        file = await convertWebPToJpg(rawFile);
-      } catch (err) {
-        console.warn('Failed to convert WebP to JPG:', err);
-      }
-    }
-
     if (!file.type.match(/^image\/(jpeg|jpg|png|webp)$/i)) {
       setUploadError('Please upload a valid image file (JPG, JPEG, or PNG).');
       return;
@@ -193,6 +185,15 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       setUploadError('Photo file size exceeds 20MB limit. Please choose a smaller original image.');
       return;
     }
+
+    const photoId = 'photo-' + Date.now();
+    // Stream raw uncompressed original photo to server disk immediately
+    apiClient.uploadRawFile(file, {
+      fileId: photoId,
+      filename: file.name,
+      fileIndex: 0,
+      fileType: file.type,
+    }).catch(() => {});
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -293,9 +294,10 @@ export const PassportPhotoPage: React.FC<PassportPhotoPageProps> = ({
       files: [
         {
           id: photoId,
+          file: photoFile,
           name: passportFilename,
           size: photoFile.size,
-          type: 'image/jpeg',
+          type: photoFile.type || 'image/jpeg',
           pageCount: 1,
           moderationStatus: 'SAFE',
           previewUrl: processedPhotoUrl,
